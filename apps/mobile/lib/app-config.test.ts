@@ -53,6 +53,22 @@ describe("mobile app config", () => {
     expect(appConfig(context(config))).toBe(config);
   });
 
+  it("gives a self-built Android APK its own package id and name", () => {
+    vi.stubEnv("GOOGLE_SERVICES_JSON", undefined);
+    vi.stubEnv("RAKAZO_APP_PACKAGE", "com.example.bee");
+    vi.stubEnv("RAKAZO_APP_NAME", "Example Bee");
+
+    expect(appConfig(context(config))).toEqual({
+      ...config,
+      ...passkeys,
+      name: "Example Bee",
+      android: { ...config.android, package: "com.example.bee" },
+    });
+    expect(config.android?.package).toBe("com.example.app");
+    vi.stubEnv("RAKAZO_APP_NAME", undefined);
+    expect(appConfig(context(config)).name).toBe("Example");
+  });
+
   it("adds Android config when none exists", () => {
     vi.stubEnv("GOOGLE_SERVICES_JSON", "/build/google-services.json");
     const { android: _android, ...withoutAndroid } = config;

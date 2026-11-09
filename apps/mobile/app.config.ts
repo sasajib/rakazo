@@ -48,6 +48,18 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     result = { ...result, android: { ...result.android, googleServicesFile } };
   }
 
+  // A self-built Android APK is signed with its builder's key, so it cannot install over the
+  // store app. Another package id lets both live on one phone; the name tells them apart on
+  // the home screen. The store build never sets these, so its id stays as configured.
+  const androidPackage = process.env.RAKAZO_APP_PACKAGE;
+  if (androidPackage) {
+    result = {
+      ...result,
+      name: process.env.RAKAZO_APP_NAME || result.name,
+      android: { ...result.android, package: androidPackage },
+    };
+  }
+
   // Native crash handling autolinks; upload build hooks are optional and require credentials.
   if (process.env.SENTRY_AUTH_TOKEN) {
     result = {
