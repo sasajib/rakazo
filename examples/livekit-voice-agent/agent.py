@@ -452,7 +452,7 @@ async def entrypoint(ctx: JobContext) -> None:
     first_line = opening_line(call.opening, os.environ.get("VOICE_GREETING", "Connected. Go ahead."))
     if first_line:
         if call.opening:
-            logger.info("speaking the bot's opening", extra={"callId": call.call_id})
+            logger.info("speaking the bot's opening: %s", first_line, extra={"callId": call.call_id})
         session.say(first_line, allow_interruptions=True)
 
 
