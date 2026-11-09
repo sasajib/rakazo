@@ -64,6 +64,10 @@ describe("call_user", () => {
     await expect(callRequestRefusal(prismaWith({ voice: false }), input)).resolves.toMatch(
       /voice provider/,
     );
+    // A deployment whose voice agent answers calls needs no voice provider on the user.
+    await expect(
+      callRequestRefusal(prismaWith({ voice: false }), { ...input, voiceAgentCalls: true }),
+    ).resolves.toBeNull();
     await expect(callRequestRefusal(prismaWith({ recent: true }), input)).resolves.toMatch(
       /last 2 minutes/,
     );

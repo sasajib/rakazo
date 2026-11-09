@@ -63,6 +63,8 @@ export interface ExecutorDeps {
   email?: TransactionalEmailProvider;
   phoneCallCooldownMinutes?: number;
   phoneCallRingSeconds?: number;
+  /** VOICE_AGENT_URL is set: a LiveKit voice agent answers calls, so callers need no voice provider. */
+  voiceAgentCalls?: boolean;
   /** Messaging surface; absent means zero identity queries and no chat prompts. */
   messaging?: { hasIdentity(botId: string): Promise<boolean> };
   listConnectedPluginSlugs?: (userId: string) => Promise<string[]>;

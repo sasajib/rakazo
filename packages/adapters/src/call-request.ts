@@ -34,15 +34,24 @@ type CallRequestStatus = CallRequestBlock["status"];
 /** Why the bot may not ring the user right now, or null when it may. */
 export async function callRequestRefusal(
   prisma: Pick<PrismaClient, "message" | "userVoiceCredential">,
-  input: { userId: string; groupChat: boolean; now?: number; phoneCallCooldownMinutes?: number },
+  input: {
+    userId: string;
+    groupChat: boolean;
+    now?: number;
+    phoneCallCooldownMinutes?: number;
+    /** The deployment's voice agent speaks on calls, so the user needs no voice provider. */
+    voiceAgentCalls?: boolean;
+  },
 ): Promise<string | null> {
   if (input.groupChat) return "Calls work in a one-to-one chat only. Send a message instead.";
-  const voice = await prisma.userVoiceCredential.findFirst({
-    where: { userId: input.userId },
-    select: { id: true },
-  });
-  if (!voice) {
-    return "The user has not connected a voice provider, so they cannot take a call. Send a message instead.";
+  if (!input.voiceAgentCalls) {
+    const voice = await prisma.userVoiceCredential.findFirst({
+      where: { userId: input.userId },
+      select: { id: true },
+    });
+    if (!voice) {
+      return "The user has not connected a voice provider, so they cannot take a call. Send a message instead.";
+    }
   }
   const minutes = input.phoneCallCooldownMinutes ?? phoneCallSettings().phoneCallCooldownMinutes;
   const since = new Date((input.now ?? Date.now()) - minutes * 60_000);
@@ -193,6 +202,7 @@ export async function requestUserCall(
     phoneCallsEnabled?: boolean;
     phoneCallCooldownMinutes?: number;
     phoneCallRingSeconds?: number;
+    voiceAgentCalls?: boolean;
     runLease?: ExecutorDeps["runLease"];
     notifications?: NotificationProvider;
   },
@@ -224,6 +234,7 @@ export async function requestUserCall(
         ...run,
         groupChat: false,
         phoneCallCooldownMinutes: deps.phoneCallCooldownMinutes,
+        ...(deps.voiceAgentCalls ? { voiceAgentCalls: true } : {}),
       });
       if (refusal) return { error: refusal };
       const message = await createThreadMessageInTransaction(tx, {

@@ -82,6 +82,8 @@ export interface AppEnv {
   phoneCallsEnabled: boolean;
   phoneCallRingSeconds: number;
   phoneCallCooldownMinutes: number;
+  /** VOICE_AGENT_URL is set: bots may call users who have no voice provider of their own. */
+  voiceAgentCalls: boolean;
   maxUploadSizeBytes: number;
   maxAttachmentsPerMessage: number;
   /** Bot replies longer than this are read aloud as a summary; unset reads every reply in full. */
