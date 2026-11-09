@@ -100,6 +100,7 @@
       "./plugins/with-worklets-headers",
       "./plugins/with-lan-cleartext",
       "./plugins/with-android-no-gwp-asan",
+      "./plugins/with-livekit-proguard",
       "./plugins/with-agent-notifications",
       "./plugins/with-app-intents"
     ],
