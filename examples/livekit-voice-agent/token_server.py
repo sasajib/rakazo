@@ -7,7 +7,12 @@ Public listener (put it behind your TLS proxy / tunnel):
 - `POST /rakazo/sign-in`   `{email, password}` → `{token}`; proxies Better Auth so the page needs no CORS
 - `GET  /rakazo/spaces`    bearer → Rakazo `spaces/list` (spaces with their bots)
 - `POST /token`            bearer + `{botId, spaceId}` → `{url, token, room, callId}`; refuses an invalid
-                           bearer with 401 (checked against `GET /api/auth/get-session`)
+                           bearer with 401 (checked against `GET /api/auth/get-session`).
+                           With `callId` (+ `opening`) the room is for the bot's own call the caller
+                           answered: the room keeps that id and the agent speaks `opening` first.
+                           Only a trusted broker may name the call (`x-voice-internal-token`), since
+                           the token server cannot see Rakazo's call requests itself; Rakazo's API
+                           checks the request stands at `answered` for that user before asking.
 
 Internal listener (never exposed; the agent worker reads it over the docker network):
 
@@ -23,6 +28,7 @@ import asyncio
 from datetime import timedelta
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -51,7 +57,30 @@ BIND = os.environ.get("TOKEN_BIND", "0.0.0.0")
 CALL_TTL_S = 6 * 3600
 WEB_DIR = Path(__file__).parent / "web"
 
-calls: dict[str, dict] = {}  # callId → {bearer, spaceId, botId, botName, userName, createdAt}
+calls: dict[str, dict] = {}  # callId → {bearer, spaceId, botId, botName, userName, opening, createdAt}
+# Rakazo call ids are UUIDs; ":" separates a call id from its nonce suffix and never appears in one.
+CALL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,200}$")
+OPENING_MAX = 240
+
+
+def _internal_caller(request: web.Request) -> bool:
+    given = request.headers.get("x-voice-internal-token", "")
+    return bool(INTERNAL_TOKEN) and secrets.compare_digest(given, INTERNAL_TOKEN)
+
+
+def validate_named_call(body: dict, *, trusted: bool) -> tuple[str, str] | web.Response | None:
+    """`(callId, opening)` when the caller names the call, None when it does not, or the refusal."""
+    call_id = body.get("callId")
+    if call_id is None:
+        return None
+    if not isinstance(call_id, str) or not CALL_ID_RE.match(call_id):
+        return web.json_response({"error": "callId is not a call id"}, status=400)
+    if not trusted:
+        return web.json_response({"error": "only the call broker may name a call"}, status=403)
+    opening = body.get("opening", "")
+    if not isinstance(opening, str):
+        return web.json_response({"error": "opening must be a string"}, status=400)
+    return call_id, opening.strip()[:OPENING_MAX]
 
 
 def _bearer(request: web.Request) -> str | None:
@@ -106,6 +135,9 @@ async def token(request: web.Request) -> web.Response:
     bot_id, space_id = str(body.get("botId", "")), str(body.get("spaceId", ""))
     if not bot_id or not space_id:
         return web.json_response({"error": "botId and spaceId are required"}, status=400)
+    named = validate_named_call(body, trusted=_internal_caller(request))
+    if isinstance(named, web.Response):
+        return named
 
     client = RakazoClient(RAKAZO_API_URL, token=bearer, space_id=space_id)
     try:
@@ -122,15 +154,21 @@ async def token(request: web.Request) -> web.Response:
         return web.json_response({"error": "bot not in this space"}, status=404)
 
     user = session["user"]
-    call_id = new_call_id()
+    call_id, opening = named if named else (new_call_id(), "")
     room = f"rakazo-{call_id}"
     _prune()
+    # The same person may retry an answer (a dropped connect); nobody else gets to join as the caller.
+    existing = calls.get(call_id)
+    if existing and existing.get("userId") != user["id"]:
+        return web.json_response({"error": "call already in a room"}, status=409)
     calls[call_id] = {
         "bearer": bearer,
+        "userId": user["id"],
         "spaceId": space_id,
         "botId": bot_id,
         "botName": bot.get("name", ""),
         "userName": user.get("name", ""),
+        "opening": opening,
         "createdAt": time.time(),
     }
     grant = api.VideoGrants(room_join=True, room=room, can_publish=True, can_subscribe=True, can_publish_data=True)
@@ -143,18 +181,17 @@ async def token(request: web.Request) -> web.Response:
         .with_ttl(timedelta(hours=2))
         .to_jwt()
     )
-    logger.info("minted token for room %s (bot %s)", room, bot.get("name"))
+    logger.info("minted token for room %s (bot %s%s)", room, bot.get("name"), ", bot-initiated" if opening else "")
     return web.json_response({"url": LIVEKIT_PUBLIC_URL, "token": jwt, "room": room, "callId": call_id})
 
 
 async def internal_call(request: web.Request) -> web.Response:
-    given = request.headers.get("x-voice-internal-token", "")
-    if not INTERNAL_TOKEN or not secrets.compare_digest(given, INTERNAL_TOKEN):
+    if not _internal_caller(request):
         return web.json_response({"error": "forbidden"}, status=403)
     call = calls.get(request.match_info["call_id"])
     if not call:
         return web.json_response({"error": "unknown call"}, status=404)
-    return web.json_response(call)
+    return web.json_response({k: v for k, v in call.items() if k != "userId"})
 
 
 def build_public_app() -> web.Application:

@@ -45,10 +45,14 @@ async def get_token(args: argparse.Namespace) -> tuple[str, str, str]:
     if args.token_url:
         bearer = Path(args.bearer_file).read_text().strip()
         async with httpx.AsyncClient(timeout=30) as http:
+            body = {"botId": args.bot_id, "spaceId": args.space_id}
+            if args.call_id:
+                body["callId"] = args.call_id  # the bot's call we answered: the room keeps its id
             response = await http.post(
                 f"{args.token_url.rstrip('/')}/token",
-                json={"botId": args.bot_id, "spaceId": args.space_id},
-                headers={"authorization": f"Bearer {bearer}"},
+                json=body,
+                # The space header is what Rakazo's own broker (/api/voice/agent) wants; harmless elsewhere.
+                headers={"authorization": f"Bearer {bearer}", "x-rakazo-space-id": args.space_id or ""},
             )
             response.raise_for_status()
             grant = response.json()
@@ -77,6 +81,7 @@ async def main() -> None:
     parser.add_argument("--bearer-file")
     parser.add_argument("--bot-id")
     parser.add_argument("--space-id")
+    parser.add_argument("--call-id", help="an answered call_request's id (bot-initiated call); needs a trusted --token-url")
     parser.add_argument("--room")
     parser.add_argument("--livekit-url")
     parser.add_argument("--agent-name", default=os.environ.get("LIVEKIT_AGENT_NAME", "rakazo-voice"))

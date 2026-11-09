@@ -74,6 +74,8 @@ class CallContext:
     bot_id: str
     bot_name: str = ""
     user_name: str = ""
+    """The bot called: what it opens with, spoken instead of the greeting. Empty for a user's call."""
+    opening: str = ""
 
 
 class _RakazoIsTheModel(llm.LLM):
@@ -262,6 +264,11 @@ def _last_user_text(chat_ctx: llm.ChatContext) -> str:
     return ""
 
 
+def opening_line(opening: str, greeting: str) -> str:
+    """What the agent says on joining: the bot's opening on its own call, else the greeting."""
+    return opening.strip() or greeting
+
+
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
@@ -327,6 +334,7 @@ async def resolve_call(room_name: str) -> CallContext:
                 bot_id=data["botId"],
                 bot_name=data.get("botName", ""),
                 user_name=data.get("userName", ""),
+                opening=str(data.get("opening") or "").strip(),
             )
         logger.warning("token server has no record of call %s (%s); trying env fallback", call_id, response.status_code)
 
@@ -439,9 +447,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await ctx.connect()
     await session.start(agent=agent, room=ctx.room)
-    greeting = os.environ.get("VOICE_GREETING", "Connected. Go ahead.")
-    if greeting:
-        session.say(greeting, allow_interruptions=True)
+    # A bot-initiated call opens with the bot's own line (Rakazo already wrote it to the thread
+    # as the call request); say() keeps it an assistant turn, so it is never sent back as the user.
+    first_line = opening_line(call.opening, os.environ.get("VOICE_GREETING", "Connected. Go ahead."))
+    if first_line:
+        if call.opening:
+            logger.info("speaking the bot's opening", extra={"callId": call.call_id})
+        session.say(first_line, allow_interruptions=True)
 
 
 if __name__ == "__main__":

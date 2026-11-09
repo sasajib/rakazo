@@ -83,6 +83,10 @@ Add a second key pair to the server's `LIVEKIT_KEYS` (a YAML map) rather than re
 3. The reply is read from a single long-lived `threads/subscribe` stream per call: `thread.progress {text|delta, streaming}` is yielded to TTS as it arrives; the final `thread.message.created` fills any part that was not streamed (silent runs stream nothing); `run.completed|failed|cancelled` ends the turn. `thread.call.ended` with a farewell means the bot hung up: the farewell is spoken and the agent leaves.
 4. When the caller leaves the room the worker sends `threads/endCall {callId, durationSeconds}`.
 
+### Bot-initiated calls (`call_user`)
+
+When the bot rings the user, Rakazo's web client answers (`threads/answerCall`) and then asks its API for a room token **with the request's `callId`**; the API verifies the request stands at `answered` in that user's chat and forwards `{botId, spaceId, callId, opening}` to `POST /token` with `x-voice-internal-token`. The token server accepts a caller-named call only from that trusted broker (403 otherwise, 409 if another user already holds the room), names the room `rakazo-<callId>` and stores `opening` in the registry; the worker then speaks `opening` instead of `VOICE_GREETING` as its first line (`session.say`, an assistant turn, never sent to Rakazo). Everything else (turn nonces, `threads/endCall`) reuses the same `callId`, so the transcript and the call's record group under the bot's request. Headless: `scripts/synthetic_caller.py --call-id <callId> --token-url http://api/api/voice/agent ...`.
+
 Barge-in cancels the TTS and the generator; the Rakazo run is not stopped (its text is in the chat), and the remainder is never spoken, like the web client. Saying just "stop" while a run is active is interpreted by the server as Stop.
 
 ## Measured on a self-hosted box (2026-11-09)
