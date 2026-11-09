@@ -1,0 +1,146 @@
+{
+ "callId": "90f6bbce411841fdbbe91dff829a41fa",
+ "clientNonce": "call:90f6bbce411841fdbbe91dff829a41fa:74f1cf1f0ee8370bbb12c70a",
+ "receipt": {
+  "taskId": "cmw9i2jl9000i07mq1olg94ec",
+  "runId": "cmw9i2jlc000j07mqt6j81sf1",
+  "seq": 3,
+  "runIds": [
+   "cmw9i2jlc000j07mqt6j81sf1"
+  ]
+ },
+ "events": [
+  {
+   "id": "cmw9i2jll9f2z58d29bvpsjn2",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 19,
+   "type": "thread.message.created",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:12.249Z",
+   "payload": {
+    "messageId": "cmw9i2jl29f2y58d25lrv5xbs",
+    "seq": 3,
+    "role": "user",
+    "blocks": [
+     {
+      "kind": "text",
+      "text": "What is the capital of Bangladesh? Answer in one short sentence."
+     }
+    ],
+    "author": {
+     "id": "hJ51drycO1AmfpYuhDdVTUfIW96g7wQ6",
+     "name": "Voice Agent"
+    },
+    "callId": "90f6bbce411841fdbbe91dff829a41fa",
+    "runIds": [
+     "cmw9i2jlc000j07mqt6j81sf1"
+    ]
+   }
+  },
+  {
+   "id": "cmw9i2jmj9f3058d2usapiopz",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 20,
+   "type": "run.started",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:12.284Z",
+   "payload": {
+    "trigger": "user",
+    "routineId": null
+   }
+  },
+  {
+   "id": "cmw9i2oqk9f3158d2n7nsmatg",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 21,
+   "type": "thread.meta",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:18.909Z",
+   "payload": {
+    "activity": {
+     "thinking": true
+    }
+   }
+  },
+  {
+   "id": "cmw9i2oyy9f3258d2vwkmmo8u",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 22,
+   "type": "thread.meta",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:19.211Z",
+   "payload": {
+    "activity": {
+     "thinking": false
+    }
+   }
+  },
+  {
+   "id": "cmw9i2p1w9f3358d2hv1415r8",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 23,
+   "type": "thread.progress",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:19.318Z",
+   "payload": {
+    "text": "T",
+    "streaming": true
+   }
+  },
+  {
+   "id": "cmw9i2p2h9f3458d25x0d953y",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 24,
+   "type": "thread.progress",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:19.338Z",
+   "payload": {
+    "delta": "he capital of Bangladesh is Dhaka.",
+    "streaming": true
+   }
+  },
+  {
+   "id": "cmw9i2p2w9f3658d2wawbh81c",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 25,
+   "type": "thread.message.created",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:19.352Z",
+   "payload": {
+    "messageId": "cmw9i2p2s9f3558d219mwzo39",
+    "role": "bot",
+    "blocks": [
+     {
+      "kind": "text",
+      "text": "The capital of Bangladesh is Dhaka."
+     }
+    ]
+   }
+  },
+  {
+   "id": "cmw9i2p2y9f3758d229uari2y",
+   "spaceId": "fd5a62d022404818dc005ee21fc99499",
+   "threadId": "cmw9htk53000807mq7llw2zab",
+   "botId": "cmw9htk4pv9vnjqfjey0rcvex",
+   "seq": 26,
+   "type": "run.completed",
+   "runId": "cmw9i2jlc000j07mqt6j81sf1",
+   "createdAt": "2026-11-09T16:53:19.354Z",
+   "payload": {}
+  }
+ ]
+}
