@@ -66,6 +66,12 @@ vi.mock("./call-session", () => ({
   subscribe: () => () => {},
 }));
 vi.mock("./push", () => ({ registerCallPushToken: vi.fn() }));
+const voiceAgent = vi.hoisted(() => ({ mode: "builtin" as "builtin" | "livekit" }));
+vi.mock("./voice-agent", () => ({
+  fetchVoiceAgentConfig: async () => ({ mode: voiceAgent.mode }),
+  resolveCallTransport: async (load: () => Promise<{ mode: string }>) =>
+    (await load()).mode === "livekit" ? "livekit" : "builtin",
+}));
 vi.mock("./server-headers", () => ({ serverHeaders: () => ({}) }));
 vi.mock("./session", () => ({
   loadSessionToken: async () => "fake-session",
@@ -111,6 +117,7 @@ beforeEach(() => {
   fake.onEvent = undefined;
   fake.lastResponse = null;
   fake.call = null;
+  voiceAgent.mode = "builtin";
   vi.clearAllMocks();
   fake.native.incomingState.mockResolvedValue({ token: "", actions: [] });
   fake.rpc.mockImplementation(async (path: string) => {
@@ -169,6 +176,22 @@ describe("mobile incoming calls", () => {
       }),
     );
     expect(getIncomingCall()).toBeNull();
+  });
+  it("answers into the voice agent's room when the API has one, without a voice provider", async () => {
+    voiceAgent.mode = "livekit";
+    const call = await ring();
+    await respondToMobileCall(call, "answer");
+    expect(fake.rpc).not.toHaveBeenCalledWith("voice/status", expect.anything(), expect.anything());
+    expect(fake.startCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botId: bot.id,
+        transport: "livekit",
+        transcribe: undefined,
+        answered: { callId: "call-1" },
+        session: 1,
+      }),
+    );
+    expect(fake.native.finishAnswer).toHaveBeenCalledWith("call-1", true);
   });
   it("ends the current call when a native answer arrives during it", async () => {
     await ring();
