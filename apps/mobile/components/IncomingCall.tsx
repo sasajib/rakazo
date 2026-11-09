@@ -40,6 +40,10 @@ export function IncomingCall() {
     const subscription = AppState.addEventListener("change", play);
     return () => {
       subscription.remove();
+      // A looping player that is still playing must stop before it is freed: remove() alone
+      // leaves the ringtone going on Android (call-sounds.ts does the same for its players).
+      player.loop = false;
+      player.pause();
       player.remove();
       Vibration.cancel();
     };
