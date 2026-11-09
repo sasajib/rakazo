@@ -23,6 +23,7 @@ function mount(options: {
   actor?: Actor | null;
   bearer?: string;
   fetch?: typeof fetch;
+  answeredCall?: NonNullable<Parameters<typeof mountVoiceAgentRoutes>[1]["answeredCall"]>;
 }) {
   const app = new Hono();
   const fetchMock = options.fetch ?? vi.fn<typeof fetch>(async () => Response.json(grant));
@@ -34,6 +35,7 @@ function mount(options: {
         voiceAgentInternalToken: options.voiceAgentInternalToken,
       },
       callerBearer: async () => options.bearer,
+      ...(options.answeredCall ? { answeredCall: options.answeredCall } : {}),
       fetch: fetchMock,
     },
     async () => (options.actor === undefined ? actor : options.actor),
@@ -138,6 +140,83 @@ describe("POST /api/voice/agent/token", () => {
       }),
     });
     expect((await app.request(tokenRequest())).status).toBe(502);
+  });
+
+  describe("for the bot's own call the user answered", () => {
+    const callId = "6f1d2c3b-4a5e-4f60-9b7c-8d9e0f1a2b3c";
+    const answeredGrant = { ...grant, room: `rakazo-${callId}`, callId };
+    const answered = { callId, opening: "Hi, about the invoice." };
+
+    it("names the room after the call and passes the bot's opening to the token server", async () => {
+      const answeredCall = vi.fn(async () => ({ opening: answered.opening }));
+      const { app, fetchMock } = mount({
+        voiceAgentUrl: "http://token:8080",
+        bearer: "signed.bearer",
+        answeredCall,
+        fetch: vi.fn(async () => Response.json(answeredGrant)),
+      });
+      const response = await app.request(tokenRequest({ botId: "bot-1", callId }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(answeredGrant);
+      expect(answeredCall).toHaveBeenCalledWith(actor, { botId: "bot-1", callId });
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toEqual({
+        botId: "bot-1",
+        spaceId: "space-1",
+        callId,
+        opening: answered.opening,
+      });
+    });
+
+    it("rejects an id that is not a call id, before any lookup", async () => {
+      const answeredCall = vi.fn(async () => ({ opening: "x" }));
+      const { app, fetchMock } = mount({
+        voiceAgentUrl: "http://token:8080",
+        bearer: "signed.bearer",
+        answeredCall,
+      });
+      for (const bad of ["call:1234567", "short", "a".repeat(201), 42, { id: callId }]) {
+        expect((await app.request(tokenRequest({ botId: "bot-1", callId: bad }))).status).toBe(400);
+      }
+      expect(answeredCall).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a call that is not answered in this user's chat with the bot", async () => {
+      const { app, fetchMock } = mount({
+        voiceAgentUrl: "http://token:8080",
+        bearer: "signed.bearer",
+        answeredCall: async () => null,
+      });
+      const response = await app.request(tokenRequest({ botId: "bot-1", callId }));
+      expect(response.status).toBe(409);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("has no incoming calls where the deployment cannot look them up", async () => {
+      const { app, fetchMock } = mount({ voiceAgentUrl: "http://token:8080", bearer: "b" });
+      expect((await app.request(tokenRequest({ botId: "bot-1", callId }))).status).toBe(404);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a grant that renamed the call, and maps a room already taken", async () => {
+      const renamed = mount({
+        voiceAgentUrl: "http://token:8080",
+        bearer: "b",
+        answeredCall: async () => ({ opening: "x" }),
+        fetch: vi.fn(async () => Response.json(grant)),
+      });
+      expect((await renamed.app.request(tokenRequest({ botId: "bot-1", callId }))).status).toBe(
+        502,
+      );
+      const taken = mount({
+        voiceAgentUrl: "http://token:8080",
+        bearer: "b",
+        answeredCall: async () => ({ opening: "x" }),
+        fetch: vi.fn(async () => Response.json({ error: "taken" }, { status: 409 })),
+      });
+      expect((await taken.app.request(tokenRequest({ botId: "bot-1", callId }))).status).toBe(409);
+    });
   });
 
   it("refuses a grant whose room is not the call's rakazo- room", async () => {
