@@ -1217,6 +1217,7 @@ function SpaceShell() {
       <IncomingCall
         bots={bootstrapMe?.phoneCallsEnabled ? bots : []}
         transcribe={voiceStatus ? Boolean(voiceStatus.transcribe) : undefined}
+        transport={livekitCalls ? "livekit" : "builtin"}
         onAnswered={(botId) => navigate(`/app/${botId}`)}
       />
 

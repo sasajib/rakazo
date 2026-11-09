@@ -52,10 +52,15 @@ thread on your behalf, publishes live captions, and closes the call for you when
 Set `VOICE_AGENT_URL` on the API to the agent's token server. **Call** then asks the API for a
 room token, joins the agent's room from the browser, and shows the same call window: **Mute**
 turns your microphone off, the **Transcript** fills from the agent's captions, and **Hang up**
-leaves the room. Bots that call you still ring in the app and use the built-in call. Add the
-LiveKit server's `wss://` origin to `RAKAZO_CSP_CONNECT_SRC` on the web service so the browser
-may open the signalling connection. Unset `VOICE_AGENT_URL` to go back to the built-in call; nothing else
-changes.
+leaves the room. Add the LiveKit server's `wss://` origin to `RAKAZO_CSP_CONNECT_SRC` on the web
+service so the browser may open the signalling connection. Unset `VOICE_AGENT_URL` to go back to
+the built-in call; nothing else changes.
+
+Bots that call you ring in the app exactly as before. **Answer** then opens a room with the agent
+instead of the built-in call: the room keeps the call's id, so the agent's turns and the call's
+record land in the same call as the request, and the agent speaks the bot's opening line first
+(the API hands it to the token server with the call id, which it accepts only for a call you have
+just answered). **Decline** and a call that rings out behave the same on either transport.
 
 ## On mobile
 

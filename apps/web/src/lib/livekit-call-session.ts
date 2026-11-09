@@ -61,6 +61,11 @@ export interface LivekitCallStart {
   botName: string;
   botColor?: string;
   botAvatarSet?: BotAvatarSet;
+  /**
+   * The bot called and the user picked up: the room takes the request's call id and the agent
+   * opens with the bot's line, so there is no ringing here either.
+   */
+  answered?: { callId: string; opening: string };
 }
 
 export function startCall(call: LivekitCallStart): void {
@@ -72,7 +77,8 @@ export function startCall(call: LivekitCallStart): void {
     botColor: call.botColor ?? "",
     botAvatarSet: call.botAvatarSet,
     connectedAt: null,
-    phase: "ringing",
+    // An answered call is picked up already: the agent is about to speak, not ring.
+    phase: call.answered ? "thinking" : "ringing",
     muted: false,
     minimized: false,
     transcriptOpen: false,
@@ -83,7 +89,7 @@ export function startCall(call: LivekitCallStart): void {
   emit();
   const controller = new AbortController();
   starting = controller;
-  void connect(call.botId, controller).catch((error: unknown) => {
+  void connect(call.botId, controller, call.answered?.callId).catch((error: unknown) => {
     if (controller.signal.aborted || starting !== controller) return;
     starting = null;
     reportClientError(error, "voice.turn");
@@ -95,8 +101,8 @@ export function startCall(call: LivekitCallStart): void {
   });
 }
 
-async function connect(botId: string, controller: AbortController) {
-  const grant = await fetchLivekitCallGrant(botId, controller.signal);
+async function connect(botId: string, controller: AbortController, callId?: string) {
+  const grant = await fetchLivekitCallGrant(botId, controller.signal, callId);
   if (controller.signal.aborted) return;
   const { Room, RoomEvent, Track } = await import("livekit-client");
   if (controller.signal.aborted) return;
@@ -109,7 +115,7 @@ async function connect(botId: string, controller: AbortController) {
   const agentJoined = (attributes: Readonly<Record<string, string>>) => {
     const phase = phaseFromAgentState(attributes[AGENT_STATE_ATTRIBUTE]);
     if (!phase || !state) return;
-    if (state.phase === "ringing") set({ connectedAt: Date.now() });
+    if (state.connectedAt === null) set({ connectedAt: Date.now() });
     // The reply is over: its caption goes with it, as the built-in speaker's idle does.
     set(phase === "listening" ? { phase, caption: "" } : { phase });
   };

@@ -41,6 +41,16 @@ describe("fetchLivekitCallGrant", () => {
     expect(JSON.parse(String(init.body))).toEqual({ botId: "bot-1" });
   });
 
+  it("names the answered call so its room keeps the request's id", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({ ...grant, room: "rakazo-call-7", callId: "call-7" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await fetchLivekitCallGrant("bot-1", undefined, "call-7")).callId).toBe("call-7");
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ botId: "bot-1", callId: "call-7" });
+  });
+
   it("reports the server's reason and refuses an incomplete grant", async () => {
     vi.stubGlobal("fetch", async () =>
       Response.json({ error: "The voice agent is unreachable." }, { status: 502 }),

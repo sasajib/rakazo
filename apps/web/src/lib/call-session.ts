@@ -167,8 +167,9 @@ export function startCall(call: {
 }): void {
   if (leaving) return;
   endCall();
-  // The agent runs the conversation; only outgoing calls go there, incoming ones ring here.
-  if (call.transport === "livekit" && !call.answered) {
+  // The agent runs the conversation on either direction: an answered incoming call keeps the
+  // request's call id as its room and the agent speaks the bot's opening first.
+  if (call.transport === "livekit") {
     livekit.startCall(call);
     return;
   }

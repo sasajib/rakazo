@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pickUp } from "./call-pickup.js";
 import { ECHO_GUARD_MS, endCall, getSnapshot, startCall, toggleMute } from "./call-session";
 import { dictation } from "./dictation.js";
+import * as livekit from "./livekit-call-session.js";
 import { recheckSessionOnUnauthorized, rpc } from "./rpc.js";
 import { speaker } from "./tts.js";
 
@@ -27,6 +28,17 @@ vi.mock("@rakazo/core", async (importOriginal) => ({
 
 vi.mock("./call-pickup.js", () => ({
   pickUp: vi.fn(async () => undefined),
+}));
+
+vi.mock("./livekit-call-session.js", () => ({
+  startCall: vi.fn(),
+  endCall: vi.fn(),
+  getSnapshot: vi.fn(() => null),
+  isActive: vi.fn(() => false),
+  subscribe: vi.fn(() => () => undefined),
+  toggleMute: vi.fn(),
+  toggleTranscript: vi.fn(),
+  setCallMinimized: vi.fn(),
 }));
 
 vi.mock("./dictation.js", () => ({
@@ -87,6 +99,35 @@ describe("call session", () => {
   afterEach(() => {
     endCall();
     vi.useRealTimers();
+  });
+
+  it("hands an answered incoming call to the voice agent's room under the request's call id", async () => {
+    const answered = {
+      callId: "6f1d2c3b-4a5e-4f60-9b7c-8d9e0f1a2b3c",
+      opening: "Hi, about the invoice.",
+    };
+    startCall({ botId: "call-bot", botName: "Ada", transport: "livekit", answered });
+
+    expect(livekit.startCall).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: "call-bot", transport: "livekit", answered }),
+    );
+    // Nothing of the built-in loop started: no ringing, no opening spoken here, no mic.
+    expect(pickUp).not.toHaveBeenCalled();
+    expect(speak).not.toHaveBeenCalled();
+    expect(listen).not.toHaveBeenCalled();
+  });
+
+  it("keeps an answered incoming call on the built-in loop without the livekit transport", async () => {
+    const answered = {
+      callId: "6f1d2c3b-4a5e-4f60-9b7c-8d9e0f1a2b3c",
+      opening: "Hi, about the invoice.",
+    };
+    startCall({ botId: "call-bot", botName: "Ada", answered });
+    await Promise.resolve();
+
+    expect(livekit.startCall).not.toHaveBeenCalled();
+    expect(pickUp).toHaveBeenCalledWith(expect.anything(), { ring: false });
+    expect(speak).toHaveBeenCalledWith(answered.opening, { botId: "call-bot" });
   });
 
   it("starts listening for the bot on the call", async () => {

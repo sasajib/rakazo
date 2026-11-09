@@ -30,15 +30,21 @@ export async function fetchVoiceAgentConfig(signal?: AbortSignal): Promise<Voice
   return mode === "livekit" ? { mode } : BUILTIN;
 }
 
+/**
+ * A room for one call. With `callId`, the room is for the bot's own call the user just
+ * answered (threads/answerCall): it keeps that id, so the agent's turns and the call marker
+ * land in the same call as the request.
+ */
 export async function fetchLivekitCallGrant(
   botId: string,
   signal?: AbortSignal,
+  callId?: string,
 ): Promise<LivekitCallGrant> {
   const res = await fetch("/api/voice/agent/token", {
     method: "POST",
     credentials: "include",
     headers: withSpaceHeaders({ "content-type": "application/json" }),
-    body: JSON.stringify({ botId }),
+    body: JSON.stringify(callId ? { botId, callId } : { botId }),
     signal,
   });
   if (!res.ok) throw new Error(await errorMessage(res));
