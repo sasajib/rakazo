@@ -66,6 +66,7 @@ import { markShellReady, useSpaceEpoch } from "../lib/space-switch";
 import { toolActivityPreference } from "../lib/tool-activity-preference";
 import { useDesktopBadge } from "../lib/use-desktop-badge";
 import { errorText } from "../lib/user-error";
+import { voiceAgentConfigQuery } from "../lib/voice-agent";
 import { HostComputerPrompt } from "./HostComputerPrompt";
 import { RoutineList } from "./RoutineList";
 import { ArchivedChats } from "./shell/archived-chats";
@@ -231,10 +232,14 @@ function SpaceShell() {
         ? null
         : undefined;
   const call = useCallSession();
+  // A LiveKit voice agent brings its own speech: the call needs no voice provider here.
+  const livekitCalls =
+    useQuery(voiceAgentConfigQuery(bootstrapMe?.phoneCallsEnabled === true)).data?.mode ===
+    "livekit";
   /** Calls a bot, or opens voice settings first when no voice is connected. */
   const callBot = (bot: Bot) => {
     if (!bootstrapMe?.phoneCallsEnabled) return;
-    if (!voiceStatus?.ready) {
+    if (!livekitCalls && !voiceStatus?.ready) {
       openSettings("voice");
       return;
     }
@@ -244,6 +249,7 @@ function SpaceShell() {
       botColor: bot.color,
       botAvatarSet: bot.avatarSet,
       transcribe: voiceStatus ? Boolean(voiceStatus.transcribe) : undefined,
+      transport: livekitCalls ? "livekit" : "builtin",
     });
   };
   const voiceStatus: VoiceStatus | null =
@@ -1063,7 +1069,7 @@ function SpaceShell() {
             activeGroup={activeGroup}
             activeSnapshot={activeSnapshot}
             phoneCallsEnabled={Boolean(bootstrapMe?.phoneCallsEnabled)}
-            voiceReady={Boolean(voiceStatus?.ready)}
+            voiceReady={livekitCalls || Boolean(voiceStatus?.ready)}
             inCall={Boolean(active) && call?.botId === active?.id}
             panelOpen={chatPanelOpen}
             onOpenNavigation={() => setMobileSidebarOpen(true)}

@@ -26,6 +26,7 @@ import { getGlobalBroadcastChannel } from "better-auth/client";
 import { useSyncExternalStore } from "react";
 import { pickUp } from "./call-pickup.js";
 import { dictation } from "./dictation.js";
+import * as livekit from "./livekit-call-session.js";
 import {
   newLogoAvatarActivitySource,
   openLogoAvatarActivityFeed,
@@ -127,13 +128,16 @@ const watchers = new Set<() => void>();
 
 export function subscribe(watcher: () => void): () => void {
   watchers.add(watcher);
+  const unsubscribeLivekit = livekit.subscribe(watcher);
   return () => {
     watchers.delete(watcher);
+    unsubscribeLivekit();
   };
 }
 
+/** One call at a time, on either transport: a room call shows through the same store. */
 export function getSnapshot(): CallState | null {
-  return state;
+  return state ?? livekit.getSnapshot();
 }
 
 export function useCallSession(): CallState | null {
@@ -158,9 +162,16 @@ export function startCall(call: {
   transcribe?: boolean;
   /** The bot called and the user picked up: no ringing, and the bot speaks first. */
   answered?: { callId: string; opening: string };
+  /** `livekit` holds the call in a room with the deployment's voice agent (VOICE_AGENT_URL). */
+  transport?: "builtin" | "livekit";
 }): void {
   if (leaving) return;
   endCall();
+  // The agent runs the conversation; only outgoing calls go there, incoming ones ring here.
+  if (call.transport === "livekit" && !call.answered) {
+    livekit.startCall(call);
+    return;
+  }
   callId = call.answered?.callId ?? newClientId();
   transcribe = call.transcribe;
   spokenMemory.clear();
@@ -266,6 +277,8 @@ export function endCall(): void {
 
 /** Stops the call on this device only. */
 function dropCall(): void {
+  // A room call ends by leaving the room; the agent then closes it server-side.
+  livekit.endCall();
   pickup?.abort();
   pickup = null;
   openingPending = false;
@@ -391,6 +404,10 @@ function publishSignedInUser(userId: string | null): void {
 }
 
 export function toggleMute(): void {
+  if (livekit.isActive()) {
+    livekit.toggleMute();
+    return;
+  }
   if (!state) return;
   const muted = !state.muted;
   set({ muted });
@@ -405,11 +422,19 @@ export function toggleMute(): void {
 }
 
 export function toggleTranscript(): void {
+  if (livekit.isActive()) {
+    livekit.toggleTranscript();
+    return;
+  }
   if (!state) return;
   set({ transcriptOpen: !state.transcriptOpen });
 }
 
 export function setCallMinimized(minimized: boolean): void {
+  if (livekit.isActive()) {
+    livekit.setCallMinimized(minimized);
+    return;
+  }
   if (!state) return;
   set({ minimized });
 }
