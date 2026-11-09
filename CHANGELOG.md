@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- An example duplex voice front-end built on LiveKit Agents (`examples/livekit-voice-agent/`): a worker that joins a LiveKit room, transcribes with Deepgram, sends each utterance to a bot as a call turn and speaks the reply as it streams, with barge-in. Kokoro TTS is available behind a flag. The app itself is unchanged.
+
 ### Fixed
 
 - Connecting an MCP server whose OAuth asks for many permissions, such as PostHog's, no longer fails with "MCP URL exceeds 2048 characters". The browser sign-in link now has its own, larger limit, while MCP server addresses keep the 2,048-character one.
