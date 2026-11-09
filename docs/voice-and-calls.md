@@ -53,8 +53,8 @@ Set `VOICE_AGENT_URL` on the API to the agent's token server. **Call** then asks
 room token, joins the agent's room from the browser, and shows the same call window: **Mute**
 turns your microphone off, the **Transcript** fills from the agent's captions, and **Hang up**
 leaves the room. Bots that call you still ring in the app and use the built-in call. Add the
-LiveKit server's `https://` origin to `RAKAZO_CSP_CONNECT_SRC` so the browser may open the
-signalling connection. Unset `VOICE_AGENT_URL` to go back to the built-in call; nothing else
+LiveKit server's `wss://` origin to `RAKAZO_CSP_CONNECT_SRC` on the web service so the browser
+may open the signalling connection. Unset `VOICE_AGENT_URL` to go back to the built-in call; nothing else
 changes.
 
 ## On mobile

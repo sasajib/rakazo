@@ -107,9 +107,11 @@ The web server sends a strict Content-Security-Policy: scripts and connections a
 app's own origin. When a CDN in front of the app injects a script, such as an analytics beacon, the
 browser blocks it until you add its origins. `RAKAZO_CSP_SCRIPT_SRC` extends `script-src` and
 `RAKAZO_CSP_CONNECT_SRC` extends `connect-src`. Each takes space-separated `https://` origins, with
-an optional port and leading `*.` wildcard (`https://*.example.com`). Keywords such as
-`'unsafe-inline'`, bare schemes, `*`, `http://` origins and paths are rejected, and the web server
-refuses to start until the value is fixed. Restart the web service after changing either one.
+an optional port and leading `*.` wildcard (`https://*.example.com`); `RAKAZO_CSP_CONNECT_SRC` also
+takes `wss://` origins, for example a [LiveKit voice agent](./voice-and-calls.md#duplex-calls-with-a-livekit-agent)'s
+signalling server. Keywords such as `'unsafe-inline'`, bare schemes, `*`, `http://` origins and paths
+are rejected, and the web server refuses to start until the value is fixed. Restart the web service
+after changing either one.
 
 For example, Cloudflare Web Analytics loads its script from one host and reports to another:
 

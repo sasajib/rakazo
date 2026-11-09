@@ -87,30 +87,39 @@ export function parseCrispWebsiteId(value: string | undefined): string | null {
   return id.toLowerCase();
 }
 
-// An https origin with an optional port and no path. A wildcard covers subdomains of a base with at
+// An origin with an optional port and no path. A wildcard covers subdomains of a base with at
 // least two labels (https://*.example.com), so it cannot cover a whole top-level domain.
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
 const EXTRA_SOURCE = new RegExp(
-  `^https://(?:\\*\\.${LABEL}(?:\\.${LABEL})+|${LABEL}(?:\\.${LABEL})*)(?::(\\d{1,5}))?$`,
+  `^(https|wss)://(?:\\*\\.${LABEL}(?:\\.${LABEL})+|${LABEL}(?:\\.${LABEL})*)(?::(\\d{1,5}))?$`,
   "i",
 );
 
-function validSource(source: string) {
+function validSource(source: string, schemes: readonly string[]) {
   const match = EXTRA_SOURCE.exec(source);
-  const port = match?.[1];
-  return Boolean(match) && (port === undefined || (Number(port) >= 1 && Number(port) <= 65535));
+  if (!match || !schemes.includes(match[1]!.toLowerCase())) return false;
+  const port = match[2];
+  return port === undefined || (Number(port) >= 1 && Number(port) <= 65535);
 }
 
 /**
  * Parses an operator's space- or comma-separated list of extra origins. Anything but an https
  * origin throws, so a typo cannot widen the policy to a keyword, a scheme or every host.
+ * `connect-src` may also take wss:// origins: a secure https source does not cover a WebSocket
+ * to the same host (CSP3 matches wss from a wss or ws source only), and a voice agent's
+ * LiveKit signalling is one.
  */
-export function parseContentSecuritySources(setting: string, value: string | undefined) {
+export function parseContentSecuritySources(
+  setting: string,
+  value: string | undefined,
+  schemes: readonly string[] = ["https"],
+) {
   const sources = (value ?? "").split(/[\s,]+/).filter(Boolean);
-  const invalid = sources.filter((source) => !validSource(source));
+  const invalid = sources.filter((source) => !validSource(source, schemes));
   if (invalid.length > 0) {
+    const accepted = schemes.map((scheme) => `${scheme}://`).join(" or ");
     throw new Error(
-      `${setting} accepts only https:// origins such as https://cdn.example.com or https://*.example.com. Invalid: ${invalid.join(" ")}`,
+      `${setting} accepts only ${accepted} origins such as https://cdn.example.com or https://*.example.com. Invalid: ${invalid.join(" ")}`,
     );
   }
   return [...new Set(sources.map((source) => source.toLowerCase()))];
