@@ -79,7 +79,13 @@ $("usebearer").onclick = async () => { token = $("bearer").value.trim(); try { a
 $("start").onclick = async () => {
   try {
     const grant = await rakazo("/token", { method: "POST", body: JSON.stringify({ botId: $("bot").value, spaceId: $("space").value }) });
-    room = new Room({ adaptiveStream: false, dynacast: false });
+    room = new Room({
+      adaptiveStream: false,
+      dynacast: false,
+      // Laptop speakers feed the bot's voice back into the mic; without these the agent hears
+      // itself (and asked for headphones). Explicit so no browser default decides it.
+      audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
     room.on(RoomEvent.TrackSubscribed, (track) => { if (track.kind === Track.Kind.Audio) track.attach($("remote")); });
     room.on(RoomEvent.ParticipantConnected, (p) => log(`${p.identity} joined`));
     room.on(RoomEvent.Disconnected, () => { log("Call ended"); show("call", false); show("pick", true); });

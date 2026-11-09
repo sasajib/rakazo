@@ -376,7 +376,16 @@ async def entrypoint(ctx: JobContext) -> None:
     stt, turn_detection = make_stt()
     turn_handling: TurnHandlingOptions = {
         # Barge-in: VAD-based, so the caller can cut a long reply short (the remainder is dropped).
-        "interruption": {"enabled": True, "mode": "vad", "min_duration": 0.5},
+        # An interruption is final: the framework default pauses playback and RESUMES it when no
+        # transcript is committed within 2 s, which on a laptop mic reads as "it ignored me and
+        # kept talking". A caller who speaks over the bot means it.
+        "interruption": {
+            "enabled": True,
+            "mode": "vad",
+            "min_duration": float(os.environ.get("VOICE_INTERRUPT_MIN_S", "0.4")),
+            "resume_false_interruption": False,
+            "false_interruption_timeout": None,
+        },
         # Rakazo needs the finished utterance; never start a turn on an interim transcript.
         "preemptive_generation": {"enabled": False},
     }
@@ -398,6 +407,11 @@ async def entrypoint(ctx: JobContext) -> None:
     @session.on("agent_state_changed")
     def _on_state(ev):  # type: ignore[no-untyped-def]
         logger.info("agent %s -> %s", ev.old_state, ev.new_state)
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev):  # type: ignore[no-untyped-def]
+        # "speaking" while the agent is speaking is the moment barge-in should fire.
+        logger.info("user %s -> %s (agent is %s)", ev.old_state, ev.new_state, session.agent_state)
 
     @session.on("speech_created")
     def _on_speech(ev):  # type: ignore[no-untyped-def]
