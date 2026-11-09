@@ -29,6 +29,18 @@ describe("loadEnv", () => {
     }
     expect(loadEnv({ ...base, PHONE_CALLS_ENABLED: "true" }).phoneCallsEnabled).toBe(true);
   });
+  it("leaves the LiveKit voice agent off unless VOICE_AGENT_URL is an http(s) URL", () => {
+    expect(loadEnv(base).voiceAgentUrl).toBeUndefined();
+    expect(loadEnv({ ...base, VOICE_AGENT_URL: " " }).voiceAgentUrl).toBeUndefined();
+    expect(loadEnv({ ...base, VOICE_AGENT_URL: "http://token:8080/" }).voiceAgentUrl).toBe(
+      "http://token:8080",
+    );
+    expect(() => loadEnv({ ...base, VOICE_AGENT_URL: "token:8080" })).toThrow("VOICE_AGENT_URL");
+    expect(() => loadEnv({ ...base, VOICE_AGENT_URL: "ftp://token" })).toThrow("VOICE_AGENT_URL");
+    expect(loadEnv({ ...base, VOICE_AGENT_INTERNAL_TOKEN: " t " }).voiceAgentInternalToken).toBe(
+      "t",
+    );
+  });
   it("parses the call ring window and falls back for invalid values", () => {
     expect(loadEnv(base).phoneCallRingSeconds).toBe(45);
     expect(loadEnv({ ...base, PHONE_CALL_RING_SECONDS: "90" }).phoneCallRingSeconds).toBe(90);

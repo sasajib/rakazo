@@ -86,6 +86,10 @@ export interface AppEnv {
   maxAttachmentsPerMessage: number;
   /** Bot replies longer than this are read aloud as a summary; unset reads every reply in full. */
   voiceSummaryMinChars: number | undefined;
+  /** A LiveKit voice agent's token server (VOICE_AGENT_URL); unset keeps the built-in call loop. */
+  voiceAgentUrl: string | undefined;
+  /** Shared with that token server's internal endpoints (VOICE_AGENT_INTERNAL_TOKEN). */
+  voiceAgentInternalToken: string | undefined;
   sandboxSupervisorUrl: string;
   sandboxSupervisorToken: string | undefined;
   screenProxySecret: string;
@@ -276,6 +280,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     maxUploadSizeBytes: uploadSizeFromEnv(source),
     maxAttachmentsPerMessage: attachmentCountFromEnv(source),
     voiceSummaryMinChars: voiceSummaryMinCharsFromEnv(source.VOICE_SUMMARY_MIN_CHARS),
+    voiceAgentUrl: voiceAgentUrlFromEnv(source.VOICE_AGENT_URL),
+    voiceAgentInternalToken: optional(source.VOICE_AGENT_INTERNAL_TOKEN),
     sandboxSupervisorUrl: source.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
     sandboxSupervisorToken:
       sandboxProvider === "docker" ? resolveSupervisorToken(source) : undefined,
@@ -422,6 +428,22 @@ function browserMonitoringFromEnv(source: NodeJS.ProcessEnv): AppEnv["browserMon
     release: optional(source.SENTRY_RELEASE) ?? (sha === "unknown" ? undefined : sha),
     pseudonymSecret: monitoringPseudonymSecret(source),
   };
+}
+
+/** An http(s) base URL without a trailing slash; anything else is a configuration error. */
+function voiceAgentUrlFromEnv(value: string | undefined): string | undefined {
+  const raw = optional(value);
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("VOICE_AGENT_URL must be an http(s) URL such as http://voice-token:8080");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("VOICE_AGENT_URL must be an http(s) URL such as http://voice-token:8080");
+  }
+  return raw.replace(/\/+$/, "");
 }
 
 function voiceSummaryMinCharsFromEnv(value: string | undefined): number | undefined {

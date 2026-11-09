@@ -166,6 +166,7 @@ import { createSpeechSummarizer } from "./speech-summary.js";
 import { settleWithTimeout } from "./team-chat-startup.js";
 import { endUserDeviceSession, mountUserDeviceRoutes } from "./user-devices.js";
 import { mountVoiceHttpRoutes } from "./voice.js";
+import { callerBearerFromRequest, mountVoiceAgentRoutes } from "./voice-agent.js";
 import { mountWebhookHttpRoutes } from "./webhook.js";
 
 /**
@@ -1008,6 +1009,16 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
   });
+  // Duplex calls through a LiveKit agent, present only when VOICE_AGENT_URL is set.
+  mountVoiceAgentRoutes(
+    app,
+    {
+      env,
+      callerBearer: async (c) =>
+        callerBearerFromRequest(c, (await auth.$context).authCookies.sessionToken.name),
+    },
+    async (c) => sessionActor(c.req.raw),
+  );
   mountAccountImportRoute(
     app,
     {
