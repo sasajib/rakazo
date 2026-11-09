@@ -1,9 +1,9 @@
-import type { CallExchange } from "@rakazo/core";
-import type { CallState } from "./call-session.js";
+import type { CallExchange } from "./call-session.js";
 
 /**
- * Pure state mapping for a LiveKit call, so the room glue in livekit-call-session.ts stays thin
- * and this part is unit-tested without a browser or a room.
+ * Pure state mapping for a LiveKit call, so the room glue (apps/web/src/lib/livekit-call-session.ts
+ * and apps/mobile/lib/livekit-call-session.ts) stays thin and this part is unit-tested without a
+ * browser, a device or a room.
  *
  * The agent (livekit-agents AgentSession) publishes its state as the participant attribute
  * `lk.agent.state` and both sides' transcripts as `lk.transcription` text streams carrying
@@ -15,10 +15,11 @@ export const TRANSCRIPTION_TOPIC = "lk.transcription";
 export const SEGMENT_ID_ATTRIBUTE = "lk.segment_id";
 export const TRANSCRIPTION_FINAL_ATTRIBUTE = "lk.transcription_final";
 
-export type CallPhase = CallState["phase"];
+/** The phases both call cards render; an agent state maps onto one of these or nothing. */
+export type LivekitCallPhase = "listening" | "thinking" | "speaking";
 
 /** The agent's `lk.agent.state`, mapped onto the phases CallCard already renders. */
-export function phaseFromAgentState(value: string | undefined): CallPhase | null {
+export function phaseFromAgentState(value: string | undefined): LivekitCallPhase | null {
   switch (value) {
     case "listening":
     case "idle":

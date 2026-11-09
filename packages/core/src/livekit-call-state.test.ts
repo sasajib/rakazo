@@ -3,7 +3,7 @@ import {
   createLivekitTranscript,
   phaseFromAgentState,
   segmentFromStream,
-} from "./livekit-call-state";
+} from "./livekit-call-state.js";
 
 describe("phaseFromAgentState", () => {
   it("maps the agent's lk.agent.state onto the call card's phases", () => {

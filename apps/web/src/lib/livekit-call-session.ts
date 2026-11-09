@@ -1,14 +1,14 @@
 import { t } from "@lingui/core/macro";
 import type { BotAvatarSet } from "@rakazo/contracts";
-import type { Room } from "livekit-client";
-import type { CallState } from "./call-session.js";
 import {
   AGENT_STATE_ATTRIBUTE,
   createLivekitTranscript,
   phaseFromAgentState,
   segmentFromStream,
   TRANSCRIPTION_TOPIC,
-} from "./livekit-call-state.js";
+} from "@rakazo/core";
+import type { Room } from "livekit-client";
+import type { CallState } from "./call-session.js";
 import { reportClientError } from "./monitoring";
 import { errorText } from "./user-error";
 import { fetchLivekitCallGrant } from "./voice-agent.js";
