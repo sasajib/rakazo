@@ -41,6 +41,22 @@ Bots can call you too: ask "call me at 5 to go over the day", or a bot may call 
 the same reminder several times. You'll see that the bot is calling you; answer or **Decline**. A
 missed call shows **Call back** in the chat.
 
+## Duplex calls with a LiveKit agent
+
+The built-in call takes turns: it listens until you pause, sends what it heard, and speaks the
+reply once the bot is done. A self-hosted deployment can hand the whole conversation to a
+[LiveKit](https://livekit.io) voice agent instead, so you can talk over the bot and hear replies as
+they stream. The reference agent lives in `examples/livekit-voice-agent/`; it speaks to the bot's
+thread on your behalf, publishes live captions, and closes the call for you when you hang up.
+
+Set `VOICE_AGENT_URL` on the API to the agent's token server. **Call** then asks the API for a
+room token, joins the agent's room from the browser, and shows the same call window: **Mute**
+turns your microphone off, the **Transcript** fills from the agent's captions, and **Hang up**
+leaves the room. Bots that call you still ring in the app and use the built-in call. Add the
+LiveKit server's `https://` origin to `RAKAZO_CSP_CONNECT_SRC` so the browser may open the
+signalling connection. Unset `VOICE_AGENT_URL` to go back to the built-in call; nothing else
+changes.
+
 ## On mobile
 
 The mobile app uses your phone's own speech recognition and voices for calls. Pick a

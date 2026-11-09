@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Self-hosted deployments can route the in-app **Call** through a LiveKit voice agent (`VOICE_AGENT_URL`), for a duplex call with live captions and barge-in instead of the built-in turn-taking loop. Unset, calls work as before.
+
 ## [0.9.0] - 2026-11-10
 
 ### Security
