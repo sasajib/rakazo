@@ -96,7 +96,7 @@ Rakazo's run start dominates; the voice pipeline adds about a second in total.
 
 ## Switching to Kokoro
 
-Set `TTS_PROVIDER=kokoro` and `KOKORO_BASE_URL` (any OpenAI-compatible `/v1/audio/speech`, e.g. [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI)); the agent then uses `livekit.plugins.openai.TTS(base_url=…, model="kokoro", voice=KOKORO_VOICE, response_format="pcm")`. The HTTP TTS plugin has no input streaming, but the session still sends sentence by sentence and streams the response body. Measure time-to-first-byte on your CPU before relying on it for conversation.
+Set `TTS_PROVIDER=kokoro` and `KOKORO_BASE_URL` (any OpenAI-compatible `/v1/audio/speech`, e.g. [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI)); the agent then uses `livekit.plugins.openai.TTS(base_url=…, model="kokoro", voice=KOKORO_VOICE, response_format="pcm")`. The HTTP TTS plugin has no input streaming, but the session still sends sentence by sentence and streams the response body. Measured on an 8-vCPU host with no GPU (Kokoro-FastAPI v0.10.0, `TARGET_MIN_TOKENS=20`, `TARGET_MAX_TOKENS=80`): first audio ~0.6 s for a short sentence, ~1.5 s for a 15-word one, so a turn starts speaking roughly 0.7 s later than with Deepgram Aura-2 — acceptable for conversation and free. Kokoro-FastAPI older than v0.9 does not stream: it renders the whole request before the first byte, so upgrade before using it here.
 
 ## Limits
 
