@@ -42,6 +42,7 @@ import type { DictationGiveUp } from "./dictation";
 import * as dictation from "./dictation";
 import { hapticImpact, hapticSuccess } from "./haptics";
 import { deviceLanguage, getActiveUiLocale } from "./i18n";
+import * as livekit from "./livekit-call-session";
 import type { MobileSnapshot } from "./mobile-types";
 import { blockText } from "./mobile-types";
 import { reportMobileError } from "./monitoring";
@@ -195,18 +196,22 @@ let switching = false;
 const watchers = new Set<() => void>();
 
 subscribeSessionGeneration(() => {
-  if (state && currentSessionGeneration() !== callSessionGeneration) endCall();
+  if ((state || livekit.isActive()) && currentSessionGeneration() !== callSessionGeneration)
+    endCall();
 });
 
 export function subscribe(watcher: () => void): () => void {
   watchers.add(watcher);
+  const unsubscribeLivekit = livekit.subscribe(watcher);
   return () => {
     watchers.delete(watcher);
+    unsubscribeLivekit();
   };
 }
 
+/** One call at a time, on either transport: a room call shows through the same store. */
 export function getSnapshot(): CallState | null {
-  return state;
+  return state ?? livekit.getSnapshot();
 }
 
 export function useCallSession(): CallState | null {
@@ -244,12 +249,23 @@ export function startCall(
     switchBot?: (text: string) => CallSwitch | undefined;
     /** The session the caller's setup began in; no call starts once it has changed. */
     session?: number;
+    /**
+     * `livekit` holds the call in a room with the deployment's voice agent (VOICE_AGENT_URL):
+     * the agent speaks, listens and greets, so `greeting`, `transcribe` and `switchBot` do not
+     * apply. Default `builtin`.
+     */
+    transport?: "builtin" | "livekit";
   },
   overrides: Partial<CallDeps> = {},
 ): string | undefined {
   if (call.session !== undefined && call.session !== currentSessionGeneration()) return undefined;
   endCall();
   callSessionGeneration = currentSessionGeneration();
+  if (call.transport === "livekit") {
+    // The server mints a fresh call's id with the room grant; only an answered call knows it.
+    livekit.startCall(call);
+    return call.answered?.callId;
+  }
   deps = { ...productionDeps(call.requestContext), ...overrides };
   switchBot = call.switchBot;
   callId = call.answered?.callId ?? newClientId();
@@ -303,7 +319,7 @@ export function setCallProviderTranscribe(enabled: boolean, forCallId?: string):
 
 /** The app's Hang up action; shared or system-driven cleanup stays silent. */
 export function hangUp(): void {
-  if (!state) return;
+  if (!state && !livekit.isActive()) return;
   hapticImpact();
   endCall();
 }
@@ -326,6 +342,8 @@ export function endCall(): void {
     // A reply can still be playing when the caller hangs up: cut it with the call.
     deps.stopSpeaking();
   }
+  // A room call ends by leaving the room; the agent then closes it server-side.
+  livekit.endCall();
   turn?.abort();
   turn = null;
   unwatch?.();
@@ -378,6 +396,10 @@ export async function endCallBeforeSessionEnd(): Promise<void> {
 configureSessionEndHangUp(endCallBeforeSessionEnd);
 
 export function toggleMute(): void {
+  if (livekit.isActive()) {
+    livekit.toggleMute();
+    return;
+  }
   if (!state) return;
   const muted = !state.muted;
   set({ muted, heard: "" });
@@ -393,6 +415,10 @@ export function toggleMute(): void {
 }
 
 export function toggleTranscript(): void {
+  if (livekit.isActive()) {
+    livekit.toggleTranscript();
+    return;
+  }
   if (!state) return;
   set({ transcriptOpen: !state.transcriptOpen });
 }

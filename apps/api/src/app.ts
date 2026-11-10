@@ -83,13 +83,18 @@ import {
   createDirectory,
   isBlockedAuthPath,
 } from "@rakazo/auth";
-import type { Actor, AuthCapabilities } from "@rakazo/contracts";
+import type { Actor, AuthCapabilities, MessageBlock } from "@rakazo/contracts";
 import {
   isLocalhostOrLoopbackIp,
   PLUGIN_SUBMISSIONS_PATH,
   SERVER_BUILD_HEADER,
 } from "@rakazo/contracts";
-import { encryptionKeyWarning, signupPolicyFromEnv } from "@rakazo/core";
+import {
+  callRequestBlock,
+  callRequestClientNonce,
+  encryptionKeyWarning,
+  signupPolicyFromEnv,
+} from "@rakazo/core";
 import type { Pool, PrismaClient } from "@rakazo/db";
 import {
   configureProviderTransactionPool,
@@ -107,6 +112,7 @@ import {
   requireMembership,
   rowSecurityWarning,
   runAsSystem,
+  runAsTenant,
   verifyContentKeys,
 } from "@rakazo/db";
 import type { Logger } from "@rakazo/logging";
@@ -164,8 +170,10 @@ import { mountSharedPages } from "./shared-pages.js";
 import { afterSpaceDeparture } from "./space-departure.js";
 import { createSpeechSummarizer } from "./speech-summary.js";
 import { settleWithTimeout } from "./team-chat-startup.js";
+import { resolveThreadTarget } from "./thread-target.js";
 import { endUserDeviceSession, mountUserDeviceRoutes } from "./user-devices.js";
 import { mountVoiceHttpRoutes } from "./voice.js";
+import { callerBearerFromRequest, mountVoiceAgentRoutes } from "./voice-agent.js";
 import { mountWebhookHttpRoutes } from "./webhook.js";
 
 /**
@@ -1008,6 +1016,40 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
   });
+  // Duplex calls through a LiveKit agent, present only when VOICE_AGENT_URL is set.
+  mountVoiceAgentRoutes(
+    app,
+    {
+      env,
+      callerBearer: async (c) =>
+        callerBearerFromRequest(c, (await auth.$context).authCookies.sessionToken.name),
+      // The bot's call the user answered: only its own chat holds the request, and only an
+      // `answered` one may name the room (threads/answerCall moved it there a moment ago).
+      answeredCall: (actor, input) =>
+        // Row security needs the tenant on this Hono route, as the oRPC handlers get it.
+        runAsTenant(actor, async () => {
+          let threadId: string;
+          try {
+            const target = await resolveThreadTarget(prisma, actor, { botId: input.botId });
+            if (target.kind !== "bot") return null;
+            threadId = target.threadId;
+          } catch (error) {
+            if (error instanceof IsolationError) return null;
+            throw error;
+          }
+          const message = await prisma.message.findUnique({
+            where: {
+              threadId_clientNonce: { threadId, clientNonce: callRequestClientNonce(input.callId) },
+            },
+            select: { role: true, blocks: true },
+          });
+          if (message?.role !== "bot" || !Array.isArray(message.blocks)) return null;
+          const block = callRequestBlock(message.blocks as MessageBlock[]);
+          return block?.status === "answered" ? { opening: block.opening } : null;
+        }),
+    },
+    async (c) => sessionActor(c.req.raw),
+  );
   mountAccountImportRoute(
     app,
     {

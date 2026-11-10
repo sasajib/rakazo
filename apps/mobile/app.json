@@ -37,6 +37,14 @@
         }
       ],
       "expo-localization",
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          }
+        }
+      ],
       "@react-native-vector-icons/ionicons",
       "@react-native-vector-icons/material-design-icons",
       [
@@ -92,6 +100,7 @@
       "./plugins/with-worklets-headers",
       "./plugins/with-lan-cleartext",
       "./plugins/with-android-no-gwp-asan",
+      "./plugins/with-livekit-proguard",
       "./plugins/with-agent-notifications",
       "./plugins/with-app-intents"
     ],

@@ -23,6 +23,7 @@ import { currentSessionGeneration } from "./session";
 import { speakerColorFor } from "./thread-message-text";
 import { errorText } from "./user-error";
 import { speakQueue, speakText } from "./voice";
+import { fetchVoiceAgentConfig, resolveCallTransport } from "./voice-agent";
 import {
   loadCallCallerName,
   probeProviderTranscribe,
@@ -215,6 +216,27 @@ export function useThreadVoiceCall({
     voiceCallStarting.current = true;
     const loadVoiceStatus = () => rpc("voice/status");
     try {
+      // The call keeps the Space it starts in: an organization or Space switch mid-call must
+      // not move its turns, speech or hang-up to another Space.
+      const requestContext: ApiRequestContext = await captureApiRequestContext();
+      // A LiveKit voice agent brings its own speech and greeting: the call needs no voice
+      // provider or dictation here, so the room is joined before any of that is checked.
+      const transport = await resolveCallTransport(() =>
+        fetchVoiceAgentConfig(requestContext, new AbortController().signal),
+      );
+      if (activeBotId.current !== targetBotId) return;
+      if (transport === "livekit") {
+        startCall({
+          botId: targetBotId,
+          botName: displayName ?? t`Bot`,
+          botColor: mentionBots.find((bot) => bot.id === targetBotId)?.color,
+          botAvatarSet: mentionBots.find((bot) => bot.id === targetBotId)?.avatarSet,
+          session: setupSession,
+          requestContext,
+          transport,
+        });
+        return;
+      }
       const [plan, callerName, greet] = await Promise.all([
         resolveVoiceCallPlan({
           loadDeviceVoiceEnabled,
@@ -241,9 +263,6 @@ export function useThreadVoiceCall({
         return;
       }
       const botName = displayName ?? t`Bot`;
-      // The call keeps the Space it starts in: an organization or Space switch mid-call must
-      // not move its turns, speech or hang-up to another Space.
-      const requestContext: ApiRequestContext = await captureApiRequestContext();
       const startedCallId = startCall({
         botId: targetBotId,
         botName,

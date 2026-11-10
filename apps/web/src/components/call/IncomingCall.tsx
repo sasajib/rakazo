@@ -56,10 +56,13 @@ function startRingtone(): () => void {
 export function IncomingCall({
   bots,
   transcribe,
+  transport,
   onAnswered,
 }: {
   bots: Bot[];
   transcribe?: boolean;
+  /** `livekit` answers into a room with the deployment's voice agent (VOICE_AGENT_URL). */
+  transport?: "builtin" | "livekit";
   onAnswered: (botId: string) => void;
 }) {
   const { t } = useLingui();
@@ -177,6 +180,7 @@ export function IncomingCall({
         botAvatarSet: bot.avatarSet,
         transcribe,
         answered: { callId: call.callId, opening: answered.opening },
+        ...(transport ? { transport } : {}),
       });
       onAnswered(bot.id);
     } catch (cause) {

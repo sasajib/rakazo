@@ -11,6 +11,8 @@ export function phoneCallSettings(source: Record<string, string | undefined> = {
     phoneCallsEnabled: source.PHONE_CALLS_ENABLED === "true",
     phoneCallCooldownMinutes: positive(source.PHONE_CALL_COOLDOWN_MINUTES, 2),
     phoneCallRingSeconds: positive(source.PHONE_CALL_RING_SECONDS, 45),
+    /** A LiveKit voice agent answers calls: the user needs no voice provider of their own. */
+    voiceAgentCalls: Boolean(source.VOICE_AGENT_URL?.trim()),
   };
 }
 

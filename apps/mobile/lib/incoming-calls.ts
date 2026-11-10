@@ -19,6 +19,7 @@ import { endCall, getSnapshot, startCall, subscribe as subscribeCall } from "./c
 import { registerCallPushToken } from "./push";
 import { serverHeaders } from "./server-headers";
 import { currentSessionGeneration, loadSessionToken, registerSessionDiskCache } from "./session";
+import { fetchVoiceAgentConfig, resolveCallTransport } from "./voice-agent";
 
 type Ringing = NonNullable<ReturnType<typeof ringingCall>>;
 export function usesNativeIncomingCallRingtone() {
@@ -283,7 +284,16 @@ export async function respondToMobileCall(call: IncomingBotCall, action: "answer
       // context belongs to the old generation, so the server keeps the call answered.
       if (generation !== currentSessionGeneration())
         throw new Error(t`Something went wrong. Try again.`);
-      const voice = await rpc("voice/status", {}, { requestContext: context });
+      // A LiveKit voice agent brings its own speech and speaks the bot's opening itself: the
+      // call needs no voice provider here. Otherwise the built-in call speaks the opening.
+      const answeredContext = context;
+      const transport = await resolveCallTransport(() =>
+        fetchVoiceAgentConfig(answeredContext, new AbortController().signal),
+      );
+      const voice =
+        transport === "livekit"
+          ? undefined
+          : await rpc("voice/status", {}, { requestContext: context });
       if (generation !== currentSessionGeneration())
         throw new Error(t`Something went wrong. Try again.`);
       if (nativeEnded.has(target.callId)) throw new Error(t`This call is no longer ringing.`);
@@ -295,11 +305,12 @@ export async function respondToMobileCall(call: IncomingBotCall, action: "answer
         botName: call.name,
         botColor: call.color,
         botAvatarSet: call.avatarSet,
-        transcribe: voice.transcribe,
+        transcribe: voice?.transcribe,
         greeting: result.opening,
         answered: { callId: target.callId },
         session: generation,
         requestContext: context,
+        transport,
       });
       await native?.finishAnswer(target.callId, true);
     }

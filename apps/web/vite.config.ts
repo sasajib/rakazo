@@ -516,9 +516,11 @@ export default defineConfig(({ command, mode }) => {
       "RAKAZO_CSP_SCRIPT_SRC",
       process.env.RAKAZO_CSP_SCRIPT_SRC ?? rootEnv.RAKAZO_CSP_SCRIPT_SRC,
     ),
+    // WebSocket origins too: a LiveKit voice agent's signalling (docs/voice-and-calls.md).
     connectSrc: parseContentSecuritySources(
       "RAKAZO_CSP_CONNECT_SRC",
       process.env.RAKAZO_CSP_CONNECT_SRC ?? rootEnv.RAKAZO_CSP_CONNECT_SRC,
+      ["https", "wss"],
     ),
     crisp: parseCrispWebsiteId(process.env.CRISP_WEBSITE_ID ?? rootEnv.CRISP_WEBSITE_ID) !== null,
   });
