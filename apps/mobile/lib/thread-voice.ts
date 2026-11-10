@@ -228,7 +228,7 @@ export function useThreadVoiceCall({
       if (transport === "livekit") {
         startCall({
           botId: targetBotId,
-          botName: displayName ?? t("Bot"),
+          botName: displayName ?? t`Bot`,
           botColor: mentionBots.find((bot) => bot.id === targetBotId)?.color,
           botAvatarSet: mentionBots.find((bot) => bot.id === targetBotId)?.avatarSet,
           session: setupSession,
@@ -263,9 +263,6 @@ export function useThreadVoiceCall({
         return;
       }
       const botName = displayName ?? t`Bot`;
-      // The call keeps the Space it starts in: an organization or Space switch mid-call must
-      // not move its turns, speech or hang-up to another Space.
-      const requestContext: ApiRequestContext = await captureApiRequestContext();
       const startedCallId = startCall({
         botId: targetBotId,
         botName,

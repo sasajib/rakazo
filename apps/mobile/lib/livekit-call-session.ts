@@ -98,7 +98,7 @@ export function startCall(call: LivekitCallStart, overrides: Partial<LivekitCall
     phase: "thinking",
     muted: false,
     transcriptOpen: false,
-    caption: t("Connecting…"),
+    caption: t`Connecting…`,
     heard: "",
     exchanges: [],
   };
@@ -110,7 +110,7 @@ export function startCall(call: LivekitCallStart, overrides: Partial<LivekitCall
     starting = null;
     reportMobileError(error, "voice.turn");
     // Shown where the built-in call shows its own failures, then the call closes.
-    set({ caption: errorText(error, t("Could not start the call.")), phase: "listening" });
+    set({ caption: errorText(error, t`Could not start the call.`), phase: "listening" });
     setTimeout(() => {
       if (state && state.botId === call.botId && !room) dropCall();
     }, 2_500);
@@ -122,7 +122,7 @@ async function connect(botId: string, controller: AbortController, callId?: stri
   if (!own) return;
   const { signal } = controller;
   if (!(await own.requestMicrophone())) {
-    throw new Error(t("Allow microphone access to call a bot."));
+    throw new Error(t`Allow microphone access to call a bot.`);
   }
   if (signal.aborted) return;
   const grant = await own.grant(botId, signal, callId);
@@ -157,7 +157,7 @@ async function connect(botId: string, controller: AbortController, callId?: stri
   });
   next.on(RoomEvent.MediaDevicesError, (error) => {
     reportMobileError(error, "voice.microphone");
-    set({ caption: errorText(error, t("Microphone failed.")) });
+    set({ caption: errorText(error, t`Microphone failed.`) });
   });
   next.registerTextStreamHandler(TRANSCRIPTION_TOPIC, async (reader, participant) => {
     // The agent sends the caller's own transcript under the caller's identity.
@@ -186,13 +186,13 @@ async function connect(botId: string, controller: AbortController, callId?: stri
   starting = null;
   hapticSuccess();
   // The agent may have joined first; a connecting caption that outlives it would be stale.
-  if (state?.caption === t("Connecting…")) set({ caption: "" });
+  if (state?.caption === t`Connecting…`) set({ caption: "" });
   for (const participant of next.remoteParticipants.values()) agentReported(participant.attributes);
   try {
     await next.localParticipant.setMicrophoneEnabled(!state?.muted);
   } catch (error) {
     reportMobileError(error, "voice.microphone");
-    set({ caption: errorText(error, t("Microphone failed.")) });
+    set({ caption: errorText(error, t`Microphone failed.`) });
   }
 }
 
@@ -224,7 +224,7 @@ export function toggleMute(): void {
   set({ muted, heard: muted ? "" : state.heard });
   void room?.localParticipant.setMicrophoneEnabled(!muted).catch((error: unknown) => {
     reportMobileError(error, "voice.microphone");
-    set({ caption: errorText(error, t("Microphone failed.")) });
+    set({ caption: errorText(error, t`Microphone failed.`) });
   });
 }
 

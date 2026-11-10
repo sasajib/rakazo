@@ -36,7 +36,7 @@ export async function fetchVoiceAgentConfig(
   if (res.status === 404) return BUILTIN;
   const body = await readJsonObjectWithin<{ mode?: unknown; error?: unknown }>(res, {
     maxBytes: MAX_RESPONSE_BYTES,
-    tooLargeMessage: t("Could not start the call."),
+    tooLargeMessage: t`Could not start the call.`,
     signal,
   });
   if (!res.ok) throw new Error(errorMessage(res, body));
@@ -67,12 +67,12 @@ export async function fetchLivekitCallGrant(
   );
   const grant = await readJsonObjectWithin<Partial<LivekitCallGrant> & { error?: unknown }>(res, {
     maxBytes: MAX_RESPONSE_BYTES,
-    tooLargeMessage: t("Could not start the call."),
+    tooLargeMessage: t`Could not start the call.`,
     signal,
   });
   if (!res.ok) throw new Error(errorMessage(res, grant));
   if (!grant.url || !grant.token || !grant.room || !grant.callId) {
-    throw new Error(t("Could not start the call."));
+    throw new Error(t`Could not start the call.`);
   }
   return { url: grant.url, token: grant.token, room: grant.room, callId: grant.callId };
 }
@@ -93,5 +93,5 @@ export async function resolveCallTransport(
 
 function errorMessage(res: Response, body: { error?: unknown }): string {
   if (typeof body.error === "string" && body.error) return body.error;
-  return res.status === 401 ? t("Sign in again") : t("Could not start the call.");
+  return res.status === 401 ? t`Sign in again` : t`Could not start the call.`;
 }
