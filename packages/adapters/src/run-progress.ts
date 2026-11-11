@@ -193,12 +193,36 @@ const FIRST_STEP_PHRASES: Record<string, string> = {
   message_user: "writing back",
 };
 
+/** A readable phrase for a tool nobody mapped: "list_fleet" reads as "checking your fleet". */
+function phraseForTool(toolName: string) {
+  const [verb, ...rest] = toolName.split("_");
+  const noun = rest.join(" ");
+  switch (verb) {
+    case "list":
+      return `checking your ${noun || "options"}`;
+    case "get":
+    case "read":
+      return `looking up the ${noun || "detail"}`;
+    case "create":
+      return `creating the ${noun || "item"}`;
+    case "update":
+    case "edit":
+      return `updating the ${noun || "item"}`;
+    case "delete":
+    case "archive":
+    case "remove":
+      return `${verb === "remove" ? "removing" : `${verb}ing`} the ${noun || "item"}`;
+    default:
+      return noun ? `${verb}ing the ${noun}` : toolName.replace(/_/g, " ");
+  }
+}
+
 /** The confirmation for a run that reached for a tool before saying anything. */
 export async function announceFirstStep(ctx: RunContext, toolName: string): Promise<void> {
   const { reply } = ctx.state;
   if (reply.midTurnProgressCount > 0 || reply.hasStreamedText) return;
   if (!isConversationalRun(ctx.run.trigger) || runAllowsSilentEmpty(ctx.run.trigger)) return;
-  const phrase = FIRST_STEP_PHRASES[toolName] ?? toolName.replace(/_/g, " ");
+  const phrase = FIRST_STEP_PHRASES[toolName] ?? phraseForTool(toolName);
   await publishInterimMessage(ctx, `On it — ${phrase}.`);
 }
 
