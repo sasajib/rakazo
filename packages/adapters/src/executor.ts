@@ -1,7 +1,7 @@
 import type { AgentRunRequest, ComputerRef, SemanticMemoryProvider } from "@rakazo/adapter-kit";
 import { DEFAULT_CONTEXT_STRATEGY, runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock, RunStatus } from "@rakazo/contracts";
-import { disabledBuiltinToolSet } from "@rakazo/contracts";
+import { BUILTIN_TOOL_NAMES, disabledBuiltinToolSet } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
   botMessageAllowsSilence,
@@ -12,6 +12,7 @@ import {
   isMessagingChannelRun,
   isOwnerStartedRun,
   isTerminal,
+  TALK_RUN_TRIGGER,
   messagingChannelId,
   messagingChannelPrivacyBlock,
   messagingDmSurfaceNote,
@@ -245,6 +246,17 @@ async function verbatimMcpServersForRun(
   return { ids: servers.map((server) => server.id), slugs: servers.map((server) => server.slug) };
 }
 
+/**
+ * What a talk run is told. It exists to answer the person now, beside work that is still going, so
+ * it must not narrate that work as finished and must not start any of its own.
+ */
+const TALK_RUN_INSTRUCTION = [
+  "You are answering a quick message from the person while your longer work continues in the background.",
+  "Answer in one to three short sentences, from what you already know and what the conversation above says.",
+  "You have no tools on this turn: do not start new work and do not read files or the computer.",
+  "Never say work is finished or done — it is still running. If they ask how it is going, say briefly what you are working on; if you do not know, say so.",
+].join(" ");
+
 export function createRunExecutor(executorDeps: ExecutorDeps) {
   const contextStrategy = executorDeps.contextStrategy ?? DEFAULT_CONTEXT_STRATEGY;
   const web = executorDeps.web ?? createWebProvider();
@@ -333,10 +345,13 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         },
       });
       if (!leaseTarget.computerId) throw new Error("Bot has no computer");
-      // A background helper never uses the computer, so it neither waits for a switch nor holds
-      // the bot's next turn.
+      // A background helper and a talk run never use the computer, so they neither wait for a
+      // switch nor hold the bot's next turn. That is what lets a talk run answer beside a long
+      // computer run of the same bot in the same thread instead of queueing behind it.
       const backgroundHelper = run.trigger === BACKGROUND_HELPER_TRIGGER;
-      if (leaseTarget.computerSwitching && !backgroundHelper) {
+      const talkRun = run.trigger === TALK_RUN_TRIGGER;
+      const leaseFreeRun = backgroundHelper || talkRun;
+      if (leaseTarget.computerSwitching && !leaseFreeRun) {
         await requeueComputerRun(deps, runId, workerId, fence, resumeCheckpoint, heldForTakeover);
         return;
       }
@@ -362,7 +377,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
       }
       let computerLease: ComputerExecutionLease | null = null;
       try {
-        computerLease = backgroundHelper
+        computerLease = leaseFreeRun
           ? null
           : await acquireComputerExecutionLease(deps.prisma, {
               computerId: leaseTarget.computerId,
@@ -373,7 +388,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               workerId,
               runFence: fence,
             });
-        if (!computerLease && !backgroundHelper && leaseTarget.computer?.scope === "dedicated") {
+        if (!computerLease && !leaseFreeRun && leaseTarget.computer?.scope === "dedicated") {
           computerLease = await acquireDedicatedScreenLeaseFence(deps.prisma, {
             computerId: leaseTarget.computerId,
             runId,
@@ -1218,10 +1233,15 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           deps.runtime.describe().capabilities.scripted ||
           modelSeesImages ||
           Boolean(computerModel || checkpointModelResolver);
-        const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover;
+        const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover && !talkRun;
         const pageBrowserAllowed =
-          graphical && browser.describe().capabilities.page && !heldForTakeover;
-        const disabledBuiltinTools = disabledBuiltinToolSet(bot.disabledBuiltinTools);
+          graphical && browser.describe().capabilities.page && !heldForTakeover && !talkRun;
+        // A talk run answers a message while the bot's own run keeps working. It holds no tool:
+        // it cannot start a second piece of work, touch the computer or write memory, so the run it
+        // runs beside stays the only writer of the bot's state. Its answer is its text.
+        const disabledBuiltinTools = talkRun
+          ? new Set<string>(BUILTIN_TOOL_NAMES)
+          : disabledBuiltinToolSet(bot.disabledBuiltinTools);
         const replyMode = runReplyMode(run.trigger, bot.replyMode, disabledBuiltinTools);
         const emailName = deps.inboundEmailDomain
           ? await deps.prisma.botEmailAddress.findUnique({
@@ -1609,6 +1629,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const prompt = [
           replyContext,
           run.trigger === "reaction" && replyContext ? undefined : basePrompt,
+          talkRun ? TALK_RUN_INSTRUCTION : undefined,
           takeoverResume?.promptNote,
           approvalContinuation,
           // A hang-up turn is read, not heard: no spoken-reply constraint.
@@ -1746,6 +1767,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               verbatimMcpServers,
               threadId: thread.id,
               runId,
+              ...(talkRun ? { sessionSuffix: "talk" } : {}),
               routineId: run.routineId,
               sourceMessageId: run.sourceMessageId,
               onUsage: async (event) => {

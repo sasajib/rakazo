@@ -72,3 +72,28 @@ A long run in the bot's **only** chat thread still blocks a typed or spoken mess
 same thread — the single-writer rule queues it. Answering during a long task needs the conversation
 lane described in `CHIEF-RESPONSIVENESS-RCA.md` (a lease-free, read-only lane with its own session
 id), which is a larger change than slot accounting.
+
+## Answering beside a long run (the talk lane)
+
+Concurrency gives a bot more slots; it does not let two runs write one conversation. So a message
+that lands in the bot's own chat thread while a run is working still cannot start a second run
+there — the single-writer rule refuses it.
+
+The **talk lane** is the exception that makes that feel right. When a message arrives while the
+bot's run has been working for at least `TALK_LANE_MIN_BUSY_MS` (8 s), the API also creates a
+`talk` run for the same thread:
+
+- it holds **no computer lease**, so it never waits for the working run (and the working run never
+  waits for it);
+- it holds **no tools** — it cannot start work, touch the computer or write memory, so the working
+  run stays the only writer of the bot's state;
+- it runs in its **own pi session** (`threadId:botId:talk`), so it never loads or rewrites the
+  working run's session;
+- it is told to answer in one to three sentences, and never to claim the work is finished;
+- the message is still written as **steering**, so the working run takes it up at its next step and
+  can change course. The person gets an answer now; the run keeps going.
+
+It is skipped for call turns (the voice agent speaks exactly one run's output), for another
+person's run, while a stop is being handled, and when a talk run is already live for that bot.
+Below the 8 s threshold the working run reads the steering within a second or two, so a second run
+would only duplicate the reply.

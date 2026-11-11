@@ -565,6 +565,11 @@ export interface AgentRunRequest {
   botId: string;
   threadId: string;
   runId: string;
+  /**
+   * Keeps this run's pi session apart from the bot's conversation session. A talk run uses "talk",
+   * so answering beside a long run never loads or rewrites that run's session state.
+   */
+  sessionSuffix?: string;
   routineId?: string | null;
   sourceMessageId?: string | null;
   prompt: string;

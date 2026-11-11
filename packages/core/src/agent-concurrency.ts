@@ -39,6 +39,9 @@ export const RUN_PRIORITY: Record<RunTrigger, number> = {
   cloud_agent: 40,
   spawn: 35,
   helper: 30,
+  // The person's message answered beside the bot's own run: it is a person turn, but the run it
+  // accompanies is already answering that person, so it starts just below a fresh user run.
+  talk: 48,
   // Another bot, or an app, talking to this one.
   messaging: 25,
   bot_message: 20,

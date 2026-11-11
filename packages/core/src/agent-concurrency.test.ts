@@ -13,6 +13,7 @@ import {
   runPriority,
   sameThreadWriterBlocks,
 } from "./agent-concurrency.js";
+import { talkLaneDue } from "./run-state.js";
 
 const now = new Date("2026-11-11T12:00:00Z");
 const botInput = (concurrency: number) => ({ botId: "bot-1", concurrency });
@@ -176,6 +177,47 @@ describe("planLeaseSlot", () => {
         now,
       }),
     ).toEqual({ kind: "reclaim", slot: 1 });
+  });
+});
+
+describe("talkLaneDue", () => {
+  const now = new Date("2026-11-11T12:00:00Z");
+  const started = (secondsAgo: number) => new Date(now.getTime() - secondsAgo * 1000);
+  const base = {
+    activeUserId: "user-1",
+    userId: "user-1",
+    hasLiveTalkRun: false,
+    isCallTurn: false,
+    stopping: false,
+    now,
+  };
+
+  it("answers beside a run that has been working a while", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30) })).toBe(true);
+  });
+
+  it("does not answer beside a run that just started, which reads steering in a second", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(2) })).toBe(false);
+  });
+
+  it("does not answer beside a run that is still queued", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: null })).toBe(false);
+  });
+
+  it("never answers twice for one message", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), hasLiveTalkRun: true })).toBe(false);
+  });
+
+  it("never answers a call turn twice: the agent speaks one run", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), isCallTurn: true })).toBe(false);
+  });
+
+  it("leaves another person's run alone", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), activeUserId: "user-2" })).toBe(false);
+  });
+
+  it("stays quiet while a stop is being handled", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), stopping: true })).toBe(false);
   });
 });
 

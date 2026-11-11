@@ -35,6 +35,8 @@ export const RUN_TRIGGERS = [
   "tickets",
   "helper",
   "helper_result",
+  // A short answer for the person while the bot's own run keeps working (see docs/agent-concurrency.md).
+  "talk",
 ] as const;
 export const RunTriggerSchema = z.enum(RUN_TRIGGERS);
 export type RunTrigger = z.infer<typeof RunTriggerSchema>;

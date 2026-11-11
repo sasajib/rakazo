@@ -26,13 +26,22 @@ const TERMINAL: RunStatus[] = ["completed", "failed", "cancelled"];
  * its reply goes back to that bot. The creation intro can only ask what it is for; a message
  * that lands during any of them waits, and the continuation after the turn finishes answers it.
  */
+/**
+ * The run that answers a message while the bot's own run is still working. It never touches the
+ * computer, so it neither waits for nor blocks the run it runs beside.
+ */
+export const TALK_RUN_TRIGGER = "talk";
+
 const NON_CONVERSATIONAL_RUN_TRIGGERS = new Set([
   "routine",
   "webhook",
   "created",
   "tickets",
   "bot_message",
+  // A talk run is the answer to one message, and is over in seconds: nothing steers it.
+  TALK_RUN_TRIGGER,
 ]);
+
 
 /**
  * Background triggers do internal work that must not leak into the chat: the
@@ -139,6 +148,35 @@ export function runReadsThreadHistory(trigger: string | null | undefined): boole
 }
 
 /** Whether a run's turn is part of the thread's conversation and may take user steering. */
+/** How long a run must have been working before a message earns an answer beside it. */
+export const TALK_LANE_MIN_BUSY_MS = 8_000;
+
+/**
+ * Whether a message sent while the bot is busy should also be answered now, beside the working run.
+ *
+ * The message still steers the working run; this decides whether the person additionally gets an
+ * immediate answer from a talk run. Short runs read steering within a second or two, so answering
+ * beside them would only duplicate the reply — hence the busy threshold. A call turn is never
+ * answered twice: the voice agent speaks exactly one run's output.
+ */
+export function talkLaneDue(input: {
+  /** When the working run started; null while it is still queued. */
+  activeStartedAt: Date | null | undefined;
+  /** Whose run is working; another person's run is not this person's conversation. */
+  activeUserId: string;
+  userId: string;
+  /** A live talk run already exists for this thread and bot. */
+  hasLiveTalkRun: boolean;
+  isCallTurn: boolean;
+  stopping: boolean;
+  now: Date;
+}): boolean {
+  if (input.stopping || input.isCallTurn || input.hasLiveTalkRun) return false;
+  if (input.activeUserId !== input.userId) return false;
+  if (!input.activeStartedAt) return false;
+  return input.now.getTime() - input.activeStartedAt.getTime() >= TALK_LANE_MIN_BUSY_MS;
+}
+
 export function isConversationalRun(trigger: string | null | undefined): boolean {
   return !NON_CONVERSATIONAL_RUN_TRIGGERS.has(trigger ?? "");
 }
