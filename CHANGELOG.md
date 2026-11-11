@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The LiveKit voice example keeps the call's conversation apart from the bot's work: only the run a turn started is spoken, a superseded turn stops at its next chunk, the active topic survives a follow-up and is replaced by a new subject, and background run updates are coalesced into one status sentence the caller has to ask for.
+
 ### Added
 
 - An example duplex voice front-end built on LiveKit Agents (`examples/livekit-voice-agent/`): a worker that joins a LiveKit room, transcribes with Deepgram, sends each utterance to a bot as a call turn and speaks the reply as it streams, with barge-in. Kokoro TTS is available behind a flag. The app itself is unchanged.

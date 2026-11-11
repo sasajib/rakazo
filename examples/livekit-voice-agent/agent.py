@@ -41,6 +41,7 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, openai, silero
 
+from conversation import ConversationState, belongs_to_turn
 from rakazo_client import (
     HEARTBEAT_EVENT,
     RUN_TERMINAL,
@@ -99,6 +100,9 @@ class RakazoAgent(Agent):
         self.call = call
         self.client = client
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # The call's conversation, kept apart from what the bot's other runs are doing.
+        self.state = ConversationState()
+        self._turn_run_id: str | None = None
         self._cursor = -1
         self._pump: asyncio.Task[None] | None = None
         self.hangup_requested = asyncio.Event()
@@ -139,9 +143,28 @@ class RakazoAgent(Agent):
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 15.0)
 
-    def _drain(self) -> None:
+    def _collect_pending(self) -> None:
+        """Take whatever arrived since the last turn as task notes, never as the next answer."""
         while not self.events.empty():
-            self.events.get_nowait()
+            event = self.events.get_nowait()
+            self._note_background(event)
+
+    def _note_background(self, event: dict[str, Any]) -> None:
+        """Remember what a run that is not this turn's said, so it can be reported on request."""
+        payload = event.get("payload") or {}
+        etype = event.get("type")
+        run_id = event.get("runId")
+        if etype == "thread.progress":
+            text = progress_text(payload)
+        elif etype == "thread.message.created" and payload.get("role") == "bot":
+            text = text_from_blocks(payload.get("blocks") or [])
+        elif etype in RUN_TERMINAL:
+            self.state.forget_task(run_id)
+            return
+        else:
+            return
+        if text:
+            self.state.note_task_event(run_id, text)
 
     # --- nodes ---------------------------------------------------------------------------------
 
@@ -153,28 +176,53 @@ class RakazoAgent(Agent):
             return
         t0 = time.monotonic()
         self._marks = {"turn_start": t0}
-        snapshot = await self.client.threads_get(self.call.bot_id)
-        turn = call_turn(snapshot, utterance)
-        logger.info("turn: %s", turn.kind, extra={"utterance": utterance, "callId": self.call.call_id})
+        # This turn owns the conversation from here: an older turn's generator sees is_current
+        # false and stops, so a slow answer can never be spoken as the reply to a newer question.
+        turn = self.state.begin_turn(utterance, now=t0)
+        logger.info(
+            "turn %d: %s on %r",
+            turn.id,
+            turn.kind,
+            turn.topic,
+            extra={"utterance": utterance, "callId": self.call.call_id},
+        )
 
-        if turn.kind == "enter_code":
+        # "What are you working on?" is answered from what this call has seen, in one sentence,
+        # instead of sending a turn that would read the whole thread's task history back.
+        if turn.kind == "status":
+            line = self.state.status_line(self.call.bot_name)
+            if line:
+                self.state.record_reply(line)
+                yield line
+                return
+
+        snapshot = await self.client.threads_get(self.call.bot_id)
+        decision = call_turn(snapshot, utterance)
+
+        if decision.kind == "enter_code":
             yield ENTER_CODE_LINE
             return
-        if turn.kind == "approve_on_screen":
+        if decision.kind == "approve_on_screen":
             yield APPROVE_ON_SCREEN_LINE
             return
 
         nonce = call_client_nonce(self.call.call_id)
-        self._drain()
+        self._collect_pending()
         try:
-            if turn.kind == "answer":
+            if decision.kind == "answer":
                 await self.client.threads_answer(
-                    self.call.bot_id, turn.run_id or "", turn.message_id or "", turn.answer or utterance, nonce
+                    self.call.bot_id,
+                    decision.run_id or "",
+                    decision.message_id or "",
+                    decision.answer or utterance,
+                    nonce,
                 )
-                run_id = turn.run_id
-            elif turn.kind == "follow_up":
-                await self.client.threads_follow_up(self.call.bot_id, utterance, nonce)
-                run_id = turn.run_id
+                run_id = decision.run_id
+            elif decision.kind == "follow_up":
+                # The receipt names the run this turn belongs to; the pending run may have ended
+                # and a new one started, and a stale id would filter out our own reply.
+                receipt = await self.client.threads_follow_up(self.call.bot_id, utterance, nonce)
+                run_id = receipt.get("runId") or decision.run_id
             else:
                 receipt = await self.client.threads_send(self.call.bot_id, utterance, nonce)
                 run_id = receipt.get("runId")
@@ -183,6 +231,7 @@ class RakazoAgent(Agent):
             yield "Sorry, I could not reach the assistant. Please try again."
             return
 
+        self._turn_run_id = run_id
         streamed: list[str] = []
         first_delta_at: float | None = None
         deadline = t0 + TURN_TIMEOUT_S
@@ -198,7 +247,6 @@ class RakazoAgent(Agent):
                     continue
                 etype = event.get("type")
                 payload = event.get("payload") or {}
-                ours = run_id is None or event.get("runId") == run_id or turn.kind == "follow_up"
 
                 if etype == "thread.call.ended":
                     farewell = (payload.get("farewell") or "").strip()
@@ -208,8 +256,15 @@ class RakazoAgent(Agent):
                         self.hangup_requested.set()
                         return
                     continue
-                if not ours:
+                # Only the run this turn started is this turn's answer. Everything else — a
+                # routine, another bot's report, a helper — is noted for a status question and
+                # never spoken as if the caller had asked for it.
+                if not belongs_to_turn(event.get("runId"), run_id):
+                    self._note_background(event)
                     continue
+                if not self.state.is_current(turn.id):
+                    logger.info("turn %d superseded; dropping its reply", turn.id)
+                    return
                 if etype == "thread.progress":
                     text = progress_text(payload)
                     if text:
@@ -229,16 +284,21 @@ class RakazoAgent(Agent):
                         yield rest
                 elif etype in RUN_TERMINAL:
                     logger.info("%s after %.2fs", etype, time.monotonic() - t0, extra={"runId": run_id})
+                    self.state.forget_task(run_id)
                     break
                 elif etype == "run.waiting_input":
                     # The ask card text arrived in thread.message.created; the run now waits for us.
                     break
         except (asyncio.CancelledError, GeneratorExit):
             logger.info(
-                "reply interrupted; dropping unspoken remainder (%d chars spoken so far)",
+                "turn %d interrupted; dropping unspoken remainder (%d chars spoken so far)",
+                turn.id,
                 sum(len(s) for s in streamed),
             )
             raise
+        finally:
+            self.state.record_reply("".join(streamed))
+            self.state.end_turn(turn.id)
 
     async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
         first = True

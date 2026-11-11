@@ -80,7 +80,7 @@ Add a second key pair to the server's `LIVEKIT_KEYS` (a YAML map) rather than re
    - a run is working → `threads/followUp` (steers that run);
    - otherwise → `threads/send`.
    Every send carries `clientNonce = "call:<callId>:<clientId>"`, so the worker adds Rakazo's voice-call instruction (one to three spoken sentences, `end_call` available).
-3. The reply is read from a single long-lived `threads/subscribe` stream per call: `thread.progress {text|delta, streaming}` is yielded to TTS as it arrives; the final `thread.message.created` fills any part that was not streamed (silent runs stream nothing); `run.completed|failed|cancelled` ends the turn. `thread.call.ended` with a farewell means the bot hung up: the farewell is spoken and the agent leaves.
+3. The reply is read from a single long-lived `threads/subscribe` stream per call: `thread.progress {text|delta, streaming}` is yielded to TTS as it arrives; the final `thread.message.created` fills any part that was not streamed (silent runs stream nothing); `run.completed|failed|cancelled` ends the turn. `thread.call.ended` with a farewell means the bot hung up: the farewell is spoken and the agent leaves. **Only events carrying the `runId` this turn started are spoken.** The bot's other runs — routines, other bots' reports, helpers — write into the same thread, and a loose match is how their progress gets read out as if it answered the caller.
 4. When the caller leaves the room the worker sends `threads/endCall {callId, durationSeconds}`.
 
 ### Bot-initiated calls (`call_user`)
@@ -88,6 +88,16 @@ Add a second key pair to the server's `LIVEKIT_KEYS` (a YAML map) rather than re
 When the bot rings the user, Rakazo's web client answers (`threads/answerCall`) and then asks its API for a room token **with the request's `callId`**; the API verifies the request stands at `answered` in that user's chat and forwards `{botId, spaceId, callId, opening}` to `POST /token` with `x-voice-internal-token`. The token server accepts a caller-named call only from that trusted broker (403 otherwise, 409 if another user already holds the room), names the room `rakazo-<callId>` and stores `opening` in the registry; the worker then speaks `opening` instead of `VOICE_GREETING` as its first line (`session.say`, an assistant turn, never sent to Rakazo). Everything else (turn nonces, `threads/endCall`) reuses the same `callId`, so the transcript and the call's record group under the bot's request. Headless: `scripts/synthetic_caller.py --call-id <callId> --token-url http://api/api/voice/agent ...`.
 
 Barge-in cancels the TTS and the generator; the Rakazo run is not stopped (its text is in the chat), and the remainder is never spoken, like the web client. Saying just "stop" while a run is active is interpreted by the server as Stop.
+
+### Conversation state, kept apart from the bot's work
+
+A bot has one thread, and everything it does lands in it. Handing that whole stream to the caller's ear is what makes a call feel like the bot is reporting on old tasks instead of answering. `conversation.py` keeps the call's own state:
+
+- one turn at a time, with an id: a reply whose turn has been superseded stops at its next chunk, so a slow answer cannot be spoken after a newer question;
+- the active topic, so a follow-up ("and how many people live there?") is recognised as a continuation and a new subject drops the old topic's notes;
+- task notes, coalesced per run and bounded, which are only ever spoken when the caller asks for status — answered in one sentence from what this call actually saw, without sending a turn that would read the thread's task history back.
+
+The state machine imports nothing from LiveKit, so it is tested on its own: `pytest tests/test_conversation.py`.
 
 ## Measured on a self-hosted box (2026-11-09)
 
