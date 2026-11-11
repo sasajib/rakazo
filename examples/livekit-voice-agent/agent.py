@@ -87,6 +87,7 @@ HEARTBEAT_FIRST_S = float(os.environ.get("RAKAZO_HEARTBEAT_FIRST_S", "9"))
 HEARTBEAT_EVERY_S = float(os.environ.get("RAKAZO_HEARTBEAT_EVERY_S", "14"))
 HEARTBEAT_QUIET_S = float(os.environ.get("RAKAZO_HEARTBEAT_QUIET_S", "6"))
 HEARTBEAT_MAX = 6
+PHRASE_IDLE_S = float(os.environ.get("RAKAZO_PHRASE_IDLE_S", "2.5"))
 SPEECH_WORDS_PER_S = 2.5
 TTS_START_S = 2.0
 
@@ -637,6 +638,7 @@ class RakazoAgent(Agent):
         # minute) was never voiced. Flush as soon as the stream pauses.
         unflushed = False
         gate = SentenceGate()
+        last_delta_at = 0.0
         said_first = False
         heartbeats = 0
 
@@ -667,15 +669,25 @@ class RakazoAgent(Agent):
                     logger.warning("turn timed out waiting for Rakazo", extra={"runId": run_id})
                     break
                 wait = remaining
-                if unflushed or gate._buffer:
+                if unflushed or gate.held:
                     wait = min(wait, FLUSH_AFTER_S)
                 else:
                     wait = min(wait, max(0.2, max(next_beat, self._voiced_until + HEARTBEAT_QUIET_S) - now))
                 try:
                     event = await asyncio.wait_for(self.events.get(), wait)
                 except asyncio.TimeoutError:
-                    if unflushed or gate._buffer:
-                        async for chunk in voice(gate.take(), "report" if reporting else "answer"):
+                    if unflushed or gate.held:
+                        held = gate.held
+                        if held and not held.rstrip().endswith((".", "!", "?")):
+                            # A sentence still being written: a short pause between chunks is the model
+                            # thinking ("I u" ... "nderstood"), not the end. Speak it only after a real
+                            # pause, and then only whole words.
+                            if time.monotonic() - last_delta_at < PHRASE_IDLE_S:
+                                continue
+                            text_out = gate.take_words()
+                        else:
+                            text_out = gate.take()
+                        async for chunk in voice(text_out, "report" if reporting else "answer"):
                             yield chunk
                         unflushed = False
                         yield FlushSentinel()
@@ -746,6 +758,7 @@ class RakazoAgent(Agent):
                             self._marks["first_delta"] = first_delta_at
                             logger.info("rakazo first delta after %.2fs", first_delta_at - t0)
                         streamed.append(text)
+                        last_delta_at = time.monotonic()
                         ready = gate.push(text)
                         if ready:
                             async for chunk in voice(ready, "report" if reporting else "answer"):
