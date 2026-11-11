@@ -120,3 +120,26 @@ Two honest limits:
 - **The talk answer is as fast as the model.** Here it took 45 s because the provider returned
   `429 inference service is overloaded` and the runtime retried; a healthy model answers in a few
   seconds. The lane removes the _queue_, not the model.
+
+## Voice: who answers, and what happens to an interrupted report
+
+A call is a conversation with a run in the background, so a spoken turn has to be routed on what the
+caller is doing, not only on whether the bot is busy. The agent tags each turn (`answerNow`) from its
+own conversation state; the server honours the tag (and reads the text when an older client sends
+none).
+
+| The caller | What happens |
+|---|---|
+| Asks something ("what is the capital…?", "how long will it take") | The turn gets its **own run** (talk lane), the busy run keeps working. The caller hears the answer to the question. |
+| Says "hmm", "okay", "go on" **while a question is still being answered** | Still tagged: the caller is waiting on that answer, so it keeps its own run. |
+| Says "hmm", "okay" **with no question open** (just listening to a task report) | Not tagged: no second run starts, and the busy run keeps reporting what it is doing. |
+| **Interrupts a report** to ask a question | The report stops, the question is answered, then one short line offers the rest: "…still has the rest of that update — say go on and I'll finish it." Offered once per interruption. |
+| Says "go on" / "continue" / "the rest" after that | The interrupted report is spoken from what the call captured, with **no model call**. |
+| Asks another question while a report is paused | The new question is answered; the paused report stays available and is not offered twice. |
+| Starts a clearly new subject | The paused report is still theirs to ask for; it is not thrown away and not re-offered. |
+| Interrupts an *answer* with another question | The newest question wins (per-turn identity); the superseded answer stops at its next chunk. |
+| Says "stop" | The server treats it as Stop; the call ends or the run stops. |
+
+The report offered back is the text this call heard or was given, so a run that finished while the
+caller was talking still leaves a coherent report to replay.
+
