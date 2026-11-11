@@ -73,6 +73,7 @@ import {
   userDeviceInternalAddress,
   verifyModelServesAgents,
   WorkActivities,
+  withHostComputerScreen,
   withSecretPersistence,
 } from "@rakazo/adapters";
 import type { DirectoryAccountChange } from "@rakazo/auth";
@@ -374,10 +375,11 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     prisma,
     ticketBoardEnabled,
   });
+  const hostComputer = sandboxProviderOptionsFromEnv();
   const sandbox: SandboxProvider =
     sandboxOverride ??
     (await createRunSandbox(env.sandboxProvider, {
-      ...sandboxProviderOptionsFromEnv(),
+      ...hostComputer,
       supervisorUrl: env.sandboxSupervisorUrl,
       supervisorToken: env.sandboxSupervisorToken,
       e2bApiKey: env.e2bApiKey,
@@ -635,7 +637,14 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     email,
     messaging,
     cloudAgent,
-    userDevices: userDevicesOverride ?? userDevices,
+    userDevices:
+      userDevicesOverride ??
+      withHostComputerScreen(userDevices, {
+        prisma,
+        sandboxKind: env.sandboxProvider,
+        url: hostComputer.hostComputerUrl,
+        token: hostComputer.hostComputerToken,
+      }),
     paymentWallet,
     shutdownSignal: shutdown.signal,
     now,

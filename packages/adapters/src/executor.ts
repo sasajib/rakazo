@@ -1357,6 +1357,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           botUserId: bot.userId,
         });
         let userComputer: UserComputerState;
+        let userComputerShell = false;
         let userComputerScreen = false;
         if (
           userComputerOwnerId &&
@@ -1366,6 +1367,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           const device = await deps.userDevices.connected(userComputerOwnerId).catch(() => null);
           if (device) {
             userComputer = "connected";
+            userComputerShell = !device.screenOnly;
             // The macOS and Windows desktops fetch a screen driver; Linux has none yet.
             userComputerScreen = device.platform === "darwin" || device.platform === "win32";
           } else userComputer = "offline";
@@ -1396,7 +1398,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               : bot.disabledBuiltinTools,
             fleetManagement: bot.fleetManagement,
             followUpFromUser: sourceMessage?.role === "user",
-            userComputer: userComputer === "connected",
+            userComputer: userComputerShell,
             userComputerScreen,
             emailInbox,
             emailClaimable:
@@ -1468,6 +1470,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const dockerToolInstruction = dockerComputerToolInstruction(
           computerKind,
           disabledBuiltinTools,
+          new Set(tools.map((tool) => tool.name)),
         );
         const hostEnvironment =
           computerKind && usesNativeShell(computerKind)

@@ -9423,11 +9423,11 @@ describe("groups.remove", () => {
       externalEffect: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       message: { findMany: vi.fn(async () => []) },
       $queryRaw: vi.fn().mockResolvedValue([{ id: "group-1" }]),
+      thread: { findUnique: vi.fn().mockResolvedValue({ id: "thread-1" }) },
       chatGroup: {
         findUnique: vi.fn().mockResolvedValue({
           artifacts: [],
           members: [{ botId: "bot-1" }],
-          thread: { id: "thread-1" },
         }),
         delete: vi.fn(async () => {
           calls.push("delete group");
@@ -9543,11 +9543,11 @@ describe("groups.remove", () => {
       externalEffect: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       message: { findMany: vi.fn(async () => []) },
       $queryRaw: vi.fn().mockResolvedValue([{ id: "group-1" }]),
+      thread: { findUnique: vi.fn().mockResolvedValue({ id: "thread-1" }) },
       chatGroup: {
         findUnique: vi.fn().mockResolvedValue({
           artifacts: [{ storageKey: "artifacts/group-1/report.pdf" }],
           members: [{ botId: "bot-1" }],
-          thread: { id: "thread-1" },
         }),
         delete: vi.fn(async () => undefined),
       },

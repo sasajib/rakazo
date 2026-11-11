@@ -10,6 +10,7 @@ import { Alert } from "react-native";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Account from "../app/(settings)/account";
 import type * as Api from "./api";
+import { rpc } from "./api";
 import type * as ApiAuth from "./api-auth";
 import {
   deleteAccount,
@@ -51,6 +52,8 @@ const { element, account } = vi.hoisted(() => ({
     approvals: { mode: "ask", enabled: false, skipApprovals: false, checkerAvailable: true },
     rules: [] as { id: string }[],
     messaging: { enabled: true },
+    plans: [] as unknown[],
+    billing: {} as Record<string, unknown>,
   },
 }));
 
@@ -159,8 +162,33 @@ vi.mock("../components/native-action-button", () => ({
   }) => createElement("button", { type: "button", disabled, onClick: onPress }, label),
 }));
 vi.mock("../components/native-segmented-control", () => ({
-  NativeSegmentedControl: ({ accessibilityLabel }: { accessibilityLabel: string }) =>
-    createElement("div", { "aria-label": accessibilityLabel }),
+  NativeSegmentedControl: ({
+    accessibilityLabel,
+    value,
+    options,
+    onChange,
+  }: {
+    accessibilityLabel: string;
+    value: string;
+    options: { value: string; label: string }[];
+    onChange: (value: string) => void;
+  }) =>
+    createElement(
+      "div",
+      { "aria-label": accessibilityLabel },
+      options.map((option) =>
+        createElement(
+          "button",
+          {
+            type: "button",
+            key: option.value,
+            "aria-pressed": value === option.value,
+            onClick: () => onChange(option.value),
+          },
+          option.label,
+        ),
+      ),
+    ),
 }));
 vi.mock("../components/settings-group", () => ({
   SettingsGroup: element("div"),
@@ -234,7 +262,11 @@ vi.mock("./api", async (importOriginal) => ({
           ? account.rules
           : method === "messaging/status"
             ? account.messaging
-            : {},
+            : method === "usage/limits"
+              ? account.plans
+              : method === "billing/status"
+                ? account.billing
+                : {},
   ),
   selectedSpaceId: () => "space-1",
 }));
@@ -363,6 +395,8 @@ beforeEach(() => {
   account.me = { userId: "user-1", name: "Tester", email: "tester@example.test" };
   account.rules = [];
   account.messaging = { enabled: true };
+  account.plans = [];
+  account.billing = {};
   haptics.enabled = true;
   storeUpdate.available = false;
   haptics.listeners.clear();
@@ -380,7 +414,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("offers no avatar style choice in account settings", async () => {
+it("keeps bot style visible when the account has no saved style", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
@@ -389,10 +423,23 @@ it("offers no avatar style choice in account settings", async () => {
 
   expect(container.querySelector('[aria-label="Appearance"]')).not.toBeNull();
   expect(container.textContent).toContain("Language");
-  expect(container.querySelector('[aria-label="Avatar style"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Bot style"]')).not.toBeNull();
   expect(container.textContent).not.toContain("Avatars");
   expect(container.textContent).not.toContain("Robot");
   expect(container.textContent).not.toContain("Organic");
+});
+
+it("saves an Original choice even when the saved style is absent", async () => {
+  const { screen } = await renderAccount();
+  const picker = screen.querySelector('[aria-label="Bot style"]')!;
+  const original = Array.from(picker.querySelectorAll("button")).find(
+    (node) => node.textContent === "Original",
+  )!;
+  expect(original.getAttribute("aria-pressed")).toBe("false");
+  vi.mocked(rpc).mockResolvedValueOnce({ ...account.me, botAvatarSet: "organic" } as never);
+  await act(async () => original.click());
+  expect(original.getAttribute("aria-pressed")).toBe("true");
+  expect(rpc).toHaveBeenCalledWith("preferences/update", { botAvatarSet: "organic" });
 });
 
 async function renderAccount() {
@@ -872,4 +919,28 @@ it("hangs up the active call before signing out", async () => {
   });
   await view.press("Sign out");
   expect(order).toEqual(["hang-up", "sign-out"]);
+});
+
+it("shows subscription allowances and credits only for members who have them", async () => {
+  let view = await renderAccount();
+  let titles = Array.from(view.screen.querySelectorAll("[data-row]"), (row) => row.textContent);
+  expect(titles).not.toContain("Session");
+  expect(titles).not.toContain("Credits");
+
+  act(() => root?.unmount());
+  container?.remove();
+  account.plans = [
+    {
+      credentialId: "c1",
+      name: "Claude",
+      label: "Claude",
+      windows: [{ period: "session", usedPercent: 37.6, resetsAt: null }],
+    },
+  ];
+  account.billing = { funding: "credits", balanceUsd: 12.5 };
+  view = await renderAccount();
+  titles = Array.from(view.screen.querySelectorAll("[data-row]"), (row) => row.textContent);
+  expect(titles).toContain("Session");
+  expect(view.button("Session")!.dataset.value).toBe("38% used");
+  expect(view.button("Credits")!.dataset.value).toBe("$12.50 left");
 });
