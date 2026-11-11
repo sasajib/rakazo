@@ -349,6 +349,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/head"],
       ["threads/react"],
       ["threads/endCall"],
+      ["threads/callNote"],
       ["threads/answerCall"],
       ["threads/declineCall"],
       ["threads/answer"],

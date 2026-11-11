@@ -76,8 +76,10 @@ async function waitingTakeoverRun(
   computerId: string,
   botId: string,
 ) {
-  const lease = await deps.prisma.computerExecutionLease.findUnique({
-    where: { computerId_botId: { computerId, botId } },
+  // A bot can hold several execution slots (bots.concurrency); a takeover pause belongs to the
+  // dedicated computer's one screen, so the first lease of this bot on it is the one asked about.
+  const lease = await deps.prisma.computerExecutionLease.findFirst({
+    where: { computerId, botId },
     select: { runId: true },
   });
   if (!lease) return null;
