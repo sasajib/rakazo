@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A bot can execute more than one run at a time: `bots/update` takes `concurrency` (1–8, default 1), and each run holds an execution slot on the bot's computer. Concurrency parallelises separate threads only — one conversation still has one writer, so replies, history and memory cannot interleave. Queued runs start best-first, person traffic above bot reports and routines, with waiting time earning a bounded boost so background work cannot starve ([concurrency](docs/agent-concurrency.md)).
 
 - Self-hosted deployments can route the in-app **Call** through a LiveKit voice agent (`VOICE_AGENT_URL`), for a duplex call with live captions and barge-in instead of the built-in turn-taking loop. Unset, calls work as before.
+- An example duplex voice front-end built on LiveKit Agents (`examples/livekit-voice-agent/`): a worker that joins a LiveKit room, transcribes with Deepgram, sends each utterance to a bot as a call turn and speaks the reply as it streams, with barge-in. Kokoro TTS is available behind a flag. The app itself is unchanged.
+
+### Changed
+
+- The LiveKit voice example keeps the call's conversation apart from the bot's work: only the run a turn started is spoken, a superseded turn stops at its next chunk, the active topic survives a follow-up and is replaced by a new subject, and background run updates are coalesced into one status sentence the caller has to ask for.
 
 ## [0.9.0] - 2026-11-10
 

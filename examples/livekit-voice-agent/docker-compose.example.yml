@@ -1,0 +1,20 @@
+# Copy next to a `.env` (see .env.example) and run `docker compose up -d --build`.
+# `agent` joins LiveKit rooms as the bot; `token` serves the call page and mints room tokens.
+services:
+  agent:
+    build: .
+    env_file: .env
+    environment:
+      VOICE_INTERNAL_URL: http://token:8081
+    restart: unless-stopped
+    depends_on: [token]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  token:
+    build: .
+    command: ["python", "token_server.py"]
+    env_file: .env
+    ports:
+      - "127.0.0.1:3320:8080"   # public page + /token; put a TLS proxy or tunnel in front
+    restart: unless-stopped
+    extra_hosts: ["host.docker.internal:host-gateway"]

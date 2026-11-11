@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rakazo voice call</title>
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.3rem; } fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1rem; }
+  input, select, button { font: inherit; padding: .45rem .6rem; margin: .2rem 0; }
+  input, select { width: 100%; box-sizing: border-box; } button { cursor: pointer; }
+  #hangup { background: #c0392b; color: #fff; border: 0; border-radius: 6px; }
+  #captions { border: 1px solid #ddd; border-radius: 8px; min-height: 10rem; padding: .6rem; background: #fafafa; }
+  .user { color: #1a5fb4; } .bot { color: #26a269; } .meta { color: #777; font-size: .85em; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>Rakazo voice call</h1>
+<fieldset id="auth">
+  <legend>1. Rakazo account</legend>
+  <input id="email" type="email" placeholder="email" autocomplete="username">
+  <input id="password" type="password" placeholder="password" autocomplete="current-password">
+  <button id="signin">Sign in</button>
+  <p class="meta">or paste a signed session bearer:</p>
+  <input id="bearer" placeholder="Bearer token (from the mobile app / sign-in response)">
+  <button id="usebearer">Use token</button>
+</fieldset>
+<fieldset id="pick" class="hidden">
+  <legend>2. Bot</legend>
+  <select id="space"></select>
+  <select id="bot"></select>
+  <button id="start">Start call</button>
+</fieldset>
+<fieldset id="call" class="hidden">
+  <legend>3. On the call</legend>
+  <p class="meta" id="status"></p>
+  <button id="mute">Mute</button> <button id="hangup">Hang up</button>
+</fieldset>
+<div id="captions"><span class="meta">Captions appear here.</span></div>
+<audio id="remote" autoplay></audio>
+
+<script type="module">
+import { Room, RoomEvent, Track } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
+
+const $ = (id) => document.getElementById(id);
+const show = (id, on) => $(id).classList.toggle("hidden", !on);
+let token = null, room = null, nav = null, callStarted = 0;
+const captions = $("captions"), lines = new Map();
+
+function log(text, cls = "meta") {
+  const p = document.createElement("p"); p.className = cls; p.textContent = text; captions.append(p);
+  captions.scrollTop = captions.scrollHeight;
+}
+async function rakazo(path, options = {}) {
+  const headers = { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) };
+  const response = await fetch(path, { ...options, headers });
+  if (!response.ok) throw new Error(`${path} → ${response.status}`);
+  return response.json();
+}
+async function loadBots() {
+  nav = await rakazo("/rakazo/spaces");
+  $("space").replaceChildren(...nav.spaces.map((s) => new Option(s.name, s.id)));
+  $("space").value = nav.current.id; fillBots(); show("auth", false); show("pick", true);
+}
+function fillBots() {
+  const space = nav.spaces.find((s) => s.id === $("space").value) || nav.current;
+  $("bot").replaceChildren(...space.bots.filter((b) => !b.archivedAt).map((b) => new Option(b.name, b.id)));
+}
+$("space").onchange = fillBots;
+$("signin").onclick = async () => {
+  try {
+    ({ token } = await rakazo("/rakazo/sign-in", { method: "POST", body: JSON.stringify({ email: $("email").value, password: $("password").value }) }));
+    await loadBots();
+  } catch (e) { log(`Sign-in failed: ${e.message}`); }
+};
+$("usebearer").onclick = async () => { token = $("bearer").value.trim(); try { await loadBots(); } catch (e) { log(`Token refused: ${e.message}`); } };
+
+$("start").onclick = async () => {
+  try {
+    const grant = await rakazo("/token", { method: "POST", body: JSON.stringify({ botId: $("bot").value, spaceId: $("space").value }) });
+    room = new Room({
+      adaptiveStream: false,
+      dynacast: false,
+      // Laptop speakers feed the bot's voice back into the mic; without these the agent hears
+      // itself (and asked for headphones). Explicit so no browser default decides it.
+      audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    room.on(RoomEvent.TrackSubscribed, (track) => { if (track.kind === Track.Kind.Audio) track.attach($("remote")); });
+    room.on(RoomEvent.ParticipantConnected, (p) => log(`${p.identity} joined`));
+    room.on(RoomEvent.Disconnected, () => { log("Call ended"); show("call", false); show("pick", true); });
+    // Live captions: the agent publishes both sides' transcripts as text streams on lk.transcription.
+    room.registerTextStreamHandler("lk.transcription", async (reader, participant) => {
+      const attrs = reader.info.attributes || {};
+      const id = attrs["lk.segment_id"] || reader.info.id;
+      const mine = participant?.identity === room.localParticipant.identity; // user transcripts are sent "as" the user
+      let p = lines.get(id);
+      if (!p) { p = document.createElement("p"); p.className = mine ? "user" : "bot"; captions.append(p); lines.set(id, p); }
+      let text = "";
+      for await (const chunk of reader) { text += chunk; p.textContent = `${mine ? "You" : "Bot"}: ${text}`; captions.scrollTop = captions.scrollHeight; }
+    });
+    await room.connect(grant.url, grant.token);
+    await room.localParticipant.setMicrophoneEnabled(true);
+    callStarted = Date.now();
+    $("status").textContent = `Room ${grant.room} — mic on, waiting for the bot…`;
+    show("pick", false); show("call", true); log(`Connected as ${room.localParticipant.identity}`);
+  } catch (e) { log(`Could not start: ${e.message}`); }
+};
+$("mute").onclick = async () => {
+  const on = room.localParticipant.isMicrophoneEnabled;
+  await room.localParticipant.setMicrophoneEnabled(!on); $("mute").textContent = on ? "Unmute" : "Mute";
+};
+// Hanging up leaves the room; the agent then calls threads/endCall with the call's duration.
+$("hangup").onclick = async () => { if (room) await room.disconnect(); log(`Hung up after ${Math.round((Date.now() - callStarted) / 1000)} s`); };
+</script>
+</body>
+</html>
