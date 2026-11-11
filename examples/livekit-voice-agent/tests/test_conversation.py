@@ -291,3 +291,14 @@ def test_a_genuinely_new_line_is_still_spoken():
 def test_an_empty_line_is_never_new():
     assert SpokenLines().has("   ")
 
+
+def test_text_already_streamed_is_not_said_again_from_its_message():
+    # The confirmation arrives as deltas, then as the finished message: one delivery, not two.
+    streamed = "I understood you want a voice assistant agent for voice testing; I'll check the fleet first,"
+    final = "I understood you want a voice assistant agent for voice testing; I'll check the fleet first, then build it."
+    assert SpokenLines.normalise(final).startswith(SpokenLines.normalise(streamed))
+    # What remains (the tail) is spoken; the part already heard is not repeated.
+    spoken = SpokenLines()
+    spoken.add(streamed)
+    assert spoken.has(streamed)
+

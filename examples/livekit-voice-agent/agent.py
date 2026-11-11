@@ -364,17 +364,22 @@ class RakazoAgent(Agent):
                             self._marks["first_delta"] = first_delta_at
                             logger.info("rakazo first delta after %.2fs", first_delta_at - t0)
                         streamed.append(text)
+                        logger.info("speaking (delta): %s", text[:70])
                         yield text
                 elif etype == "thread.message.created" and payload.get("role") == "bot":
                     final = text_from_blocks(payload.get("blocks") or [])
                     rest = _unspoken_remainder("".join(streamed), final)
                     # A separate bot message is not a continuation of what was streamed: the run's
                     # confirmation and its result are two messages, and the caller must hear both.
-                    if not rest and final and not self._spoken.has(final):
+                    # But the same text often arrives twice — as progress deltas, then as the
+                    # finished message — and saying it again is the repetition callers hear.
+                    already_streamed = SpokenLines.normalise(final) in SpokenLines.normalise(
+                        "".join(streamed)
+                    )
+                    if not rest and final and not already_streamed and not self._spoken.has(final):
                         rest = final
                     if rest:
-                        if not streamed:
-                            logger.info("no deltas; speaking final message", extra={"runId": run_id})
+                        logger.info("speaking (message %s): %s", etype, rest[:70])
                         streamed.append(rest)
                         yield rest
                 elif etype in RUN_TERMINAL:
