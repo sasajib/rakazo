@@ -53,6 +53,18 @@ def pcm_for(text: str, workdir: Path, index: int) -> Path:
     return out
 
 
+def bots_snapshot() -> dict[str, str]:
+    """Name -> id for every live bot, straight from the database."""
+    sql = 'select name || \'|\' || id from bots where "archivedAt" is null order by name;'
+    out = subprocess.run(
+        ["docker", "exec", "-i", "rakazo-postgres-1", "sh", "-lc",
+         'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At'],
+        input=sql, capture_output=True, text=True, check=True,
+    ).stdout
+    pairs = (line.split("|", 1) for line in out.splitlines() if "|" in line)
+    return {name: bot_id for name, bot_id in pairs}
+
+
 def call(utterances: list[str], tail: float) -> list[tuple[float, str, str]]:
     """Run the call, return (seconds, who, text) for every transcript the caller heard or said."""
     bearer = subprocess.run(
@@ -111,9 +123,13 @@ def main() -> int:
     parser.add_argument("--question", required=True)
     parser.add_argument("--expect", required=True, help="a word the answer must contain")
     parser.add_argument("--tail", type=float, default=75)
+    parser.add_argument("--expect-created", action="store_true",
+                        help="require a new bot row afterwards (proves it did the work, not just said so)")
     args = parser.parse_args()
 
+    before = bots_snapshot() if args.expect_created else {}
     events = call([args.task, args.question], args.tail)
+    after = bots_snapshot() if args.expect_created else {}
     if not events:
         print("FAIL: the call produced no transcript at all")
         return 1
@@ -161,6 +177,15 @@ def main() -> int:
         if first.strip() == second.strip():
             failures.append("a line was spoken twice in a row")
             break
+
+    # 5. did it actually create one? the words are not evidence, the table is.
+    if args.expect_created:
+        new = {name: bot_id for name, bot_id in after.items() if name not in before}
+        if not new:
+            failures.append("no bot was created, whatever the reply said")
+        else:
+            print()
+            print("created in the database:", ", ".join(f"{n} ({i[:10]}…)" for n, i in new.items()))
 
     print()
     if failures:
