@@ -140,26 +140,6 @@ async def main() -> None:
     check("the superseded turn spoke its first chunk", "Dhaka" in first, first)
     check("and then stopped", rest == [], repr(rest))
 
-    # 4. A task is confirmed first, in the agent's own words, before the turn is sent.
-    client = FakeClient()
-    agent = RakazoAgent(CALL, client)
-    client.agent = agent
-    generator = agent.llm_node(
-        chat_ctx(
-            "Hi, chief. Uh, we we we going... we are going to need have a a voice testing agent. "
-            "So can you please create a voice testing agent so we can do some few... we can do few, "
-            "uh, voice testing with him?"
-        ),
-        [],
-        None,
-    )
-    first = await generator.__anext__()
-    check("confirms a task before doing anything", first.startswith("Got it — "), first)
-    check("restates it in its own words", "voice testing agent" in first.lower(), first)
-    check("drops the caller's noises", " uh" not in first.lower() and "we we" not in first.lower(), first)
-    check("sends nothing until the confirmation is spoken", client.sends == [], repr(client.sends))
-    await generator.aclose()
-
     print()
     if failures:
         print(f"{len(failures)} check(s) failed: {', '.join(failures)}")

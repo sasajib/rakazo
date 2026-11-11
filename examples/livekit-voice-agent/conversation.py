@@ -60,86 +60,7 @@ _WORD = re.compile(r"[a-z0-9][a-z0-9'-]*", re.I)
 MAX_TOPIC_WORDS = 4
 
 
-_FILLER_WORDS = frozenset(
-    "uh uhh um umm ah ahh eh er erm hmm hm mm mhm like well so okay ok right".split()
-)
-_NOISE_PREFIX = re.compile(
-    r"^(?:(?:uh|uhh|um|umm|ah|ahh|eh|er|erm|hmm|hm|mm|like|so|well|okay|ok)\b[,. ]*)+", re.I
-)
-_OPENERS = (
-    re.compile(r"^(?:hi|hey|hello|yo)[\s,]+(?:chief|bot|there)\b[\s,.:]*", re.I),
-    re.compile(r"^(?:can|could|would|will)\s+you\s+(?:please\s+)?", re.I),
-    re.compile(r"^(?:please|kindly)\s+", re.I),
-    re.compile(r"^(?:i\s+(?:want|need)\s+you\s+to|i'd\s+like\s+you\s+to)\s+", re.I),
-)
-
-ACK_MAX_CHARS = 140
-
-
-def summarise_task(text: str) -> str:
-    """The task in one short line, without the caller's noises or their request wrapper."""
-    said = " ".join((text or "").split())
-    if not said:
-        return ""
-    said = _NOISE_PREFIX.sub("", said)
-    for opener in _OPENERS:
-        said = opener.sub("", said)
-    said = _NOISE_PREFIX.sub("", said)
-    # The wrapper can sit mid-sentence once the caller starts over: "…agent. can you please create…"
-    said = re.sub(r"\b(?:can|could|would|will)\s+you\s+(?:please\s+)?", "", said, flags=re.I)
-    said = re.sub(r"\b(?:please|kindly)\b", "", said, flags=re.I)
-    said = re.sub(r"\b(?:i\s+(?:want|need)\s+you\s+to|i'd\s+like\s+you\s+to)\b", "", said, flags=re.I)
-    said = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", said, flags=re.I)
-    kept = [
-        word
-        for word in said.split(" ")
-        if not _FILLER_WORDS & {re.sub(r"[^a-z']", "", word.lower())}
-    ]
-    said = " ".join(kept)
-    said = re.sub(r"\s+([,.!?;:])", r"\1", said).strip(" ,.;:!?-")
-    # A dictated request wanders: pick the clause that names the work, not the first one heard.
-    said = re.sub(r"\.{2,}|\u2026", ",", said)
-    clauses = [clause.strip(" ,;:-") for clause in re.split(r"[.!?,;]", said)]
-    clauses = [clause for clause in clauses if len(clause.split()) >= 2]
-    if clauses:
-        said = _task_clause(clauses)
-        # "create a voice agent so we can run tests": the outcome follows, the task is before it.
-        head = re.split(r"\bsotha?t?\b|\bso\b|\bso that\b", said)[0].strip(" ,;:-")
-        if len(head.split()) >= 2:
-            said = head
-    said = " ".join(said.split())
-    if len(said) > ACK_MAX_CHARS:
-        said = said[:ACK_MAX_CHARS].rstrip() + "…"
-    return said
-
-
-# Verbs that name work; the clause carrying one is the task, whatever the caller said around it.
-_TASK_VERBS = frozenset(
-    """
-    add analyse analyze answer book build buy call cancel check clean close compare compile connect
-    copy create cut delete deploy describe design draft draw edit email export find finish fix follow
-    generate get give install list look make merge move open order organise organize plan post prepare
-    print publish read remove rename reply report research review run save schedule search send set
-    setup show sort start stop summarise summarize tell test translate update upload write
-    """.split()
-)
-
-
-def _task_clause(clauses: list[str]) -> str:
-    """The clause that names the work: the first with a task verb, else the longest."""
-    for clause in clauses:
-        words = {re.sub(r"[^a-z]", "", word.lower()) for word in clause.split()}
-        if words & _TASK_VERBS:
-            return clause
-    return max(clauses, key=lambda clause: len(clause.split()))
-
-
-def acknowledgement_for(text: str) -> str | None:
-    """What the agent says before starting a task: what it understood, and that it is on it."""
-    task = summarise_task(text)
-    if not task:
-        return None
-    return f"Got it — {task}. Starting on it now."
+_WORD = re.compile(r"[a-z0-9][a-z0-9'-]*", re.I)
 
 
 def _words(text: str) -> list[str]:
@@ -175,6 +96,30 @@ _FILLER = re.compile(
     re.I,
 )
 
+# A question about the world ("what is…", "why did…") is not a request for work, however it reads.
+_FACT_QUESTION = re.compile(
+    r"^(?:what|why|how|when|where|who|which|whose|is|are|was|were|do|does|did)\b", re.I
+)
+
+# Verbs that name work; the clause carrying one is the task, whatever the caller said around it.
+_TASK_VERBS = frozenset(
+    """
+    add analyse analyze answer book build buy call cancel check clean close compare compile connect
+    copy create cut delete deploy describe design draft draw edit email export find finish fix follow
+    generate get give install list look make merge move open order organise organize plan post prepare
+    print publish read remove rename reply report research review run save schedule search send set
+    setup show sort start stop summarise summarize tell test translate update upload write
+    """.split()
+)
+
+# Asking to be told something is a question, not a task: these are never work on their own.
+_INFORMATIONAL_VERBS = frozenset({"tell", "show", "describe", "explain", "list", "read", "answer"})
+_WORK_VERBS = _TASK_VERBS - _INFORMATIONAL_VERBS
+
+_NOISE_PREFIX = re.compile(
+    r"^(?:(?:uh|uhh|um|umm|ah|ahh|eh|er|erm|hmm|hm|mm|like|so|well|okay|ok)\b[,. ]*)+", re.I
+)
+
 
 def asks_question(text: str) -> bool:
     """Whether a spoken turn is asking something, rather than just keeping the line open."""
@@ -191,49 +136,24 @@ def is_filler(text: str) -> bool:
     return bool(_FILLER.match((text or "").strip()))
 
 
+def asks_for_work(text: str) -> bool:
+    """Whether the turn is asking the agent to *do* something, not to say something."""
+    said = (text or "").strip()
+    if not said:
+        return False
+    said = _NOISE_PREFIX.sub("", said)
+    if _FACT_QUESTION.search(said):
+        return False
+    words = {re.sub(r"[^a-z]", "", word.lower()) for word in said.split()}
+    return bool(words & _WORK_VERBS)
+
+
 # What a caller says to have the rest of an interrupted report.
 _CONTINUE_REQUEST = re.compile(
     r"^(?:go on|continue|carry on|keep going|yes(?: please)?|yeah|sure|please do|ok(?:ay)?|"
     r"the rest|read it|say it)\b[\s.!?]*$",
     re.I,
 )
-
-
-# A request for work reads as a question ("can you please create…?"), but it is still a task.
-_WORK_REQUEST = re.compile(
-    r"^(?:(?:can|could|would|will)\s+you|please|kindly|i\s+(?:want|need)\s+you\s+to|"
-    r"i'd\s+like\s+you\s+to)\b",
-    re.I,
-)
-
-
-# A question about the world ("what is…", "why did…") is not a request for work, however it reads.
-_FACT_QUESTION = re.compile(
-    r"^(?:what|why|how|when|where|who|which|whose|is|are|was|were|do|does|did)\b", re.I
-)
-
-
-# Asking to be told something is a question, not a task: these are never work on their own.
-_INFORMATIONAL_VERBS = frozenset({"tell", "show", "describe", "explain", "list", "read", "answer"})
-_WORK_VERBS = _TASK_VERBS - _INFORMATIONAL_VERBS
-
-
-def asks_for_work(text: str) -> bool:
-    """Whether the turn is asking the agent to *do* something, not to say something.
-
-    A dictated request wanders ("we need… can you please create…"), so this looks for the work verb
-    anywhere in it, and rules out the plain fact questions that never carry one.
-    """
-    said = (text or "").strip()
-    if not said:
-        return False
-    said = _NOISE_PREFIX.sub("", said)
-    for opener in _OPENERS[:1]:
-        said = opener.sub("", said)
-    if _FACT_QUESTION.search(said):
-        return False
-    words = {re.sub(r"[^a-z]", "", word.lower()) for word in said.split()}
-    return bool(words & _WORK_VERBS)
 
 
 def asks_to_continue(text: str) -> bool:

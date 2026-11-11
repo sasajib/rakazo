@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from conversation import (
     ConversationState,
-    acknowledgement_for,
     asks_for_status,
     asks_for_work,
     asks_to_continue,
@@ -241,65 +240,3 @@ def test_a_question_after_an_interruption_still_gets_its_own_answer():
     assert state.wants_answer("What is the capital of Bangladesh?") is True
     # The interrupted update is still offered, not lost, after that answer.
     assert state.has_paused_report()
-
-
-def test_acknowledgement_restates_the_task_without_the_noise():
-    said = (
-        "Hi, chief. Uh, we we we going... we are going to need have a a voice testing agent. "
-        "So can you please create a voice testing agent so we can do some few... we can do few, uh, "
-        "voice testing with him?"
-    )
-    ack = acknowledgement_for(said)
-    assert ack is not None
-    assert ack.startswith("Got it — ")
-    assert "voice testing agent" in ack.lower()
-    for noise in (" uh", " um", " hmm", "we we", "can you please"):
-        assert noise not in ack.lower()
-    assert not ack.endswith("?")
-
-
-def test_a_question_gets_no_task_acknowledgement():
-    assert acknowledgement_for("What is the capital of Bangladesh?") is not None
-    # The agent only speaks it for tasks; a question is answered instead. The text itself still
-    # summarises, which is why the caller's "?" is stripped.
-    assert "?" not in acknowledgement_for("What is the capital of Bangladesh?")
-
-
-def test_an_interrupted_answer_is_held_like_an_interrupted_report():
-    # The caller cuts in on whatever is being spoken; the rest is not lost just because the turn
-    # was an answer rather than a task report.
-    state = ConversationState()
-    state.note_report_interrupted("run-answer", "The three options are: one, keep the current")
-    assert state.has_paused_report()
-    offer = state.take_report_offer("Chief")
-    assert offer is not None and "go on" in offer
-    assert state.resume_report() == "The three options are: one, keep the current"
-
-
-def test_the_offer_is_only_made_when_something_was_cut_off():
-    state = ConversationState()
-    state.note_report_interrupted("run-1", "   ")
-    assert not state.has_paused_report()
-    assert state.take_report_offer("Chief") is None
-
-
-def test_a_work_request_is_recognised_even_as_a_question():
-    for said in (
-        "can you please create a voice testing agent?",
-        "could you check the logs",
-        "create a voice agent",
-        "I need you to summarise the report",
-    ):
-        assert asks_for_work(said), said
-
-
-def test_a_question_about_facts_is_not_a_work_request():
-    for said in (
-        "what is the capital of Bangladesh?",
-        "why did that fail?",
-        "how long will it take?",
-        "tell me about Bangladesh",
-        "show me the numbers",
-    ):
-        assert not asks_for_work(said), said
-

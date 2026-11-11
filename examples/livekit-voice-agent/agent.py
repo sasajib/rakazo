@@ -41,13 +41,7 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, openai, silero
 
-from conversation import (
-    ConversationState,
-    acknowledgement_for,
-    asks_for_work,
-    asks_to_continue,
-    belongs_to_turn,
-)
+from conversation import ConversationState, asks_to_continue, belongs_to_turn
 from rakazo_client import (
     HEARTBEAT_EVENT,
     RUN_TERMINAL,
@@ -109,7 +103,6 @@ class RakazoAgent(Agent):
         # The call's conversation, kept apart from what the bot's other runs are doing.
         self.state = ConversationState()
         self._turn_run_id: str | None = None
-        self._last_ack = ""
         self._cursor = -1
         self._pump: asyncio.Task[None] | None = None
         self.hangup_requested = asyncio.Event()
@@ -225,19 +218,9 @@ class RakazoAgent(Agent):
         # Tag the turn: a question (or filler that follows one) must be answered by its own run;
         # anything else keeps the busy run reporting what it is doing.
         answer_now = self.state.wants_answer(utterance)
+        run_id: str | None = None
 
         run_id: str | None = None
-        # A task is confirmed before any work starts, in the agent's own words, and before the turn
-        # is sent: the server's own acknowledgement message belongs to the working run, which this
-        # call is not listening to when the turn is answered beside it.
-        # A question is answered, not confirmed — but "can you please create …?" is a task wearing
-        # a question mark, so it is still confirmed first.
-        if not answer_now or asks_for_work(utterance):
-            ack = acknowledgement_for(utterance)
-            if ack and ack != self._last_ack:
-                self._last_ack = ack
-                self.state.record_reply(ack)
-                yield ack
         self._collect_pending()
         try:
             if decision.kind == "answer":
