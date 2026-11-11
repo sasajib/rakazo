@@ -268,23 +268,23 @@ export const threadSendInput = threadSendFields
     leaveCards: z.boolean().optional(),
   })
   .superRefine((input, ctx) => {
-  const text = input.text?.trim() ?? "";
-  const artifactIds = input.artifactIds ?? [];
-  if (!text && artifactIds.length === 0) {
-    ctx.addIssue({
-      code: "custom",
-      message: "Provide text or at least one attachment",
-      path: ["text"],
-    });
-  }
-  if (input.replyQuote && !input.replyToMessageId) {
-    ctx.addIssue({
-      code: "custom",
-      message: "replyQuote requires replyToMessageId",
-      path: ["replyQuote"],
-    });
-  }
-});
+    const text = input.text?.trim() ?? "";
+    const artifactIds = input.artifactIds ?? [];
+    if (!text && artifactIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide text or at least one attachment",
+        path: ["text"],
+      });
+    }
+    if (input.replyQuote && !input.replyToMessageId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "replyQuote requires replyToMessageId",
+        path: ["replyQuote"],
+      });
+    }
+  });
 
 const threadSendOutput = z.object({
   taskId: Id,

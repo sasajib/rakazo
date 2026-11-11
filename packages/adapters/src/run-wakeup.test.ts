@@ -11,7 +11,10 @@ import { RunJobPublisher, RunStarter, RunWorkerHost, withRunWorker } from "./run
 afterEach(() => vi.useRealTimers());
 
 function fixture() {
-  const rows = new Map<string, { status: string; wakeAt: Date | null; trigger?: string; createdAt?: Date }>();
+  const rows = new Map<
+    string,
+    { status: string; wakeAt: Date | null; trigger?: string; createdAt?: Date }
+  >();
   const updateMany = vi.fn(async ({ where, data }) => {
     const row = rows.get(where.id);
     if (!row || !where.status.in.includes(row.status) || (where.wakeAt === null && row.wakeAt))

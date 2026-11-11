@@ -239,7 +239,9 @@ describe("talkLaneDue", () => {
   });
 
   it("never answers twice for one message", () => {
-    expect(talkLaneDue({ ...base, activeStartedAt: started(30), hasLiveTalkRun: true })).toBe(false);
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), hasLiveTalkRun: true })).toBe(
+      false,
+    );
   });
 
   it("answers a spoken turn at once, whatever the run's age", () => {
@@ -254,7 +256,9 @@ describe("talkLaneDue", () => {
   });
 
   it("leaves another person's run alone", () => {
-    expect(talkLaneDue({ ...base, activeStartedAt: started(30), activeUserId: "user-2" })).toBe(false);
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), activeUserId: "user-2" })).toBe(
+      false,
+    );
   });
 
   it("stays quiet while a stop is being handled", () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CONTINUATION_MARKER,
-  MAX_CONTINUATIONS,
   continuationPrompt,
+  MAX_CONTINUATIONS,
   needsContinuation,
   requestsWork,
 } from "./run-supervision.js";
@@ -58,7 +58,9 @@ describe("needsContinuation", () => {
   });
 
   it("never continues a continuation: one retry, not a loop", () => {
-    expect(needsContinuation({ ...base, taskPrompt: continuationPrompt(base.request) })).toBe(false);
+    expect(needsContinuation({ ...base, taskPrompt: continuationPrompt(base.request) })).toBe(
+      false,
+    );
   });
 
   it("never continues a run that did not complete", () => {

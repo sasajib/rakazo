@@ -2440,7 +2440,13 @@ describe("computer execution leases", () => {
           return { count: 1 };
         });
         const prisma = { computerExecutionLease: { updateMany } } as unknown as PrismaClient;
-        const lease = { computerId: "computer-1", botId: "bot-1", runId: "run-1", slot: 0, fence: 1 };
+        const lease = {
+          computerId: "computer-1",
+          botId: "bot-1",
+          runId: "run-1",
+          slot: 0,
+          fence: 1,
+        };
 
         await expect(extend(prisma, lease)).resolves.toBe(true);
         const extendedExpiry = expiresAt;
@@ -2531,9 +2537,7 @@ describe("computer execution leases", () => {
       task: { updateMany: vi.fn() },
       secret: { deleteMany: vi.fn() },
       computerExecutionLease: {
-        findMany: vi.fn(async () => [
-          { slot: 0, runId: lease.runId, expiresAt: lease.expiresAt },
-        ]),
+        findMany: vi.fn(async () => [{ slot: 0, runId: lease.runId, expiresAt: lease.expiresAt }]),
         updateMany: vi.fn().mockImplementation(async ({ data }) => {
           lease.expiresAt = data.expiresAt;
           return { count: 1 };

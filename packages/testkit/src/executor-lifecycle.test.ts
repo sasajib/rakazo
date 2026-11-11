@@ -1237,7 +1237,13 @@ describeIntegration("run executor lifecycle", () => {
       ).rejects.toBeInstanceOf(ComputerBusyError);
       await expect(
         db.computerExecutionLease.findUnique({
-          where: { computerId_botId_slot: { computerId: dedicatedBot.computerId, botId: team.bot.id, slot: 0 } },
+          where: {
+            computerId_botId_slot: {
+              computerId: dedicatedBot.computerId,
+              botId: team.bot.id,
+              slot: 0,
+            },
+          },
         }),
       ).resolves.toBeNull();
 
@@ -1249,7 +1255,9 @@ describeIntegration("run executor lifecycle", () => {
       expect(teamLease).not.toBeNull();
       if (!teamLease) throw new Error("Team execution did not receive its lease");
       const teamLeaseBefore = await db.computerExecutionLease.findUniqueOrThrow({
-        where: { computerId_botId_slot: { computerId: teamBot.computerId, botId: team.bot.id, slot: 0 } },
+        where: {
+          computerId_botId_slot: { computerId: teamBot.computerId, botId: team.bot.id, slot: 0 },
+        },
       });
       await expect(
         acquireDedicatedScreenLeaseFence(db, {
@@ -1261,7 +1269,9 @@ describeIntegration("run executor lifecycle", () => {
         }),
       ).rejects.toBeInstanceOf(ComputerBusyError);
       const teamLeaseAfter = await db.computerExecutionLease.findUniqueOrThrow({
-        where: { computerId_botId_slot: { computerId: teamBot.computerId, botId: team.bot.id, slot: 0 } },
+        where: {
+          computerId_botId_slot: { computerId: teamBot.computerId, botId: team.bot.id, slot: 0 },
+        },
       });
       expect(teamLeaseAfter).toMatchObject({ runId: teamLease.runId, fence: teamLease.fence });
       expect(teamLeaseAfter.expiresAt).toEqual(teamLeaseBefore.expiresAt);
@@ -1289,7 +1299,11 @@ describeIntegration("run executor lifecycle", () => {
       await expect(
         db.computerExecutionLease.findUniqueOrThrow({
           where: {
-            computerId_botId_slot: { computerId: dedicatedBot.computerId, botId: dedicated.bot.id, slot: 0 },
+            computerId_botId_slot: {
+              computerId: dedicatedBot.computerId,
+              botId: dedicated.bot.id,
+              slot: 0,
+            },
           },
         }),
       ).resolves.toMatchObject({ ...conflictingLease, expiresAt: heldUntil });

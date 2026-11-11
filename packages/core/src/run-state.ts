@@ -42,7 +42,6 @@ const NON_CONVERSATIONAL_RUN_TRIGGERS = new Set([
   TALK_RUN_TRIGGER,
 ]);
 
-
 /**
  * Background triggers do internal work that must not leak into the chat: the
  * sidebar must not show them as activity and the bot transcript must not render

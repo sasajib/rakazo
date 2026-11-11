@@ -35,7 +35,10 @@ export function requestsWork(text: string | null | undefined): boolean {
   if (!said) return false;
   if (FACT_QUESTION.test(said)) return false;
   if (ASKS_TO_BE_TOLD.test(said)) return false;
-  const words = said.toLowerCase().split(/\s+/).map((word) => word.replace(/[^a-z]/g, ""));
+  const words = said
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z]/g, ""));
   return words.some((word) => WORK_VERBS.has(word) && !INFORMATIONAL.has(word));
 }
 

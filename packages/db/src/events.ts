@@ -17,8 +17,8 @@ import {
   normalizeRunError,
   QUEUE_HOLDING_RUN_STATUSES,
   sanitizeJsonValue,
-  talkLaneDue,
   TALK_RUN_TRIGGER,
+  talkLaneDue,
 } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
@@ -547,7 +547,8 @@ export async function sendUserMessage(
             // answer to that question instead of the task's report. The voice agent tags the turn
             // from its own conversation state, which knows whether a question is still open.
             isCallTurn:
-              isCallClientNonce(input.clientNonce) && (input.answerNow ?? asksForAnswer(input.prompt)),
+              isCallClientNonce(input.clientNonce) &&
+              (input.answerNow ?? asksForAnswer(input.prompt)),
             asksAnswer: Boolean(input.answerNow ?? asksForAnswer(input.prompt)),
             stopping: false,
             now: new Date(),
