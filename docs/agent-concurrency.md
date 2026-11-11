@@ -166,23 +166,25 @@ bypasses the threshold and is answered beside the run however recently it starte
 
 ## Confirming a task, and what a cut-off answer does
 
-The acknowledgement says what the bot understood, in its own words — never a replay of the
-transcript. `summariseRequest` finds the clause that names the work (the first clause carrying a task
-verb such as create, check, write, send), drops the caller's noises ("uh", "hmm", repeated words), the
-greeting and the request wrapper ("can you please …") even when the wrapper sits mid-sentence, and
-states the task once:
+The confirmation is written by the **model**, from the full request, as its first sentence — not by a
+template. A template tried to restate a dictation and produced lines like "Got it — create a voice as
+an agent at voice testing agent again we can test few things with him", and on a call the agent's own
+template landed on top of the run's, so the caller heard two stutters.
 
-| The caller says | The bot confirms |
-|---|---|
-| "Hi, chief. Uh, we we we going… we need a voice testing agent. So can you please create a voice testing agent so we can do some few… voice testing with him?" | "Got it — create a voice testing agent we can do some few." |
-| "Hey chief, can you please create a voice agent" | "Got it — create a voice agent." |
-| "tell me about Bangladesh" | nothing — that is a question, it is answered |
+How it works now:
 
-On a call the agent speaks the line **before** it sends the turn, so no other run's output can take
-its place and the confirmation is never swallowed by the answer that follows.
+- a person's run is instructed to open with one short sentence saying what it understood and what it
+  will do first, before any tool call (`PLAN_FIRST_INSTRUCTION`);
+- the platform publishes that first sentence **at once** rather than after the long-turn delay, so it
+  arrives while the work runs (measured 4.3 s), and it is the same message a caller hears;
+- nothing else writes an acknowledgement. There is one confirmation, in the bot's words, per task.
+
+Example, verbatim from the live instance:
+
+> You want a voice testing agent for test calls — I'll check the fleet first, since a "Voice Test" bot
+> should already exist, and only create one if it's genuinely gone.
 
 Any speech the caller cuts short is held for "go on": an interrupted report, an interrupted answer, a
 long explanation. If it was cut before anything was sent, nothing is held — the caller simply started
 again. The next completed answer offers it once: "…still has the rest of that update — say go on and
 I'll finish it."
-

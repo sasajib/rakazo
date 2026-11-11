@@ -43,7 +43,6 @@ import {
 } from "@rakazo/db";
 import { enrichLogContext, getLogger } from "@rakazo/logging";
 import { formatAgentEnvironmentInstruction } from "./agent-environment.js";
-import { publishTaskAcknowledgement } from "./run-progress.js";
 import { createApprovedEffectReplayQueue } from "./approval-effect.js";
 import { PARTIAL_REPLY_NOTE } from "./automated-messages.js";
 import { backgroundHelpersAllowed } from "./background-helpers.js";
@@ -251,6 +250,16 @@ async function verbatimMcpServersForRun(
  * What a talk run is told. It exists to answer the person now, beside work that is still going, so
  * it must not narrate that work as finished and must not start any of its own.
  */
+/**
+ * What a person's run says before it starts working, in the model's words. A template cannot
+ * restate a dictated request without sounding like an echo, so the model states what it understood
+ * in its first sentence — before any tool call — and the platform publishes that sentence.
+ */
+const PLAN_FIRST_INSTRUCTION = [
+  "Begin with one short sentence, in your own words, saying what you understood and what you will do first.",
+  "Write it before calling any tool: the person reads it while the work runs.",
+].join(" ");
+
 const TALK_RUN_INSTRUCTION = [
   "You are answering the person now, while your longer work continues in the background.",
   "Answer in one to three short sentences, from what you already know and what the conversation above says.",
@@ -258,26 +267,6 @@ const TALK_RUN_INSTRUCTION = [
   "finishes — it is with you, not lost. Never say you cannot do it, and never claim it is done.",
   "If they ask how it is going, say briefly what you are working on; if you do not know, say so.",
 ].join(" ");
-
-/** The words the person wrote on this turn, for the acknowledgement line. */
-function requestTextFor(
-  trigger: string,
-  turnBlocks: MessageBlock[] | undefined,
-  sourceBlocks: unknown,
-): string {
-  const fromTurn = (turnBlocks ?? [])
-    .filter((block) => block.kind === "text")
-    .map((block) => (block as { text?: string }).text ?? "")
-    .join(" ");
-  if (fromTurn.trim()) return fromTurn;
-  if (trigger === "follow_up" && Array.isArray(sourceBlocks)) {
-    return (sourceBlocks as MessageBlock[])
-      .filter((block) => block.kind === "text")
-      .map((block) => (block as { text?: string }).text ?? "")
-      .join(" ");
-  }
-  return "";
-}
 
 export function createRunExecutor(executorDeps: ExecutorDeps) {
   const contextStrategy = executorDeps.contextStrategy ?? DEFAULT_CONTEXT_STRATEGY;
@@ -1559,16 +1548,6 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           settleRunningHelpers: settleHelpers,
           stopHeartbeatAfterCompletion,
         };
-        // A task that starts in silence reads as ignored, and a first tool call can take minutes.
-        // The person gets one line saying what was understood before any work begins; the model's
-        // own plan follows in its first turn.
-        if (!current.startedAt && !heldForTakeover && !takeoverResume) {
-          const requestText = requestTextFor(run.trigger, turnBlocks, sourceMessage?.blocks);
-          await publishTaskAcknowledgement(ctx, requestText).catch((error) => {
-            // Losing the courtesy line must never cost the task itself.
-            getLogger().error("task acknowledgement", error);
-          });
-        }
         const pluginLine =
           connectedPlugins.length > 0
             ? `Connected plugins: ${connectedPlugins.map((row) => `${row.displayName} (${row.connectorId}:${row.provider})`).join(", ")}. Prefer those plugin tools over the computer browser or web search when reading app data (repos, releases, mail, calendar, and similar).`
@@ -1667,6 +1646,9 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           replyContext,
           run.trigger === "reaction" && replyContext ? undefined : basePrompt,
           talkRun ? TALK_RUN_INSTRUCTION : undefined,
+          !talkRun && (run.trigger === "user" || run.trigger === "follow_up")
+            ? PLAN_FIRST_INSTRUCTION
+            : undefined,
           takeoverResume?.promptNote,
           approvalContinuation,
           // A hang-up turn is read, not heard: no spoken-reply constraint.
