@@ -1,6 +1,14 @@
 import { useLingui } from "@lingui/react/macro";
 import { BotAvatar, Button, cn, defaultBotAvatarValue } from "@rakazo/ui-web";
-import { Captions, ChevronDown, Mic, MicOff, PhoneOff, Settings } from "lucide-react";
+import {
+  Captions,
+  ChevronDown,
+  MessageSquare,
+  Mic,
+  MicOff,
+  PhoneOff,
+  Settings,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { CallState } from "../../lib/call-session";
@@ -82,6 +90,16 @@ export function CallCard({ onSettings }: { onSettings: () => void }) {
           <ChevronDown />
         </Button>
         <span className="flex-1" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full text-muted-foreground"
+          aria-label={t`Open chat`}
+          title={t`Open the chat, for approvals and anything the bot wrote`}
+          onClick={() => navigate(`/app/${call.botId}`)}
+        >
+          <MessageSquare />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
