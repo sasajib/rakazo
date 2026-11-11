@@ -138,6 +138,16 @@ def main() -> int:
     ):
         failures.append("no result line after the work")
 
+    # 1b. the result says what was done, and names it — "done" alone is not a clarification.
+    result_text = "\n".join(task_lines)
+    if not re.search(r"\b(created|built|made|exists?|already|is live|ready|set up)\b", result_text, re.I):
+        failures.append("the result does not say what was done")
+    named = re.search(r"(?:voice test|voice testing|cm[a-z0-9]{20,}|\b[a-z][a-z0-9 ]{3,30}\b(?: bot| agent))", result_text, re.I)
+    if not named:
+        failures.append("the result does not name what it created")
+    if len(result_text.strip()) < 40:
+        failures.append("the result is too terse to clarify anything")
+
     # 2. the confirmation is not said again later.
     if len(agent_lines) > 1 and agent_lines[0][1].strip() == agent_lines[1][1].strip():
         failures.append("the confirmation was repeated")
