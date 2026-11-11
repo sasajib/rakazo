@@ -10,8 +10,10 @@ import {
   formatSkillsCatalogInstruction,
   isCallClientNonce,
   isMessagingChannelRun,
+  continuationPrompt,
   isOwnerStartedRun,
   isTerminal,
+  needsContinuation,
   TALK_RUN_TRIGGER,
   messagingChannelId,
   messagingChannelPrivacyBlock,
@@ -283,6 +285,63 @@ const TALK_RUN_INSTRUCTION = [
   "finishes — it is with you, not lost. Never say you cannot do it, and never claim it is done.",
   "If they ask how it is going, say briefly what you are working on; if you do not know, say so.",
 ].join(" ");
+
+/**
+ * The deterministic part of "it will do the work": a person's run that announced work and used no
+ * tool is continued once, automatically. No model is asked whether the work happened — the rule
+ * reads the trigger, the tool count and the person's own words.
+ */
+async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
+  const { deps, run, task } = ctx;
+  const { reply } = ctx.state;
+  const request = ctx.source.ownerStartedRun
+    ? (ctx.task.prompt ?? "")
+    : (ctx.task.prompt ?? "");
+  const replyText = reply.assembled || reply.assistantTurnText || "";
+  if (
+    !needsContinuation({
+      trigger: run.trigger,
+      request,
+      toolCallCount: reply.toolCalls.length,
+      replyText,
+      taskPrompt: task?.prompt ?? null,
+      status: "completed",
+    })
+  ) {
+    return;
+  }
+  const created = await deps.prisma.$transaction(async (tx) => {
+    const nextTask = await tx.task.create({
+      data: {
+        spaceId: run.spaceId,
+        botId: run.botId,
+        threadId: run.threadId,
+        userId: run.userId,
+        prompt: continuationPrompt(request),
+        status: "queued",
+      },
+    });
+    return tx.run.create({
+      data: {
+        spaceId: run.spaceId,
+        botId: run.botId,
+        threadId: run.threadId,
+        taskId: nextTask.id,
+        userId: run.userId,
+        status: "queued",
+        trigger: "follow_up",
+      },
+      select: { id: true },
+    });
+  });
+  getLogger().warn("run continued: it announced work and used no tool", {
+    "run.id": run.id,
+    "run.continuation": created.id,
+  });
+  await deps.jobs.enqueue(runContinueJob(created.id)).catch((error) => {
+    getLogger().error("continuation enqueue", error);
+  });
+}
 
 export function createRunExecutor(executorDeps: ExecutorDeps) {
   const contextStrategy = executorDeps.contextStrategy ?? DEFAULT_CONTEXT_STRATEGY;
@@ -2036,6 +2095,10 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           if (await consumeRunEvents(ctx, runtimeEvents)) return;
           if (await interruptedByShutdown()) return;
           await completeRun(ctx);
+          // The work is only done if it was done: a run that only announced it is continued once.
+          await continueUnfinishedTask(ctx).catch((error) => {
+            getLogger().error("continuation check", error);
+          });
         } catch (turnError) {
           if (await interruptedByShutdown()) return;
           let caughtError = turnError;
