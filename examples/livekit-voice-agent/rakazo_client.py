@@ -148,6 +148,13 @@ def secret_ask_of(thread: dict[str, Any] | None) -> dict[str, Any] | None:
     return None
 
 
+def has_pending_approval(thread: dict[str, Any] | None) -> bool:
+    runs = [(thread or {}).get("run"), *((thread or {}).get("activeRuns") or [])]
+    return any(
+        any(is_approval_ask_block(b) for b in ask["blocks"]) for run in runs if (ask := _pending_ask(thread, run))
+    )
+
+
 def call_turn(thread: dict[str, Any] | None, text: str) -> CallTurn:
     secret = secret_ask_of(thread)
     if secret:
@@ -319,8 +326,14 @@ class RakazoClient:
         return await self.rpc("threads/get", {"botId": bot_id})
 
     async def threads_send(
-        self, bot_id: str, text: str, client_nonce: str, answer_now: bool | None = None
+        self,
+        bot_id: str,
+        text: str,
+        client_nonce: str,
+        answer_now: bool | None = None,
+        leave_cards: bool = False,
     ) -> dict[str, Any]:
+        """`leave_cards`: a card the bot is waiting on stays open; this is a request of its own."""
         return await self.rpc(
             "threads/send",
             {
@@ -328,6 +341,7 @@ class RakazoClient:
                 "text": text,
                 "clientNonce": client_nonce,
                 **({} if answer_now is None else {"answerNow": answer_now}),
+                **({"leaveCards": True} if leave_cards else {}),
             },
         )
 

@@ -38,8 +38,9 @@ class FakeClient:
     async def threads_get(self, bot_id: str) -> dict:
         return {"cursor": 0, "messages": [], "run": None}
 
-    async def threads_send(self, bot_id: str, text: str, nonce: str, answer_now=None) -> dict:
+    async def threads_send(self, bot_id: str, text: str, nonce: str, answer_now=None, leave_cards: bool = False) -> dict:
         self.sends.append(text)
+        self.left_cards = leave_cards
         assert self.agent is not None
         for item in self.script:
             self.agent.events.put_nowait(item)
@@ -205,6 +206,37 @@ async def main() -> None:
     agent.state.finish_task("run-task", tell=True)
     told = " ".join(seg.text for seg in agent.take_backlog())
     check("a result does not repeat what was just answered", "New Delhi" not in told and "created and verified" in told, told)
+
+    # 7. A run parked on a secret card never blocks the caller: a question about it gets one honest
+    #    answer; a request of their own goes ahead (the card is set aside), and no word is ever sent
+    #    as the secret.
+    class ParkedClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__([event("thread.progress", "run-ours", **progress("Creating it now.")), event("run.completed", "run-ours")])
+            self.stopped = 0
+
+        async def threads_get(self, bot_id: str) -> dict:
+            if self.stopped:
+                return {"cursor": 0, "messages": [], "run": None}
+            return {
+                "cursor": 0,
+                "run": {"id": "run-parked", "status": "waiting_input"},
+                "messages": [{"id": "m1", "runId": "run-parked", "blocks": [{"kind": "ask", "input": "secret", "text": "MCP token", "status": "pending"}]}],
+            }
+
+        async def threads_stop(self, bot_id: str) -> dict:
+            self.stopped += 1
+            return {"ok": True}
+
+    client = ParkedClient()
+    agent = RakazoAgent(CALL, client)
+    client.agent = agent
+    spoken = " ".join(await collect(agent, "Are you stuck?"))
+    check("a question about a parked secret is answered once", "MCP token" in spoken and client.sends == [] and client.stopped == 0, spoken)
+    spoken = " ".join(await collect(agent, "Please create a new voice agent called Test"))
+    check("a request of its own goes ahead beside the open card", len(client.sends) == 1 and client.left_cards is True, f"sends={client.sends}")
+    check("the card is NOT cancelled", client.stopped == 0, f"stopped={client.stopped}")
+    check("it is answered, not stonewalled, and says the card stays", "Creating it now" in spoken and "stays open" in spoken, spoken)
 
     print()
     if failures:

@@ -51,6 +51,7 @@ from conversation import (
     Task,
     asks_for_work,
     asks_to_continue,
+    is_filler,
     asks_to_stop,
     belongs_to_turn,
     heartbeat_line,
@@ -62,12 +63,12 @@ from rakazo_client import (
     HEARTBEAT_EVENT,
     activity_text,
     RUN_TERMINAL,
+    CallTurn,
     RakazoClient,
     RakazoError,
     call_client_nonce,
     call_turn,
     progress_text,
-    secret_ask_of,
     text_from_blocks,
 )
 
@@ -486,38 +487,30 @@ class RakazoAgent(Agent):
 
         snapshot = await self.client.threads_get(self.call.bot_id)
         decision = call_turn(snapshot, utterance)
+        leave_cards = False
+        card_note = ""
 
         if decision.kind == "enter_code":
-            # A run is parked on a secret card. A word said into a call must never be sent as the
-            # secret (a message sent while a run waits on an ask IS its answer), and a card that stays
-            # open forever would stonewall every turn after it — the call that got stuck on
-            # "enter it on screen" for ten turns although the credential was already added elsewhere.
+            # A run is parked on a secret card. A secret is never said into a call (it would pass
+            # through speech-to-text and the transcript), and a message sent while a run waits on an
+            # ask IS its answer. But the card must not block the caller either: say once what it is
+            # waiting for, and let anything that is a request of its own go ahead. The card stays in
+            # the chat for whoever is at the screen until a new request sets it aside.
             key = decision.message_id or ""
             told = self._secret_asks.get(key, 0)
-            if told == 0 and not wants_to_move_on(utterance):
+            about_the_card = not (asks_for_work(utterance) or wants_to_move_on(utterance))
+            if told == 0 and about_the_card:
                 self._secret_asks[key] = 1
                 async for chunk in self._emit(segments, "answer", secret_ask_line(decision.question)):
                     yield chunk
                 self.state.end_turn(turn.id)
                 return
-            logger.info("dropping the run parked on a secret (%r) so the caller can move on", decision.question)
-            try:
-                await self.client.threads_stop(self.call.bot_id)
-                for _ in range(10):  # the stop lands asynchronously; wait until the run has left waiting_input
-                    await asyncio.sleep(0.5)
-                    snapshot = await self.client.threads_get(self.call.bot_id)
-                    if secret_ask_of(snapshot) is None:
-                        break
-            except RakazoError as exc:
-                logger.warning("could not stop the run waiting on a secret: %s", exc)
-            decision = call_turn(snapshot, utterance)
-            if decision.kind == "enter_code":  # still parked: say so rather than loop silently
-                async for chunk in self._emit(
-                    segments, "answer", "I couldn't clear that request. Please cancel it from the chat card."
-                ):
-                    yield chunk
-                self.state.end_turn(turn.id)
-                return
+            # A request of its own: it goes ahead BESIDE the open card, which stays in the chat for
+            # whoever is at the screen. Neither waits on the other.
+            logger.info("request beside the open secret card (%r)", decision.question)
+            leave_cards = True
+            card_note = f"The {decision.question or 'secret'} request stays open in the chat for when you're at the screen."
+            decision = CallTurn("send")
         if decision.kind == "approve_on_screen":
             # A caller can decide this out loud: the card is the app's way of asking, not the only
             # one. Without an explicit word, say what is being asked so they can answer.
@@ -541,6 +534,14 @@ class RakazoAgent(Agent):
                     self.state.end_turn(turn.id)
                     return
                 run_id = decision.run_id
+            elif self._approval_asks.get(decision.message_id or "", 0) >= 1 and not is_filler(utterance):
+                # Told once already, and this is neither a decision nor a murmur: a request of its
+                # own. It goes ahead beside the open approval, which stays for the screen; nothing
+                # is approved by carrying on.
+                logger.info("request beside the open approval %r", decision.question[:60])
+                leave_cards = True
+                card_note = "That approval stays open in the chat for when you're at the screen."
+                decision = CallTurn("send")
             else:
                 asking = decision.question or "something it wants to do"
                 # Never the same sentence twice: after the second ask, point at the card instead.
@@ -590,7 +591,7 @@ class RakazoAgent(Agent):
                 run_id = receipt.get("talkRunId") or receipt.get("runId") or decision.run_id
             else:
                 receipt = await self.client.threads_send(
-                    self.call.bot_id, utterance, nonce, answer_now=answer_now
+                    self.call.bot_id, utterance, nonce, answer_now=answer_now, leave_cards=leave_cards
                 )
                 # A send can also score a talk run when the bot turned busy a moment earlier.
                 run_id = receipt.get("talkRunId") or receipt.get("runId")
@@ -740,6 +741,10 @@ class RakazoAgent(Agent):
                         if not said_first:
                             said_first = True
                             # A second job while one is running: say so, so they know both are in hand.
+                            if card_note:
+                                async for chunk in self._emit(segments, "line", card_note):
+                                    yield chunk
+                                card_note = ""
                             if task is not None and others:
                                 line = (
                                     f"That will take a little while, and I'm still on {others[0].label}. "
@@ -772,6 +777,10 @@ class RakazoAgent(Agent):
 
         # Everything this call still owes the caller, now that they have their answer: the update they
         # interrupted (which one it was, then the rest) and results that arrived for other tasks.
+        if card_note:  # the run never spoke a whole message first: say it now
+            async for chunk in self._emit(segments, "line", card_note):
+                yield chunk
+            card_note = ""
         self._collect_pending()
         for seg in self.take_backlog():
             async for chunk in self._emit(segments, seg.kind, seg.text, seg.run_id, seg.label):
