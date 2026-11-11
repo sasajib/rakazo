@@ -164,3 +164,25 @@ to questions too, which meant asking something one second into a task got no ans
 finished. A turn that asks something (`asksForAnswer`, or the voice agent's `answerNow` tag) now
 bypasses the threshold and is answered beside the run however recently it started.
 
+## Confirming a task, and what a cut-off answer does
+
+The acknowledgement says what the bot understood, in its own words — never a replay of the
+transcript. `summariseRequest` finds the clause that names the work (the first clause carrying a task
+verb such as create, check, write, send), drops the caller's noises ("uh", "hmm", repeated words), the
+greeting and the request wrapper ("can you please …") even when the wrapper sits mid-sentence, and
+states the task once:
+
+| The caller says | The bot confirms |
+|---|---|
+| "Hi, chief. Uh, we we we going… we need a voice testing agent. So can you please create a voice testing agent so we can do some few… voice testing with him?" | "Got it — create a voice testing agent we can do some few." |
+| "Hey chief, can you please create a voice agent" | "Got it — create a voice agent." |
+| "tell me about Bangladesh" | nothing — that is a question, it is answered |
+
+On a call the agent speaks the line **before** it sends the turn, so no other run's output can take
+its place and the confirmation is never swallowed by the answer that follows.
+
+Any speech the caller cuts short is held for "go on": an interrupted report, an interrupted answer, a
+long explanation. If it was cut before anything was sent, nothing is held — the caller simply started
+again. The next completed answer offers it once: "…still has the rest of that update — say go on and
+I'll finish it."
+
