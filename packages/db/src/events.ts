@@ -548,6 +548,7 @@ export async function sendUserMessage(
             // from its own conversation state, which knows whether a question is still open.
             isCallTurn:
               isCallClientNonce(input.clientNonce) && (input.answerNow ?? asksForAnswer(input.prompt)),
+            asksAnswer: Boolean(input.answerNow ?? asksForAnswer(input.prompt)),
             stopping: false,
             now: new Date(),
           })

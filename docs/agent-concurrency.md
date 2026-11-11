@@ -143,3 +143,24 @@ none).
 The report offered back is the text this call heard or was given, so a run that finished while the
 caller was talking still leaves a coherent report to replay.
 
+## A task is acknowledged before it starts
+
+A run used to begin in silence: the model's first turn goes straight into a tool call, and that call
+can take minutes, so the person saw nothing until the work was done. Now, when a person's run starts
+(`user` / `follow_up`), the executor posts one interim line first, derived from their own words:
+
+> On it — "create a voice testing agent". Working through it now; I'll tell you when it's finished.
+
+It is deterministic, so it cannot be skipped by a slow model, and it is budgeted as an interim
+message, so it counts against the same allowance as the run's other progress notes. Runs that are not
+a person's turn (routine, bot message, helper, talk) stay quiet.
+
+Measured: **1.1 s** from send to acknowledgement, with the task still starting immediately.
+
+## A question does not wait for the busy threshold
+
+The talk lane's 8 s threshold exists so a quick "go on" does not spawn a duplicate answer. It applied
+to questions too, which meant asking something one second into a task got no answer until the task
+finished. A turn that asks something (`asksForAnswer`, or the voice agent's `answerNow` tag) now
+bypasses the threshold and is answered beside the run however recently it started.
+

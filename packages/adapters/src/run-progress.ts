@@ -162,6 +162,31 @@ export async function publishInterimMessage(ctx: RunContext, text: string, markU
   }
 }
 
+/** How much of the person's request the acknowledgement quotes back. */
+export const ACK_MAX_CHARS = 160;
+
+/**
+ * The line a person's run says before it starts working: what was asked, and that it is on it.
+ *
+ * Deterministic on purpose. A model's own plan arrives whenever its first turn does — seconds, or
+ * minutes if the turn starts with a long tool call — and a task that begins in silence reads as
+ * ignored. This is posted before the runtime is asked for anything.
+ */
+export function acknowledgementFor(trigger: string, requestText: string): string | null {
+  if (trigger !== "user" && trigger !== "follow_up") return null;
+  const request = requestText.replace(/\s+/g, " ").trim();
+  if (!request) return null;
+  const quoted = request.length > ACK_MAX_CHARS ? `${request.slice(0, ACK_MAX_CHARS).trimEnd()}…` : request;
+  return `On it — “${quoted}”\n\nWorking through it now; I'll tell you when it's finished.`;
+}
+
+/** Posts that line as an interim message, if this run is a person's turn. */
+export async function publishTaskAcknowledgement(ctx: RunContext, requestText: string) {
+  const text = acknowledgementFor(ctx.run.trigger, requestText);
+  if (!text) return;
+  await publishInterimMessage(ctx, text);
+}
+
 /** Whether text written before a step may be posted as an interim message at all. */
 export function narrationBecomesMessages(ctx: RunContext) {
   return ctx.replyMode === "chat" && runPromotesMidTurnNarration(ctx.run.trigger);

@@ -193,13 +193,19 @@ export function talkLaneDue(input: {
    * person who is on the phone and spoke.
    */
   isCallTurn: boolean;
+  /**
+   * The turn asks something. A question is answered beside the run however recently it started:
+   * the threshold exists so a quick "go on" does not spawn a duplicate answer, not to make a person
+   * wait to have their question heard.
+   */
+  asksAnswer?: boolean;
   stopping: boolean;
   now: Date;
 }): boolean {
   if (input.stopping || input.hasLiveTalkRun) return false;
   if (input.activeUserId !== input.userId) return false;
   if (!input.activeStartedAt) return false;
-  if (input.isCallTurn) return true;
+  if (input.isCallTurn || input.asksAnswer) return true;
   return input.now.getTime() - input.activeStartedAt.getTime() >= TALK_LANE_MIN_BUSY_MS;
 }
 

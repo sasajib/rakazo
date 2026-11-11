@@ -226,8 +226,12 @@ describe("talkLaneDue", () => {
     expect(talkLaneDue({ ...base, activeStartedAt: started(30) })).toBe(true);
   });
 
-  it("does not answer beside a run that just started, which reads steering in a second", () => {
+  it("does not answer beside a run that just started, when nothing was asked", () => {
     expect(talkLaneDue({ ...base, activeStartedAt: started(2) })).toBe(false);
+  });
+
+  it("answers a question beside a run however recently it started", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(1), asksAnswer: true })).toBe(true);
   });
 
   it("does not answer beside a run that is still queued", () => {

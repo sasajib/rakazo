@@ -274,6 +274,8 @@ async function createTalkRunBeside(
     prompt: string;
     active: { id: string; userId: string; startedAt: Date | null };
     isCallTurn: boolean;
+    /** The message asks something, so it is answered beside the run however recently it started. */
+    asksAnswer?: boolean;
     stopping: boolean;
   },
 ): Promise<{ id: string; taskId: string; status: string; trigger: string; userId: string } | null> {
@@ -295,6 +297,7 @@ async function createTalkRunBeside(
     userId: input.userId,
     hasLiveTalkRun: live !== null,
     isCallTurn: input.isCallTurn,
+    asksAnswer: input.asksAnswer,
     stopping: input.stopping,
     now: new Date(),
   });
@@ -868,6 +871,7 @@ export async function sendThreadMessage(
             // voice agent's tag wins when it sent one: it tracked the conversation.
             isCallTurn:
               Boolean(callId) && Boolean(input.answerNow ?? asksForAnswer(input.text ?? "")),
+            asksAnswer: Boolean(input.answerNow ?? asksForAnswer(input.text ?? "")),
             stopping,
           });
           return {
