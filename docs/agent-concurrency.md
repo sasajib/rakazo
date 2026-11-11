@@ -4,8 +4,8 @@ A bot executes **one run at a time** by default. That is the product rule: a bot
 person does, one piece of work in front of them, and a message sent while it works is read at its
 next turn boundary rather than starting a second copy of the bot.
 
-A Space can raise that per bot, up to 8 slots, when the bot's work is long and lives in *separate
-threads* — a research bot running three threads, a bot whose routine and whose chat have nothing to
+A Space can raise that per bot, up to 8 slots, when the bot's work is long and lives in _separate
+threads_ — a research bot running three threads, a bot whose routine and whose chat have nothing to
 do with each other. Concurrency buys parallel **threads**. It never buys two writers in one
 conversation.
 
@@ -18,7 +18,7 @@ computer_execution_leases   UNIQUE (computerId, botId, slot)
 
 A run must hold a lease on a slot before it may use the computer. With concurrency 3 the bot may
 hold three leases (slots 0, 1, 2) and therefore run three runs at once; a fourth waits in the queue
-and is retried with the usual backoff. An expired row is kept as a tombstone and is *reclaimed*, not
+and is retried with the usual backoff. An expired row is kept as a tombstone and is _reclaimed_, not
 deleted, so the screen fence still rises and a stale screen session cannot be mistaken for the new
 run's.
 
@@ -40,18 +40,18 @@ two places, and drift the model's context.
 
 Runs are ordered by what waiting is worth, not by arrival alone:
 
-| Weight | Triggers | Why |
-|---|---|---|
-| 50 | `user`, `call_end` | The person is on the other end. |
-| 45 | `follow_up`, `resume` | The person's previous message, answered late. |
-| 40 | `helper_result`, `cloud_agent` | Work a run asked for and is waiting on. |
-| 35 | `spawn` | A child bot the parent started. |
-| 30 | `helper` | A background helper's own turn. |
-| 25 | `messaging` | An app talking to the bot. |
-| 20 | `bot_message` | Another bot's report. |
-| 15 | `webhook`, `tickets`, `skill` | External triggers and board work. |
-| 10 | `purchase`, `media`, `created` | Follow-ups on something the bot started. |
-| 5 | `routine`, `reaction` | The bot's own schedule. |
+| Weight | Triggers                       | Why                                           |
+| ------ | ------------------------------ | --------------------------------------------- |
+| 50     | `user`, `call_end`             | The person is on the other end.               |
+| 45     | `follow_up`, `resume`          | The person's previous message, answered late. |
+| 40     | `helper_result`, `cloud_agent` | Work a run asked for and is waiting on.       |
+| 35     | `spawn`                        | A child bot the parent started.               |
+| 30     | `helper`                       | A background helper's own turn.               |
+| 25     | `messaging`                    | An app talking to the bot.                    |
+| 20     | `bot_message`                  | Another bot's report.                         |
+| 15     | `webhook`, `tickets`, `skill`  | External triggers and board work.             |
+| 10     | `purchase`, `media`, `created` | Follow-ups on something the bot started.      |
+| 5      | `routine`, `reaction`          | The bot's own schedule.                       |
 
 Waiting earns a point a minute, capped at 25 — two classes. A background run that has waited long
 enough overtakes the classes above it, but never the person: the lowest person weight (50) is still
@@ -64,7 +64,7 @@ twice or skip another.
 
 `bots/update` accepts `concurrency` (integer, 1–8). The value is stored on the bot and read by the
 executor on every run; lowering it does not cancel a run that already holds a slot, it only stops
-that run from taking a *second* one.
+that run from taking a _second_ one.
 
 ## What this does not fix
 
@@ -97,3 +97,26 @@ It is skipped for call turns (the voice agent speaks exactly one run's output), 
 person's run, while a stop is being handled, and when a talk run is already live for that bot.
 Below the 8 s threshold the working run reads the steering within a second or two, so a second run
 would only duplicate the reply.
+
+### Measured on the live instance (2026-11-11)
+
+Chief was given a run that holds the computer for 30-45 s (`shell: sleep`). A second message sent
+while that run was working created a talk run **12 ms** after the send (`run.queue_wait_ms: 27`), and
+the two ran at once:
+
+|          | start    | end      | spoke                                                                                                                         |
+| -------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| work run | 02:04:47 | 02:05:26 | "Tokyo — answering mid-task; … READY follows."                                                                                |
+| talk run | 02:04:59 | 02:05:44 | "Tokyo — that one's instant, no tools needed. The sleep is still running in the background, so READY comes once it finishes." |
+
+So the person is answered while the work continues, and the talk run says plainly that the work is
+still going instead of claiming it is done.
+
+Two honest limits:
+
+- **Both may answer.** The message is also steering, so the work run replies to it when it reaches
+  its next step. When the work finishes before the talk run's model call returns (this instance's
+  model took 45 s for that answer), the person sees two replies to one message.
+- **The talk answer is as fast as the model.** Here it took 45 s because the provider returned
+  `429 inference service is overloaded` and the runtime retried; a healthy model answers in a few
+  seconds. The lane removes the _queue_, not the model.
