@@ -3,7 +3,7 @@ import { BACKGROUND_HELPER_TRIGGER, toolResultTaintsRun } from "@rakazo/core";
 import { isTerminatingReplyResult } from "./approval-effect.js";
 import { IMAGE_RETURNING_COMPUTER_TOOLS, MODEL_CANNOT_SEE_MESSAGE } from "./model-vision.js";
 import type { RunContext } from "./run-context.js";
-import { noteComputerTaskStep } from "./run-progress.js";
+import { announceFirstStep, noteComputerTaskStep } from "./run-progress.js";
 import type { ToolHandler } from "./run-tool-gate.js";
 import { auditToolCall, gateToolCall } from "./run-tool-gate.js";
 import { prepareToolRequest, resolveToolRequest } from "./run-tool-request.js";
@@ -175,6 +175,8 @@ async function dispatchTool(
   }
   const refused = await prepareToolRequest(ctx, request);
   if (refused) return refuse(refused, request.name);
+  // A run that starts working must say so first: derived from the tool it called, not the request.
+  await announceFirstStep(ctx, request.name);
   noteComputerTaskStep(ctx.state.reply, request.name);
   const gate = await gateToolCall(ctx, request, observer);
   if ("result" in gate) return refuse(gate.result, request.name);

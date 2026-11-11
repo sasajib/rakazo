@@ -165,6 +165,43 @@ export async function publishInterimMessage(ctx: RunContext, text: string, markU
   }
 }
 
+/**
+ * What to say when a run starts working without saying anything first.
+ *
+ * The model often goes straight to a tool call, so the person sees nothing until the work is done —
+ * the exact complaint that kept coming back. This line is derived from the tool the run actually
+ * called, so it states a fact rather than repeating the request back.
+ */
+const FIRST_STEP_PHRASES: Record<string, string> = {
+  list_bots: "checking your bots",
+  get_bot: "looking up that bot",
+  create_bot: "creating the bot",
+  update_bot: "updating the bot",
+  archive_bot: "archiving the bot",
+  delete_bot: "deleting the bot",
+  spawn_bot: "setting the new bot up",
+  web_search: "searching the web",
+  web_fetch: "reading the page",
+  browser_navigate: "opening the browser",
+  browser_snapshot: "reading the page in the browser",
+  shell: "starting on the computer",
+  computer_act: "working on the computer",
+  computer_observe: "looking at the computer",
+  send_email: "writing the email",
+  read_email: "checking the inbox",
+  remember: "saving that to memory",
+  message_user: "writing back",
+};
+
+/** The confirmation for a run that reached for a tool before saying anything. */
+export async function announceFirstStep(ctx: RunContext, toolName: string): Promise<void> {
+  const { reply } = ctx.state;
+  if (reply.midTurnProgressCount > 0 || reply.hasStreamedText) return;
+  if (!isConversationalRun(ctx.run.trigger) || runAllowsSilentEmpty(ctx.run.trigger)) return;
+  const phrase = FIRST_STEP_PHRASES[toolName] ?? toolName.replace(/_/g, " ");
+  await publishInterimMessage(ctx, `On it — ${phrase}.`);
+}
+
 /** Whether text written before a step may be posted as an interim message at all. */
 export function narrationBecomesMessages(ctx: RunContext) {
   return ctx.replyMode === "chat" && runPromotesMidTurnNarration(ctx.run.trigger);
