@@ -7,6 +7,7 @@ vi.mock("react-native", () => ({ Platform: { OS: "android" } }));
 vi.mock("expo-file-system", () => ({ File: class {}, Paths: {} }));
 vi.mock("./voice", () => ({
   createSpeechOwner: () => Symbol("SpeechOwner"),
+  setCallAudio: vi.fn(async () => undefined),
   ensureVoiceConsent: vi.fn(async () => undefined),
   speakText: vi.fn(),
   stopSpeaking: vi.fn(),

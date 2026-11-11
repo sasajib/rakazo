@@ -4121,7 +4121,13 @@ describe("sendUserMessage", () => {
         fanout,
         analytics,
       ),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: "task-1", runId: "run-1" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: "task-1",
+      runId: "run-1",
+      talkRunId: null,
+    });
 
     expect(tx.run.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -4307,7 +4313,13 @@ describe("sendUserMessage", () => {
         prompt: "hello",
         trigger: "follow_up",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-0" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "run-0",
+      talkRunId: null,
+    });
 
     expect(tx.task.create).not.toHaveBeenCalled();
     expect(tx.run.create).not.toHaveBeenCalled();
@@ -4519,7 +4531,13 @@ describe("sendUserMessage", () => {
         prompt: "Check the inbox",
         trigger: "user",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "intro-run" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "intro-run",
+      talkRunId: null,
+    });
 
     expect(tx.run.create).not.toHaveBeenCalled();
     expect(tx.task.create).not.toHaveBeenCalled();
@@ -4574,7 +4592,13 @@ describe("sendUserMessage", () => {
         trigger: "messaging",
         clientNonce: "messaging:slack:handle-1",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "intro-run" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "intro-run",
+      talkRunId: null,
+    });
 
     expect(tx.run.create).not.toHaveBeenCalled();
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
@@ -4634,7 +4658,13 @@ describe("sendUserMessage", () => {
           prompt: "hello",
           trigger: "messaging",
         }),
-      ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-routine" });
+      ).resolves.toEqual({
+        messageId: "message-1",
+        seq: 4,
+        taskId: null,
+        runId: "run-routine",
+        talkRunId: null,
+      });
 
       expect(tx.run.create).not.toHaveBeenCalled();
       // No run on the steering row: the routine never claims it; its continuation does.
@@ -4749,7 +4779,13 @@ describe("sendUserMessage", () => {
         prompt: "hello",
         trigger: "messaging",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-text" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "run-text",
+      talkRunId: null,
+    });
 
     expect(tx.steeringMessage.create).toHaveBeenCalledWith({
       data: {
@@ -4871,7 +4907,13 @@ describe("sendUserMessage", () => {
         prompt: "hello",
         trigger: "messaging",
       }),
-    ).resolves.toEqual({ messageId: "message-1", seq: 4, taskId: null, runId: "run-text" });
+    ).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: null,
+      runId: "run-text",
+      talkRunId: null,
+    });
 
     expect(tx.run.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
