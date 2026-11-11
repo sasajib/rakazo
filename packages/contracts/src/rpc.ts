@@ -757,6 +757,28 @@ export const appContract = {
         }),
       )
       .output(z.object({ ok: z.literal(true) })),
+    /**
+     * A sentence the call's voice agent said that no run wrote (a progress line, "back to the
+     * update on ..."). Left in the chat as a bot message so what was heard and what is written
+     * stay the same conversation. Idempotent per `noteId`.
+     */
+    callNote: oc
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+          noteId: z
+            .string()
+            .min(1)
+            .max(80)
+            .regex(/^[A-Za-z0-9_-]+$/),
+          text: z.string().min(1).max(2000),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
     /** The user picked up the bot's call: returns what the bot opens with. */
     answerCall: oc
       .input(

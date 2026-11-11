@@ -628,6 +628,42 @@ export function threadsRoutes(ctx: RouterContext) {
         });
         return { ok: true as const };
       }),
+      callNote: callsEnabled.threads.callNote.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        const { botId, threadId } = target;
+        const blocks = [{ kind: "text" as const, text: input.text }];
+        const committed = await deps.prisma
+          .$transaction(async (tx) => {
+            const message = await createThreadMessageInTransaction(tx, {
+              threadId,
+              role: "bot",
+              botId,
+              blocks,
+              // Same call prefix as a spoken turn, so clients keep it inside the call's card.
+              clientNonce: `${CALL_CLIENT_NONCE_PREFIX}${input.callId}:note-${input.noteId}`,
+            });
+            const event = await appendEventInTransaction(tx, {
+              spaceId: context.actor.spaceId,
+              threadId,
+              botId,
+              type: "thread.message.created",
+              payload: { messageId: message.id, role: "bot", blocks, callId: input.callId },
+            });
+            return { eventSeq: event.seq };
+          })
+          .catch((error) => {
+            if (!isUniqueViolation(error)) throw error;
+            return null;
+          });
+        if (committed) {
+          await deps.events.notify(threadId, committed.eventSeq).catch((error) => {
+            getLogger().error("call note realtime notification", error);
+          });
+        }
+        return { ok: true as const };
+      }),
       answer: authed.threads.answer.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         const answered = await deps.events
