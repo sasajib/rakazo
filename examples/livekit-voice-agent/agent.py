@@ -114,6 +114,8 @@ class RakazoAgent(Agent):
         # The call's conversation, kept apart from what the bot's other runs are doing.
         self.state = ConversationState()
         self._turn_run_id: str | None = None
+        # How often the same approval card has been read out on this call.
+        self._approval_asks: dict[str, int] = {}
         self._cursor = -1
         self._pump: asyncio.Task[None] | None = None
         self.hangup_requested = asyncio.Event()
@@ -253,7 +255,22 @@ class RakazoAgent(Agent):
                 run_id = decision.run_id
             else:
                 asking = decision.question or "something it wants to do"
-                yield f"That needs your okay — {asking}. Say approve, or deny, and I'll take that."
+                # Never the same sentence twice: after the second ask, point at the card instead.
+                self._approval_asks[decision.message_id or ""] = (
+                    self._approval_asks.get(decision.message_id or "", 0) + 1
+                )
+                # Say how to reach it: the card lives in the chat, which the call covers until it
+                # is shrunk. "Approve on screen" alone left the caller with nowhere to look.
+                if self._approval_asks[decision.message_id or ""] > 2:
+                    yield (
+                        "I still need that decision and I won't keep asking — tap the arrow at the top "
+                        "of the call to open the chat, and the card is there with approve and deny on it."
+                    )
+                else:
+                    yield (
+                        f"That needs your okay — {asking}. Say approve, or deny and I'll take it, "
+                        "or tap the arrow at the top of the call to open the chat and use the card."
+                    )
                 return
 
         nonce = call_client_nonce(self.call.call_id)
