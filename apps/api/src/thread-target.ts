@@ -606,6 +606,8 @@ export async function sendThreadMessage(
     noModel?: boolean;
     /** The caller is asking something: this turn gets its own answer run while the bot works. */
     answerNow?: boolean;
+    /** Leave open cards alone: this message answers none of them and retires none. */
+    leaveCards?: boolean;
   },
   releaseTakeover?: (runId: string) => Promise<void>,
   /** Runs saved with the message, after the thread lock and before the message is routed. */
@@ -748,7 +750,11 @@ export async function sendThreadMessage(
         const answered: typeof activeRuns = [];
         // Someone else's question stays on its card; this message starts the sender's own run.
         for (const run of activeRuns.filter(
-          (run) => !stopping && run.status === "waiting_input" && run.userId === actor.userId,
+          (run) =>
+            !stopping &&
+            !input.leaveCards &&
+            run.status === "waiting_input" &&
+            run.userId === actor.userId,
         )) {
           if (
             await answerWaitingRunWithTextInTransaction(tx, {

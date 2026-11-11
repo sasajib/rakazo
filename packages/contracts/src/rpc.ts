@@ -258,6 +258,13 @@ export const threadSendInput = threadSendFields
      * by its own run even while the bot is working. Absent means "decide from the text".
      */
     answerNow: z.boolean().optional(),
+    /**
+     * A card the bot is waiting on (a secret, an approval) stays open: this message is a request of
+     * its own and starts or steers a run beside the parked one, instead of answering the card or
+     * retiring it. The voice agent sets it, because a spoken request must neither be taken as the
+     * answer nor cancel what someone at the screen can still fill in.
+     */
+    leaveCards: z.boolean().optional(),
   })
   .superRefine((input, ctx) => {
   const text = input.text?.trim() ?? "";
