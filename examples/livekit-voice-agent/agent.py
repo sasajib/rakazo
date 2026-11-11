@@ -368,6 +368,10 @@ class RakazoAgent(Agent):
                 elif etype == "thread.message.created" and payload.get("role") == "bot":
                     final = text_from_blocks(payload.get("blocks") or [])
                     rest = _unspoken_remainder("".join(streamed), final)
+                    # A separate bot message is not a continuation of what was streamed: the run's
+                    # confirmation and its result are two messages, and the caller must hear both.
+                    if not rest and final and not self._spoken.has(final):
+                        rest = final
                     if rest:
                         if not streamed:
                             logger.info("no deltas; speaking final message", extra={"runId": run_id})
