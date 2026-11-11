@@ -377,13 +377,20 @@ export function threadsRoutes(ctx: RouterContext) {
             prompt: input.text,
             trigger: "follow_up",
             clientNonce: input.clientNonce,
+            answerNow: input.answerNow,
           });
           if (sent.taskId && sent.runId) {
             await deps.jobs.enqueue(runContinueJob(sent.runId)).catch((error) => {
               getLogger().error("follow-up enqueue", error);
             });
           }
-          return { ok: true as const };
+          if (sent.talkRunId) {
+            // The run that answers this turn while the busy one keeps working.
+            await deps.jobs.enqueue(runContinueJob(sent.talkRunId)).catch((error) => {
+              getLogger().error("talk run enqueue", error);
+            });
+          }
+          return { ok: true as const, talkRunId: sent.talkRunId ?? null };
         }
         const committed = await deps.prisma.$transaction(async (tx) => {
           if (input.clientNonce) {

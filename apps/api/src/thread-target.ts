@@ -23,6 +23,7 @@ import {
   mentionedGroupBotIds,
   messageBypassesTakeoverWait,
   QUEUE_HOLDING_RUN_STATUSES,
+  asksForAnswer,
   talkLaneDue,
   TALK_RUN_TRIGGER,
   resolveGroupTargetBotIds,
@@ -323,14 +324,20 @@ async function createTalkRunBeside(
   });
 }
 
-function sendResult(message: { seq: number }, runs: Array<{ id: string; taskId: string }>) {
+function sendResult(
+  message: { seq: number },
+  runs: Array<{ id: string; taskId: string; trigger?: string | null }>,
+) {
   const first = runs[0];
   if (!first) throw new IsolationError("Send did not create a run");
+  const talk = runs.find((run) => run.trigger === TALK_RUN_TRIGGER);
   return {
     taskId: first.taskId,
     runId: first.id,
     seq: message.seq,
     runIds: runs.map((run) => run.id),
+    // The run that answers this turn beside the busy one, for a client that speaks one run.
+    talkRunId: talk?.id ?? null,
   };
 }
 
@@ -594,6 +601,8 @@ export async function sendThreadMessage(
     clientNonce?: string;
     /** No model to start a turn: the send may only stop active work. */
     noModel?: boolean;
+    /** The caller is asking something: this turn gets its own answer run while the bot works. */
+    answerNow?: boolean;
   },
   releaseTakeover?: (runId: string) => Promise<void>,
   /** Runs saved with the message, after the thread lock and before the message is routed. */
@@ -855,7 +864,10 @@ export async function sendThreadMessage(
             messageId: message.id,
             prompt: buildSendPrompt(input.text, artifacts, connectorNames),
             active,
-            isCallTurn: Boolean(callId),
+            // A spoken question gets its own answer; anything else keeps reporting the work. The
+            // voice agent's tag wins when it sent one: it tracked the conversation.
+            isCallTurn:
+              Boolean(callId) && Boolean(input.answerNow ?? asksForAnswer(input.text ?? "")),
             stopping,
           });
           return {

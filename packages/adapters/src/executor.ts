@@ -1215,7 +1215,12 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                 mainRunModel,
               ));
         const sourceMessage =
-          (run.trigger === "user" || run.trigger === "follow_up") && run.sourceMessageId
+          (run.trigger === "user" ||
+            run.trigger === "follow_up" ||
+            // A talk run is often a spoken turn: its nonce carries the call, and the reply is
+            // spoken, so it needs the same voice instruction a user turn gets.
+            run.trigger === TALK_RUN_TRIGGER) &&
+          run.sourceMessageId
             ? await deps.prisma.message.findUnique({
                 where: { id: run.sourceMessageId },
                 select: { clientNonce: true, role: true, blocks: true, threadId: true },

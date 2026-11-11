@@ -148,6 +148,26 @@ export function runReadsThreadHistory(trigger: string | null | undefined): boole
 }
 
 /** Whether a run's turn is part of the thread's conversation and may take user steering. */
+/**
+ * Whether a spoken turn is asking for an answer, rather than listening to the work.
+ *
+ * A caller who says "hmm", "okay", or "go on" wants the run to keep going and keep reporting what
+ * it is doing; one who asks something wants the answer to that, now. Only the second kind gets its
+ * own run — the first keeps the current behaviour, where the busy run's progress is what is heard.
+ */
+const ANSWER_REQUESTED_START = new RegExp(
+  "^(?:what|why|how|when|where|who|which|whose|can|could|do|does|did|is|are|was|were|will|would|" +
+    "should|shall|may|might|have|has|tell me|explain|give me|show me|list|summari[sz]e|read me)\\b",
+  "i",
+);
+
+export function asksForAnswer(text: string | null | undefined): boolean {
+  const said = (text ?? "").trim();
+  if (!said) return false;
+  if (said.includes("?")) return true;
+  return ANSWER_REQUESTED_START.test(said);
+}
+
 /** How long a run must have been working before a message earns an answer beside it. */
 export const TALK_LANE_MIN_BUSY_MS = 8_000;
 
@@ -167,13 +187,19 @@ export function talkLaneDue(input: {
   userId: string;
   /** A live talk run already exists for this thread and bot. */
   hasLiveTalkRun: boolean;
+  /**
+   * The turn is a spoken one (its client nonce carries the call id). A caller cannot wait: the
+   * threshold below exists to avoid a duplicate answer to a typed message, and does not apply to a
+   * person who is on the phone and spoke.
+   */
   isCallTurn: boolean;
   stopping: boolean;
   now: Date;
 }): boolean {
-  if (input.stopping || input.isCallTurn || input.hasLiveTalkRun) return false;
+  if (input.stopping || input.hasLiveTalkRun) return false;
   if (input.activeUserId !== input.userId) return false;
   if (!input.activeStartedAt) return false;
+  if (input.isCallTurn) return true;
   return input.now.getTime() - input.activeStartedAt.getTime() >= TALK_LANE_MIN_BUSY_MS;
 }
 

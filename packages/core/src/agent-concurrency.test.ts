@@ -13,7 +13,7 @@ import {
   runPriority,
   sameThreadWriterBlocks,
 } from "./agent-concurrency.js";
-import { talkLaneDue } from "./run-state.js";
+import { asksForAnswer, talkLaneDue } from "./run-state.js";
 
 const now = new Date("2026-11-11T12:00:00Z");
 const botInput = (concurrency: number) => ({ botId: "bot-1", concurrency });
@@ -180,6 +180,36 @@ describe("planLeaseSlot", () => {
   });
 });
 
+describe("asksForAnswer", () => {
+  it("counts a question, however it is phrased", () => {
+    for (const said of [
+      "What is the capital of Bangladesh?",
+      "what is the capital of bangladesh",
+      "How long will that take",
+      "Can you check the logs",
+      "Tell me what you found",
+      "Explain the pricing page",
+    ]) {
+      expect(asksForAnswer(said), said).toBe(true);
+    }
+  });
+
+  it("does not count listening, so the work keeps reporting", () => {
+    for (const said of [
+      "",
+      "   ",
+      "okay",
+      "hmm",
+      "go on",
+      "keep going",
+      "thanks",
+      "sounds good, continue",
+    ]) {
+      expect(asksForAnswer(said), said).toBe(false);
+    }
+  });
+});
+
 describe("talkLaneDue", () => {
   const now = new Date("2026-11-11T12:00:00Z");
   const started = (secondsAgo: number) => new Date(now.getTime() - secondsAgo * 1000);
@@ -208,8 +238,15 @@ describe("talkLaneDue", () => {
     expect(talkLaneDue({ ...base, activeStartedAt: started(30), hasLiveTalkRun: true })).toBe(false);
   });
 
-  it("never answers a call turn twice: the agent speaks one run", () => {
-    expect(talkLaneDue({ ...base, activeStartedAt: started(30), isCallTurn: true })).toBe(false);
+  it("answers a spoken turn at once, whatever the run's age", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(1), isCallTurn: true })).toBe(true);
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), isCallTurn: true })).toBe(true);
+  });
+
+  it("still refuses a spoken turn while a talk run is live for it", () => {
+    expect(
+      talkLaneDue({ ...base, activeStartedAt: started(5), isCallTurn: true, hasLiveTalkRun: true }),
+    ).toBe(false);
   });
 
   it("leaves another person's run alone", () => {
