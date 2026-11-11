@@ -207,6 +207,39 @@ def continues_topic(text: str, topic: str) -> bool:
     return bool(_CONTINUATION.search(text))
 
 
+class SpokenLines:
+    """What this call has already said, so the same thing is never delivered twice.
+
+    A progress line and the final message often open with the same words, and an event can be seen
+    twice (once inside a turn, once while the call is idle). Either way the caller must hear it once.
+    """
+
+    def __init__(self, overlap: int = 60) -> None:
+        self._said: list[str] = []
+        self._overlap = overlap
+
+    @staticmethod
+    def normalise(text: str) -> str:
+        return " ".join(re.sub(r"[^a-z0-9 ]", " ", (text or "").lower()).split())
+
+    def has(self, text: str) -> bool:
+        said = self.normalise(text)
+        if not said:
+            return True
+        for previous in self._said:
+            if said == previous:
+                return True
+            head = min(self._overlap, len(said), len(previous))
+            if head >= 20 and (said.startswith(previous[:head]) or previous.startswith(said[:head])):
+                return True
+        return False
+
+    def add(self, text: str) -> None:
+        said = self.normalise(text)
+        if said:
+            self._said.append(said)
+
+
 def belongs_to_turn(event_run_id: str | None, run_id: str | None) -> bool:
     """Whether a streamed event is output of the run this turn started.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from conversation import (
+    SpokenLines,
     ConversationState,
     asks_for_status,
     asks_for_work,
@@ -264,4 +265,29 @@ def test_an_unclear_answer_is_not_consent():
 
 def test_no_actions_means_no_decision():
     assert spoken_decision_action("approve", []) is None
+
+
+def test_a_line_spoken_once_is_not_spoken_again():
+    spoken = SpokenLines()
+    spoken.add("New Delhi is the capital of India.")
+    assert spoken.has("New Delhi is the capital of India")
+    assert spoken.has("new delhi is the capital of india.")
+
+
+def test_a_progress_line_and_its_final_message_count_as_one():
+    spoken = SpokenLines()
+    spoken.add("New Delhi is the capital of India. Finishing the Voice Test explanation now")
+    # The final message opens with the same words: the caller already heard it.
+    assert spoken.has("New Delhi is the capital of India.")
+    assert spoken.has("New Delhi is the capital of India. Finishing the Voice Test explanation now.")
+
+
+def test_a_genuinely_new_line_is_still_spoken():
+    spoken = SpokenLines()
+    spoken.add("New Delhi is the capital of India.")
+    assert not spoken.has("The sleep finished forty-four seconds in, so the task is done.")
+
+
+def test_an_empty_line_is_never_new():
+    assert SpokenLines().has("   ")
 

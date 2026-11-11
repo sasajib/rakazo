@@ -43,6 +43,7 @@ from livekit.plugins import deepgram, openai, silero
 
 from conversation import (
     ConversationState,
+    SpokenLines,
     asks_to_continue,
     belongs_to_turn,
     spoken_decision_action,
@@ -116,6 +117,8 @@ class RakazoAgent(Agent):
         self._turn_run_id: str | None = None
         # How often the same approval card has been read out on this call.
         self._approval_asks: dict[str, int] = {}
+        # Everything this call has already said, so nothing is delivered twice.
+        self._spoken = SpokenLines()
         self._cursor = -1
         self._pump: asyncio.Task[None] | None = None
         self.hangup_requested = asyncio.Event()
@@ -173,7 +176,13 @@ class RakazoAgent(Agent):
         if event.get("type") == "thread.message.created" and payload.get("role") == "bot":
             said = text_from_blocks(payload.get("blocks") or [])
             # Short and stated: a confirmation or a one-line update. A report stays a note.
-            if said and len(said) <= SIBLING_LINE_MAX_CHARS:
+            # Anything this run already said, or this call already spoke, is not news.
+            if (
+                said
+                and len(said) <= SIBLING_LINE_MAX_CHARS
+                and event.get("runId") != self._turn_run_id
+                and not self._spoken.has(said)
+            ):
                 self.to_speak.put_nowait(said)
         payload = event.get("payload") or {}
         etype = event.get("type")
@@ -375,8 +384,9 @@ class RakazoAgent(Agent):
             # Whatever the caller cut short — a report, an answer, a long explanation — stays
             # finishable instead of vanishing. "go on" replays it; otherwise the next answer offers it.
             held = "".join(streamed)
-            # Nothing was sent, so nothing is being cut short: the caller simply started again.
-            if held.strip() and run_id:
+            # Only what the caller was *listening* to is resumable. An answer they already asked for
+            # must not come back later as if it were a report they missed.
+            if held.strip() and run_id and reporting:
                 self.state.note_report_interrupted(run_id, held)
             logger.info(
                 "turn %d interrupted; %d chars spoken, rest held for 'go on'",
@@ -386,6 +396,7 @@ class RakazoAgent(Agent):
             raise
         finally:
             self.state.record_reply("".join(streamed))
+            self._spoken.add("".join(streamed))
             self.state.end_turn(turn.id)
 
         # Answering a question does not silently bury the update the caller interrupted: the rest is
@@ -602,6 +613,7 @@ async def entrypoint(ctx: JobContext) -> None:
                     if session.agent_state == "listening" and not agent.to_speak.empty():
                         said = agent.to_speak.get_nowait()
                         logger.info("speaking a line from another run: %s", said[:80])
+                        agent._spoken.add(said)
                         session.say(said, allow_interruptions=True)
                 await asyncio.sleep(0.4)
             except asyncio.CancelledError:
