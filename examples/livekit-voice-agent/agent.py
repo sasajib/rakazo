@@ -41,7 +41,13 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, openai, silero
 
-from conversation import ConversationState, asks_to_continue, belongs_to_turn
+from conversation import (
+    ConversationState,
+    acknowledgement_for,
+    asks_for_work,
+    asks_to_continue,
+    belongs_to_turn,
+)
 from rakazo_client import (
     HEARTBEAT_EVENT,
     RUN_TERMINAL,
@@ -103,6 +109,7 @@ class RakazoAgent(Agent):
         # The call's conversation, kept apart from what the bot's other runs are doing.
         self.state = ConversationState()
         self._turn_run_id: str | None = None
+        self._last_ack = ""
         self._cursor = -1
         self._pump: asyncio.Task[None] | None = None
         self.hangup_requested = asyncio.Event()
@@ -218,6 +225,19 @@ class RakazoAgent(Agent):
         # Tag the turn: a question (or filler that follows one) must be answered by its own run;
         # anything else keeps the busy run reporting what it is doing.
         answer_now = self.state.wants_answer(utterance)
+
+        run_id: str | None = None
+        # A task is confirmed before any work starts, in the agent's own words, and before the turn
+        # is sent: the server's own acknowledgement message belongs to the working run, which this
+        # call is not listening to when the turn is answered beside it.
+        # A question is answered, not confirmed — but "can you please create …?" is a task wearing
+        # a question mark, so it is still confirmed first.
+        if not answer_now or asks_for_work(utterance):
+            ack = acknowledgement_for(utterance)
+            if ack and ack != self._last_ack:
+                self._last_ack = ack
+                self.state.record_reply(ack)
+                yield ack
         self._collect_pending()
         try:
             if decision.kind == "answer":
@@ -310,14 +330,16 @@ class RakazoAgent(Agent):
                     # The ask card text arrived in thread.message.created; the run now waits for us.
                     break
         except (asyncio.CancelledError, GeneratorExit):
-            if reporting:
-                # The caller cut an update short. Keep what was heard so far, so it stays finishable.
-                self.state.note_report_interrupted(run_id, "".join(streamed))
+            # Whatever the caller cut short — a report, an answer, a long explanation — stays
+            # finishable instead of vanishing. "go on" replays it; otherwise the next answer offers it.
+            held = "".join(streamed)
+            # Nothing was sent, so nothing is being cut short: the caller simply started again.
+            if held.strip() and run_id:
+                self.state.note_report_interrupted(run_id, held)
             logger.info(
-                "turn %d interrupted; dropping unspoken remainder (%d chars spoken so far)%s",
+                "turn %d interrupted; %d chars spoken, rest held for 'go on'",
                 turn.id,
-                sum(len(s) for s in streamed),
-                "; report held for 'go on'" if reporting else "",
+                len(held),
             )
             raise
         finally:
@@ -326,11 +348,10 @@ class RakazoAgent(Agent):
 
         # Answering a question does not silently bury the update the caller interrupted: the rest is
         # offered once, after the answer they asked for. Reached only when the turn ran to its end.
-        if not reporting:
-            offer = self.state.take_report_offer(self.call.bot_name)
-            if offer:
-                self.state.record_reply(offer)
-                yield offer
+        offer = self.state.take_report_offer(self.call.bot_name)
+        if offer:
+            self.state.record_reply(offer)
+            yield offer
 
     async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
         first = True
