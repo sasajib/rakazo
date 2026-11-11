@@ -22,6 +22,8 @@ const WORK_VERBS = new Set(
 
 /** Asking to be told something is a question, not a task. */
 const INFORMATIONAL = new Set(["tell", "show", "describe", "explain", "list", "read", "answer"]);
+/** A turn that opens by asking to be told something is a question, whatever nouns follow. */
+const ASKS_TO_BE_TOLD = /^(?:tell|show|describe|explain|list|read|answer|walk me through)\b/i;
 
 const FACT_QUESTION = /^(?:what|why|how|when|where|who|which|whose|is|are|was|were|do|does|did)\b/i;
 const NOISE = /^(?:(?:uh|um|ah|er|hmm|okay|ok|so|well|like)\b[,.\s]*)+/i;
@@ -32,6 +34,7 @@ export function requestsWork(text: string | null | undefined): boolean {
   const said = (text ?? "").trim().replace(NOISE, "").replace(GREETING, "");
   if (!said) return false;
   if (FACT_QUESTION.test(said)) return false;
+  if (ASKS_TO_BE_TOLD.test(said)) return false;
   const words = said.toLowerCase().split(/\s+/).map((word) => word.replace(/[^a-z]/g, ""));
   return words.some((word) => WORK_VERBS.has(word) && !INFORMATIONAL.has(word));
 }
