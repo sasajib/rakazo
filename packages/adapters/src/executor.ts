@@ -266,7 +266,7 @@ const EVIDENCE_INSTRUCTION = [
   "result in this turn showed it — and say what you saw (the name or id). If you have not checked,",
   "check now or say you have not checked.",
   "Never promise work for later: do it in this turn, or say exactly what is blocking it and that it is",
-  "queued. "I'll do that when this finishes" is not an answer.",
+  "queued — saying you will do it when the current step finishes is not an answer.",
 ].join(" ");
 
 const PLAN_FIRST_INSTRUCTION = [
