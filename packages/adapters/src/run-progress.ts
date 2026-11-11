@@ -203,7 +203,7 @@ function gerund(verb: string) {
 
 /** A readable phrase for a tool nobody mapped: "list_fleet" reads as "checking your fleet". */
 function phraseForTool(toolName: string) {
-  const [verb, ...rest] = toolName.split("_");
+  const [verb = "", ...rest] = toolName.split("_");
   const noun = rest.join(" ");
   switch (verb) {
     case "list":
