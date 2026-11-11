@@ -136,9 +136,22 @@ def pending_secret_ask(thread: dict[str, Any] | None) -> bool:
     )
 
 
+def secret_ask_of(thread: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The parked run's secret card: its run, message, and what it is asking for."""
+    runs = [(thread or {}).get("run"), *((thread or {}).get("activeRuns") or [])]
+    for run in runs:
+        ask = _pending_ask(thread, run)
+        block = next((b for b in (ask or {}).get("blocks") or [] if is_secret_ask_block(b)), None)
+        if ask and block:
+            name = block.get("text") or (block.get("credential") or {}).get("name") or ""
+            return {"run_id": ask["run_id"], "message_id": ask["message"]["id"], "what": str(name)}
+    return None
+
+
 def call_turn(thread: dict[str, Any] | None, text: str) -> CallTurn:
-    if pending_secret_ask(thread):
-        return CallTurn("enter_code")
+    secret = secret_ask_of(thread)
+    if secret:
+        return CallTurn("enter_code", run_id=secret["run_id"], message_id=secret["message_id"], question=secret["what"])
     ask = _pending_ask(thread, (thread or {}).get("run"))
     if ask and any(is_approval_ask_block(b) for b in ask["blocks"]):
         approval = next((b for b in ask["blocks"] if is_approval_ask_block(b)), {})

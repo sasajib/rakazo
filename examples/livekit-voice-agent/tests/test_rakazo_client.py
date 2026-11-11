@@ -209,3 +209,21 @@ def test_text_from_blocks_skips_non_speech_blocks():
         {"kind": "ask", "text": "Anything else?", "status": "pending"},
     ]
     assert text_from_blocks(blocks) == "Done.\nAnything else?"
+
+
+def test_a_parked_secret_card_names_what_it_wants():
+    from rakazo_client import call_turn, secret_ask_of
+
+    thread = {
+        "run": {"id": "r1", "status": "waiting_input"},
+        "messages": [
+            {
+                "id": "m1",
+                "runId": "r1",
+                "blocks": [{"kind": "ask", "input": "secret", "text": "BrowserOS Neo MCP token", "status": "pending"}],
+            }
+        ],
+    }
+    assert secret_ask_of(thread) == {"run_id": "r1", "message_id": "m1", "what": "BrowserOS Neo MCP token"}
+    turn = call_turn(thread, "hello")
+    assert turn.kind == "enter_code" and turn.question == "BrowserOS Neo MCP token" and turn.run_id == "r1"

@@ -56,6 +56,7 @@ from conversation import (
     heartbeat_line,
     speakable,
     spoken_decision_action,
+    wants_to_move_on,
 )
 from rakazo_client import (
     HEARTBEAT_EVENT,
@@ -66,6 +67,7 @@ from rakazo_client import (
     call_client_nonce,
     call_turn,
     progress_text,
+    secret_ask_of,
     text_from_blocks,
 )
 
@@ -89,7 +91,14 @@ TTS_START_S = 2.0
 # A line from another run of this bot read out on the call: a confirmation, not a report.
 SIBLING_LINE_MAX_CHARS = 220
 
-ENTER_CODE_LINE = "The bot is asking for a code or password. Hang up, then enter it on screen."
+def secret_ask_line(what: str) -> str:
+    """Say once what the parked run is waiting for, and every way out of it."""
+    named = f"your {what}" if what else "a secret, like a password or token"
+    return (
+        f"I'm waiting on {named}. A secret can't be said out loud, so it has to be typed into the card in the chat: "
+        "tap the arrow at the top of the call to open it. If you've already added it another way, or want to skip it, "
+        "just tell me and I'll drop that request and carry on."
+    )
 APPROVE_ON_SCREEN_LINE = "That needs your approval. Approve or deny it on screen."
 
 
@@ -136,6 +145,7 @@ class RakazoAgent(Agent):
         self._turn_run_id: str | None = None
         # How often the same approval card has been read out on this call.
         self._approval_asks: dict[str, int] = {}
+        self._secret_asks: dict[str, int] = {}
         # Everything this call has already said, so nothing is delivered twice.
         self._spoken = SpokenLines()
         self._cursor = -1
@@ -478,10 +488,36 @@ class RakazoAgent(Agent):
         decision = call_turn(snapshot, utterance)
 
         if decision.kind == "enter_code":
-            async for chunk in self._emit(segments, "answer", ENTER_CODE_LINE):
-                yield chunk
-            self.state.end_turn(turn.id)
-            return
+            # A run is parked on a secret card. A word said into a call must never be sent as the
+            # secret (a message sent while a run waits on an ask IS its answer), and a card that stays
+            # open forever would stonewall every turn after it — the call that got stuck on
+            # "enter it on screen" for ten turns although the credential was already added elsewhere.
+            key = decision.message_id or ""
+            told = self._secret_asks.get(key, 0)
+            if told == 0 and not wants_to_move_on(utterance):
+                self._secret_asks[key] = 1
+                async for chunk in self._emit(segments, "answer", secret_ask_line(decision.question)):
+                    yield chunk
+                self.state.end_turn(turn.id)
+                return
+            logger.info("dropping the run parked on a secret (%r) so the caller can move on", decision.question)
+            try:
+                await self.client.threads_stop(self.call.bot_id)
+                for _ in range(10):  # the stop lands asynchronously; wait until the run has left waiting_input
+                    await asyncio.sleep(0.5)
+                    snapshot = await self.client.threads_get(self.call.bot_id)
+                    if secret_ask_of(snapshot) is None:
+                        break
+            except RakazoError as exc:
+                logger.warning("could not stop the run waiting on a secret: %s", exc)
+            decision = call_turn(snapshot, utterance)
+            if decision.kind == "enter_code":  # still parked: say so rather than loop silently
+                async for chunk in self._emit(
+                    segments, "answer", "I couldn't clear that request. Please cancel it from the chat card."
+                ):
+                    yield chunk
+                self.state.end_turn(turn.id)
+                return
         if decision.kind == "approve_on_screen":
             # A caller can decide this out loud: the card is the app's way of asking, not the only
             # one. Without an explicit word, say what is being asked so they can answer.

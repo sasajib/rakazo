@@ -223,6 +223,18 @@ _STOP_REQUEST = re.compile(
 )
 
 
+_MOVE_ON = re.compile(
+    r"\b(?:already|added|done|skip|cancel|never ?mind|forget|stop|instead|try again|check|test|"
+    r"carry on|move on|without|not now|can'?t|don'?t have)\b",
+    re.I,
+)
+
+
+def wants_to_move_on(text: str) -> bool:
+    """Whether a caller facing a request for a secret is declining it, not typing it by voice."""
+    return bool(_MOVE_ON.search(text or ""))
+
+
 def asks_to_stop(text: str) -> bool:
     """Whether the caller is waving off what was being told (\"never mind\", \"skip that\")."""
     return bool(_STOP_REQUEST.match((text or "").strip()))

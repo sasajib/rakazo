@@ -373,3 +373,11 @@ def test_spoken_lines_recognise_text_inside_a_longer_earlier_line():
     spoken = SpokenLines()
     spoken.add("On it — checking your fleet. You already have it, so I created nothing.")
     assert spoken.has("On it — checking your fleet.")
+
+
+def test_a_caller_declining_a_secret_is_recognised():
+    from conversation import wants_to_move_on
+
+    for said in ("It's already given, can you check the MCP server?", "skip that", "never mind", "I don't have it"):
+        assert wants_to_move_on(said), said
+    assert not wants_to_move_on("what is the capital of India")
