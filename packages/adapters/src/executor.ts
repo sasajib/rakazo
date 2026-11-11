@@ -271,7 +271,9 @@ const EVIDENCE_INSTRUCTION = [
 
 const PLAN_FIRST_INSTRUCTION = [
   "Begin with one short sentence, in your own words, saying what you understood and what you will do first.",
-  "Write it before calling any tool: the person reads it while the work runs.",
+  "That sentence is not the answer and does not end the turn: after writing it, do the work in this",
+  "same turn — call the tools, and only then report the result. Ending after the sentence leaves the",
+  "task undone and makes the person ask again.",
 ].join(" ");
 
 const TALK_RUN_INSTRUCTION = [
