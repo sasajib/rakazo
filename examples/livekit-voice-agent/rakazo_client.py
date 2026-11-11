@@ -288,11 +288,31 @@ class RakazoClient:
     async def threads_get(self, bot_id: str) -> dict[str, Any]:
         return await self.rpc("threads/get", {"botId": bot_id})
 
-    async def threads_send(self, bot_id: str, text: str, client_nonce: str) -> dict[str, Any]:
-        return await self.rpc("threads/send", {"botId": bot_id, "text": text, "clientNonce": client_nonce})
+    async def threads_send(
+        self, bot_id: str, text: str, client_nonce: str, answer_now: bool | None = None
+    ) -> dict[str, Any]:
+        return await self.rpc(
+            "threads/send",
+            {
+                "botId": bot_id,
+                "text": text,
+                "clientNonce": client_nonce,
+                **({} if answer_now is None else {"answerNow": answer_now}),
+            },
+        )
 
-    async def threads_follow_up(self, bot_id: str, text: str, client_nonce: str) -> dict[str, Any]:
-        return await self.rpc("threads/followUp", {"botId": bot_id, "text": text, "clientNonce": client_nonce})
+    async def threads_follow_up(
+        self, bot_id: str, text: str, client_nonce: str, answer_now: bool | None = None
+    ) -> dict[str, Any]:
+        return await self.rpc(
+            "threads/followUp",
+            {
+                "botId": bot_id,
+                "text": text,
+                "clientNonce": client_nonce,
+                **({} if answer_now is None else {"answerNow": answer_now}),
+            },
+        )
 
     async def threads_answer(
         self, bot_id: str, run_id: str, message_id: str, answer: str, client_nonce: str

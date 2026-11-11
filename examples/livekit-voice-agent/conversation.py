@@ -80,6 +80,48 @@ def topic_of(text: str) -> str:
     return " ".join(significant_words(text)[:MAX_TOPIC_WORDS])
 
 
+_QUESTION_START = re.compile(
+    r"^(?:what|why|how|when|where|who|which|whose|can|could|do|does|did|is|are|was|were|will|would|"
+    r"should|shall|may|might|have|has|tell me|explain|give me|show me|list|summari[sz]e|read me)\b",
+    re.I,
+)
+
+# Sounds that keep a conversation going without adding a subject: "hmm", "okay", "go on".
+_FILLER = re.compile(
+    r"^(?:hmm+|mhm+|uh+huh|ok(?:ay)?|right|sure|yes|yeah|yep|no|nah|go on|continue|carry on|"
+    r"keep going|and\??|and then\??|what else\??|go ahead|i see|alright|fine|got it)[\s.!?,]*$",
+    re.I,
+)
+
+
+def asks_question(text: str) -> bool:
+    """Whether a spoken turn is asking something, rather than just keeping the line open."""
+    said = (text or "").strip()
+    if not said:
+        return False
+    if "?" in said:
+        return True
+    return bool(_QUESTION_START.search(said))
+
+
+def is_filler(text: str) -> bool:
+    """Whether a turn adds no subject of its own ("hmm", "okay", "go on")."""
+    return bool(_FILLER.match((text or "").strip()))
+
+
+# What a caller says to have the rest of an interrupted report.
+_CONTINUE_REQUEST = re.compile(
+    r"^(?:go on|continue|carry on|keep going|yes(?: please)?|yeah|sure|please do|ok(?:ay)?|"
+    r"the rest|read it|say it)\b[\s.!?]*$",
+    re.I,
+)
+
+
+def asks_to_continue(text: str) -> bool:
+    """Whether the caller is asking for the rest of something, rather than a new question."""
+    return bool(_CONTINUE_REQUEST.match((text or "").strip())) and not asks_question(text)
+
+
 def asks_for_status(text: str) -> bool:
     """Whether the caller is asking how the work is going rather than asking about the subject."""
     return any(pattern.search(text) for pattern in _STATUS_PATTERNS)
@@ -119,6 +161,7 @@ class Turn:
     kind: str  # "status" | "continue" | "new_topic"
     topic: str
     at: float
+    asked: bool = False
 
 
 @dataclass
@@ -140,6 +183,13 @@ class ConversationState:
     replies: deque[str] = field(default_factory=lambda: deque(maxlen=12))
     active_topic: str = ""
     current: Turn | None = None
+    # True while the last thing the caller asked is still the thing being answered.
+    answering: bool = False
+    # The report the caller interrupted, kept as text so a later topic change cannot drop it, and
+    # whether the offer to finish it was made.
+    report_run_id: str | None = None
+    report_text: str = ""
+    report_offered: bool = False
     notes: dict[str, TaskNote] = field(default_factory=dict)
     _next_id: int = 1
 
@@ -165,16 +215,76 @@ class ConversationState:
         else:
             kind = "continue" if self.active_topic else "new_topic"
         topic = self.active_topic if kind in ("status", "continue") else topic_of(spoken)
-        turn = Turn(id=self._next_id, text=spoken, kind=kind, topic=topic, at=at)
+        asked = asks_question(spoken)
+        turn = Turn(id=self._next_id, text=spoken, kind=kind, topic=topic, at=at, asked=asked)
+        # A question starts (or restarts) the answer; filler keeps it going while it lasts.
+        self.answering = asked or (self.answering and is_filler(spoken))
         self._next_id += 1
         self.turns.append(turn)
         self.current = turn
         if kind == "new_topic":
+            # The interrupted update is still theirs to ask for: a new question does not throw the
+            # rest of it away, it only moves what is being talked about.
             self.active_topic = topic
             # A new subject means each still-note is about something else; a status question
             # cannot be answered with it.
             self._drop_notes()
         return turn
+
+    def wants_answer(self, text: str) -> bool:
+        """Whether this turn must be answered, rather than listening to the work.
+
+        A question always is. Filler is, but only while a question is still open — "hmm" after
+        "what is the capital?" is the caller waiting on that answer, while "hmm" after a task report
+        is the caller letting the work carry on.
+        """
+        if asks_question(text):
+            return True
+        return self.answering and is_filler(text)
+
+    def note_report_interrupted(self, run_id: str | None, text: str = "") -> None:
+        """Remember that the caller cut a report short, with what of it was heard.
+
+        The text is kept here rather than read back from the task notes: a new subject clears those
+        notes, and the interrupted report must survive that to be offered later.
+        """
+        if not run_id:
+            return
+        said = (text or "").strip() or (self.notes.get(run_id).text if run_id in self.notes else "")
+        self.report_run_id = run_id
+        self.report_text = said
+        self.report_offered = False
+
+    def paused_report(self) -> str | None:
+        """The text of the interrupted report, as far as this call has seen it."""
+        if not self.report_run_id:
+            return None
+        return self.report_text or None
+
+    def has_paused_report(self) -> bool:
+        return self.report_run_id is not None and self.paused_report() is not None
+
+    def take_report_offer(self, bot_name: str = "") -> str | None:
+        """One sentence offering the rest of an interrupted report, once per interruption."""
+        if self.report_offered or not self.has_paused_report():
+            return None
+        self.report_offered = True
+        who = f"{bot_name} still" if bot_name else "I still"
+        return f"{who} has the rest of that update — say go on and I'll finish it."
+
+    def resume_report(self) -> str | None:
+        """The interrupted report, for a caller who asked for it. Clears the pause."""
+        text = self.paused_report()
+        self.report_run_id = None
+        self.report_text = ""
+        self.report_offered = False
+        return text
+
+    def drop_paused_report(self) -> None:
+        """The caller moved on: the interrupted report is not offered again."""
+        self.report_run_id = None
+        self.report_text = ""
+        self.report_offered = False
 
     def is_current(self, turn_id: int) -> bool:
         """Whether this turn is still the one being answered."""

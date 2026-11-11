@@ -5,6 +5,9 @@ from __future__ import annotations
 from conversation import (
     ConversationState,
     asks_for_status,
+    asks_to_continue,
+    asks_question,
+    is_filler,
     belongs_to_turn,
     continues_topic,
     significant_words,
@@ -142,3 +145,98 @@ def test_an_empty_turn_is_a_new_topic_with_no_words():
     turn = state.begin_turn("   ")
     assert turn.kind == "new_topic"
     assert state.active_topic == ""
+
+
+def test_only_a_question_earns_an_answer():
+    assert asks_question("What is the capital of Bangladesh?")
+    assert asks_question("how long will that take")
+    assert not asks_question("hmm")
+    assert not asks_question("okay")
+    assert not asks_question("")
+
+
+def test_filler_is_recognised():
+    for said in ("hmm", "okay", "go on", "right", "and?", "continue"):
+        assert is_filler(said), said
+    assert not is_filler("create the voice test agent")
+
+
+def test_filler_after_a_question_keeps_answering_it():
+    state = ConversationState()
+    state.begin_turn("What is the capital of Bangladesh?")
+    assert state.wants_answer("hmm") is True
+    assert state.wants_answer("go on") is True
+
+
+def test_filler_after_a_task_lets_the_task_report():
+    state = ConversationState()
+    state.begin_turn("Create the voice test agent and the document")
+    assert state.wants_answer("okay") is False
+    assert state.wants_answer("hmm") is False
+
+
+def test_a_new_question_starts_a_new_answer():
+    # The agent opens a turn for every utterance, then asks whether it must be answered.
+    state = ConversationState()
+    state.begin_turn("Create the voice test agent")
+    assert state.wants_answer("okay") is False
+
+    state.begin_turn("what is the capital of Bangladesh?")
+    assert state.wants_answer("what is the capital of Bangladesh?") is True
+    state.begin_turn("hmm")
+    assert state.wants_answer("hmm") is True
+
+
+def test_only_an_ask_for_the_rest_counts_as_continue():
+    for said in ("go on", "continue", "yes please", "the rest", "read it"):
+        assert asks_to_continue(said), said
+    for said in ("what is the capital of Bangladesh?", "create the agent", "stop"):
+        assert not asks_to_continue(said), said
+
+
+def test_an_interrupted_report_is_offered_once_after_the_answer():
+    state = ConversationState()
+    state.begin_turn("Create the voice test agent")
+    state.note_task_event("run-task", "The document has a voice section, a test plan and a rollout.")
+    state.note_report_interrupted("run-task")
+
+    offer = state.take_report_offer("Chief")
+    assert offer is not None
+    assert "go on" in offer
+    # Asking again does not nag the caller.
+    assert state.take_report_offer("Chief") is None
+
+
+def test_go_on_speaks_the_interrupted_report_and_clears_it():
+    state = ConversationState()
+    state.note_task_event("run-task", "The document has a voice section and a test plan.")
+    state.note_report_interrupted("run-task")
+    assert state.has_paused_report()
+    assert state.resume_report() == "The document has a voice section and a test plan."
+    assert not state.has_paused_report()
+    assert state.resume_report() is None
+
+
+def test_a_new_subject_keeps_the_interrupted_report_offered():
+    state = ConversationState()
+    state.begin_turn("Create the voice test agent")
+    state.note_task_event("run-task", "Half a report")
+    state.note_report_interrupted("run-task")
+    state.begin_turn("Book me a flight to Dubai tomorrow")
+    # Moving on is not a refusal: "go on" still works, and the offer is not repeated.
+    assert state.has_paused_report()
+    assert state.take_report_offer("Chief") is not None
+    assert state.take_report_offer("Chief") is None
+    assert state.resume_report() == "Half a report"
+
+
+def test_a_question_after_an_interruption_still_gets_its_own_answer():
+    state = ConversationState()
+    state.begin_turn("Create the voice test agent")
+    state.note_task_event("run-task", "The document has a voice section and a test plan.")
+    state.note_report_interrupted("run-task")
+    state.begin_turn("What is the capital of Bangladesh?")
+    assert state.wants_answer("What is the capital of Bangladesh?") is True
+    # The interrupted update is still offered, not lost, after that answer.
+    assert state.has_paused_report()
+

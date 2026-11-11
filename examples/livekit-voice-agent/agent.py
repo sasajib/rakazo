@@ -41,7 +41,7 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, openai, silero
 
-from conversation import ConversationState, belongs_to_turn
+from conversation import ConversationState, asks_to_continue, belongs_to_turn
 from rakazo_client import (
     HEARTBEAT_EVENT,
     RUN_TERMINAL,
@@ -187,6 +187,14 @@ class RakazoAgent(Agent):
             extra={"utterance": utterance, "callId": self.call.call_id},
         )
 
+        # "Go on" after an interrupted update asks for the rest of that update, not for a new turn.
+        if asks_to_continue(utterance) and self.state.has_paused_report():
+            rest = self.state.resume_report()
+            if rest:
+                self.state.record_reply(rest)
+                yield rest
+                return
+
         # "What are you working on?" is answered from what this call has seen, in one sentence,
         # instead of sending a turn that would read the whole thread's task history back.
         if turn.kind == "status":
@@ -207,6 +215,9 @@ class RakazoAgent(Agent):
             return
 
         nonce = call_client_nonce(self.call.call_id)
+        # Tag the turn: a question (or filler that follows one) must be answered by its own run;
+        # anything else keeps the busy run reporting what it is doing.
+        answer_now = self.state.wants_answer(utterance)
         self._collect_pending()
         try:
             if decision.kind == "answer":
@@ -219,19 +230,28 @@ class RakazoAgent(Agent):
                 )
                 run_id = decision.run_id
             elif decision.kind == "follow_up":
-                # The receipt names the run this turn belongs to; the pending run may have ended
-                # and a new one started, and a stale id would filter out our own reply.
-                receipt = await self.client.threads_follow_up(self.call.bot_id, utterance, nonce)
-                run_id = receipt.get("runId") or decision.run_id
+                # The bot is busy. The receipt names the run that answers THIS turn when the
+                # server started one for it (a call turn always gets one), so the caller hears the
+                # answer to what they said instead of the busy run's work finishing.
+                receipt = await self.client.threads_follow_up(
+                    self.call.bot_id, utterance, nonce, answer_now=answer_now
+                )
+                run_id = receipt.get("talkRunId") or receipt.get("runId") or decision.run_id
             else:
-                receipt = await self.client.threads_send(self.call.bot_id, utterance, nonce)
-                run_id = receipt.get("runId")
+                receipt = await self.client.threads_send(
+                    self.call.bot_id, utterance, nonce, answer_now=answer_now
+                )
+                # A send can also score a talk run when the bot turned busy a moment earlier.
+                run_id = receipt.get("talkRunId") or receipt.get("runId")
         except RakazoError as exc:
             logger.error("rakazo send failed: %s", exc)
             yield "Sorry, I could not reach the assistant. Please try again."
             return
 
         self._turn_run_id = run_id
+        # A turn that is not answering the caller is reporting on the work: interrupting it should
+        # leave the rest of that report finishable.
+        reporting = not answer_now
         streamed: list[str] = []
         first_delta_at: float | None = None
         deadline = t0 + TURN_TIMEOUT_S
@@ -290,15 +310,27 @@ class RakazoAgent(Agent):
                     # The ask card text arrived in thread.message.created; the run now waits for us.
                     break
         except (asyncio.CancelledError, GeneratorExit):
+            if reporting:
+                # The caller cut an update short. Keep what was heard so far, so it stays finishable.
+                self.state.note_report_interrupted(run_id, "".join(streamed))
             logger.info(
-                "turn %d interrupted; dropping unspoken remainder (%d chars spoken so far)",
+                "turn %d interrupted; dropping unspoken remainder (%d chars spoken so far)%s",
                 turn.id,
                 sum(len(s) for s in streamed),
+                "; report held for 'go on'" if reporting else "",
             )
             raise
         finally:
             self.state.record_reply("".join(streamed))
             self.state.end_turn(turn.id)
+
+        # Answering a question does not silently bury the update the caller interrupted: the rest is
+        # offered once, after the answer they asked for. Reached only when the turn ran to its end.
+        if not reporting:
+            offer = self.state.take_report_offer(self.call.bot_name)
+            if offer:
+                self.state.record_reply(offer)
+                yield offer
 
     async def tts_node(self, text: AsyncIterable[str], model_settings: ModelSettings):
         first = True

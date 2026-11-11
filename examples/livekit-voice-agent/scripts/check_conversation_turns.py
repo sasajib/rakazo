@@ -37,14 +37,14 @@ class FakeClient:
     async def threads_get(self, bot_id: str) -> dict:
         return {"cursor": 0, "messages": [], "run": None}
 
-    async def threads_send(self, bot_id: str, text: str, nonce: str) -> dict:
+    async def threads_send(self, bot_id: str, text: str, nonce: str, answer_now=None) -> dict:
         self.sends.append(text)
         assert self.agent is not None
         for item in self.script:
             self.agent.events.put_nowait(item)
         return {"runId": "run-ours"}
 
-    async def threads_follow_up(self, bot_id: str, text: str, nonce: str) -> dict:
+    async def threads_follow_up(self, bot_id: str, text: str, nonce: str, answer_now=None) -> dict:
         raise AssertionError("an idle thread must not need followUp")
 
     async def threads_answer(self, *args, **kwargs) -> dict:
