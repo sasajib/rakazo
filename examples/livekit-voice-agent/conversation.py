@@ -182,6 +182,104 @@ def spoken_decision_action(text: str, actions: list[dict]) -> str | None:
     return None
 
 
+_LABEL_BREAK = re.compile(r"\b(?:and then|and also|then|so that|so we|so i|because|while|but)\b|[,;.!?]", re.I)
+_LABEL_LEAD = re.compile(r"^(?:please|can you|could you|would you|will you|i want you to|i want to|we want to|i'd like you to|i need you to|let's|lets|go ahead and|just)\s+", re.I)
+_LABEL_FILLER = re.compile(r",?\s*\b(?:uh+|um+|er+|erm|hmm+)\b[,.]?", re.I)
+_LABEL_GREETING = re.compile(r"^(?:hey|hi|hello|okay|ok|so)\b[,. ]*(?:chief\b[,. ]*)?", re.I)
+MAX_LABEL_WORDS = 10
+
+
+def task_label(text: str) -> str:
+    """How the caller's request is named when the bot reports on it later.
+
+    Built from their own words (the clause that carries the work verb), so \"I was giving you an
+    update on your request to create a voice test agent\" names the thing they asked for. Never a
+    fixed template around the whole transcript, which restates fillers.
+    """
+    said = _LABEL_FILLER.sub("", (text or "").strip())
+    said = _LABEL_GREETING.sub("", _NOISE_PREFIX.sub("", said)).strip()
+    for _ in range(3):  # "hey chief, please could you ..." strips layer by layer
+        trimmed = _LABEL_LEAD.sub("", said).strip()
+        if trimmed == said:
+            break
+        said = trimmed
+    words = said.split()
+    start = next(
+        (i for i, word in enumerate(words) if re.sub(r"[^a-z]", "", word.lower()) in _WORK_VERBS), None
+    )
+    if start is None:
+        return "your last request"
+    clause = _LABEL_BREAK.split(" ".join(words[start:]))[0].split()
+    phrase = " ".join(clause[:MAX_LABEL_WORDS]).strip().rstrip(".?!,")
+    if not phrase:
+        return "your last request"
+    phrase = re.sub(r"\ban (?=[b-df-hj-np-tv-z])", "a ", phrase)  # \"create an, uh, voice\" -> \"an voice\"
+    return f"your request to {phrase[0].lower() + phrase[1:]}"
+
+
+_STOP_REQUEST = re.compile(
+    r"^(?:(?:no |ok(?:ay)? |hey )?(?:stop|cancel|skip|forget)(?: it| that| this)?|never ?mind|that'?s enough|enough)\b",
+    re.I,
+)
+
+
+def asks_to_stop(text: str) -> bool:
+    """Whether the caller is waving off what was being told (\"never mind\", \"skip that\")."""
+    return bool(_STOP_REQUEST.match((text or "").strip()))
+
+
+_TOOL_PHRASES = {
+    "spawn_bot": "creating the agent",
+    "create_bot": "creating the agent",
+    "list_fleet": "checking your fleet",
+    "list_bots": "checking your fleet",
+    "find_tool": "looking for the right tool",
+    "scratchpad": "making notes",
+    "shell": "working on the computer",
+    "bash": "working on the computer",
+    "browser": "browsing the web",
+    "web_search": "searching the web",
+    "read_file": "reading a file",
+    "write_file": "writing a file",
+    "update_bot": "updating the agent",
+}
+
+
+def humanize_activity(text: str) -> str:
+    """A tool status line (\"using spawn_bot\") as something a person would say, or nothing.
+
+    An unrecognised snake_case name is dropped rather than read aloud: \"using spawn underscore bot\"
+    tells the caller nothing.
+    """
+    said = re.sub(r"\s+", " ", (text or "").strip()).rstrip(".…")
+    said = re.sub(r"^(?:using|running|calling|tool:?)\s+", "", said, flags=re.I)
+    key = said.lower().replace(" ", "_").replace("-", "_")
+    if key in _TOOL_PHRASES:
+        return _TOOL_PHRASES[key]
+    if re.fullmatch(r"[a-z0-9]+(?:[_.][a-z0-9]+)+", said.lower()) or "_" in said:
+        return ""
+    return said
+
+
+def heartbeat_line(label: str, activity: str, count: int) -> str:
+    """A short progress line for a caller who has heard nothing for a while.
+
+    Built from what is true — which task, and what the run last said it was doing — not from
+    anything the caller said. Varies by count so it is never the same sentence twice.
+    """
+    doing = humanize_activity(activity)
+    if len(doing) > 70 or not doing:
+        doing = ""
+    on = label or "that"
+    if count == 0:
+        return f"Still working on {on}" + (f" — {doing[0].lower() + doing[1:]}." if doing else ".")
+    if count == 1:
+        return "Still going" + (f" — {doing[0].lower() + doing[1:]}." if doing else ", it's taking a little longer.")
+    if count == 2:
+        return f"Nothing wrong, {on} just needs a bit more time."
+    return f"Still on {on}. I'll tell you the moment it's done."
+
+
 def asks_to_continue(text: str) -> bool:
     """Whether the caller is asking for the rest of something, rather than a new question."""
     return bool(_CONTINUE_REQUEST.match((text or "").strip())) and not asks_question(text)
@@ -207,6 +305,22 @@ def continues_topic(text: str, topic: str) -> bool:
     return bool(_CONTINUATION.search(text))
 
 
+_LONG_ID = re.compile(r"^([`'\"(]*)([A-Za-z0-9_-]{20,})([`'\".,;:!?)]*)$")
+
+
+def speakable(text: str) -> str:
+    """Make a line fit for the ear. A raw 25-character id read out letter by letter is noise: say
+    which one it is by its ending, as a person would. The chat keeps the full id."""
+
+    def fix(match: re.Match[str]) -> str:
+        lead, body, trail = match.groups()
+        if not any(ch.isdigit() for ch in body) or " " in body:
+            return match.group(0)
+        return f"{lead}id ending {body[-4:]}{trail}"
+
+    return " ".join(_LONG_ID.sub(fix, word) for word in text.split(" "))
+
+
 class SpokenLines:
     """What this call has already said, so the same thing is never delivered twice.
 
@@ -228,6 +342,8 @@ class SpokenLines:
             return True
         for previous in self._said:
             if said == previous:
+                return True
+            if len(said) >= 20 and said in previous:
                 return True
             head = min(self._overlap, len(said), len(previous))
             if head >= 20 and (said.startswith(previous[:head]) or previous.startswith(said[:head])):
@@ -272,6 +388,35 @@ class TaskNote:
 
 
 @dataclass
+class Segment:
+    """One thought the agent voiced, and what kind it was.
+
+    `report` is the only kind that is put back when the caller cuts it off: an update on a task is
+    theirs to hear in full, an answer they asked for or a "still working" line is not.
+    """
+
+    kind: str  # ack | answer | report | line | beat
+    text: str
+    run_id: str | None = None
+    label: str = ""
+
+
+@dataclass
+class Task:
+    """Work the caller asked for on this call, tracked from the request to the report on it."""
+
+    run_id: str
+    label: str
+    started: float
+    status: str = "running"  # running | done
+    # The last thing the run wrote itself (its confirmation, then its result) and what it is doing.
+    last_message: str = ""
+    activity: str = ""
+    # The finished result still has to be told to the caller; set once, cleared when told.
+    report: str = ""
+
+
+@dataclass
 class ConversationState:
     """The call's conversation: turns, the active topic, and task notes it may be asked about."""
 
@@ -289,6 +434,9 @@ class ConversationState:
     report_text: str = ""
     report_offered: bool = False
     notes: dict[str, TaskNote] = field(default_factory=dict)
+    # The work asked for on this call, by run id, in the order it was asked.
+    tasks: dict[str, Task] = field(default_factory=dict)
+    report_label: str = ""
     _next_id: int = 1
 
     def __post_init__(self) -> None:
@@ -340,6 +488,62 @@ class ConversationState:
             return True
         return self.answering and is_filler(text)
 
+    # --- tasks ---------------------------------------------------------------------------------
+
+    def register_task(self, run_id: str | None, utterance: str, now: float | None = None) -> Task | None:
+        """Track the run a spoken request started, under a name the caller will recognise."""
+        if not run_id:
+            return None
+        known = self.tasks.get(run_id)
+        if known:
+            return known  # a second request steered into the same run keeps the first name
+        at = time.monotonic() if now is None else now
+        task = Task(run_id=run_id, label=task_label(utterance), started=at)
+        self.tasks[run_id] = task
+        while len(self.tasks) > 12:
+            self.tasks.pop(next(iter(self.tasks)))
+        return task
+
+    def running_tasks(self, except_run: str | None = None) -> list[Task]:
+        return [t for t in self.tasks.values() if t.status == "running" and t.run_id != except_run]
+
+    def note_task_message(self, run_id: str | None, text: str) -> None:
+        task = self.tasks.get(run_id or "")
+        if task and text.strip():
+            task.last_message = text.strip()
+
+    def note_task_activity(self, run_id: str | None, text: str) -> None:
+        task = self.tasks.get(run_id or "")
+        if task and text.strip():
+            task.activity = text.strip()
+
+    def finish_task(self, run_id: str | None, tell: bool) -> Task | None:
+        """The run ended. When its result was not heard (the caller was busy elsewhere), keep it to
+        be reported once; a result already spoken in its own turn is simply closed."""
+        task = self.tasks.get(run_id or "")
+        if not task or task.status == "done":
+            return task
+        task.status = "done"
+        if tell and task.last_message:
+            task.report = task.last_message
+        return task
+
+    def take_pending_report(self) -> Task | None:
+        """The oldest finished task whose result has not been told yet."""
+        for task in self.tasks.values():
+            if task.report:
+                return task
+        return None
+
+    def report_told(self, run_id: str) -> None:
+        task = self.tasks.get(run_id)
+        if task:
+            task.report = ""
+
+    def label_of(self, run_id: str | None) -> str:
+        task = self.tasks.get(run_id or "")
+        return task.label if task else ""
+
     def note_report_interrupted(self, run_id: str | None, text: str = "") -> None:
         """Remember that the caller cut a report short, with what of it was heard.
 
@@ -352,6 +556,7 @@ class ConversationState:
         self.report_run_id = run_id
         self.report_text = said
         self.report_offered = False
+        self.report_label = self.label_of(run_id)
 
     def paused_report(self) -> str | None:
         """The text of the interrupted report, as far as this call has seen it."""
@@ -361,6 +566,12 @@ class ConversationState:
 
     def has_paused_report(self) -> bool:
         return self.report_run_id is not None and self.paused_report() is not None
+
+    def resume_preface(self) -> str:
+        """What is said before an interrupted report carries on: which report it is."""
+        if self.report_label:
+            return f"I was giving you an update on {self.report_label}. Let me continue."
+        return "I was in the middle of an update. Let me continue."
 
     def take_report_offer(self, bot_name: str = "") -> str | None:
         """One sentence offering the rest of an interrupted report, once per interruption."""
@@ -376,6 +587,7 @@ class ConversationState:
         self.report_run_id = None
         self.report_text = ""
         self.report_offered = False
+        self.report_label = ""
         return text
 
     def drop_paused_report(self) -> None:
@@ -434,6 +646,25 @@ class ConversationState:
         if len(self.notes) == 1:
             return f"{subject} working on this: {text}."
         return f"{subject} working on {len(self.notes)} things. Latest: {text}."
+
+    def task_status(self, now: float | None = None) -> str | None:
+        """One honest sentence about the work this call asked for, for when the caller asks."""
+        at = time.monotonic() if now is None else now
+        running = [t for t in self.tasks.values() if t.status == "running"]
+        waiting = [t for t in self.tasks.values() if t.status == "done" and t.report]
+        parts: list[str] = []
+        if len(running) == 1:
+            task = running[0]
+            said = humanize_activity(task.activity)
+            doing = f", currently {said.lower()}" if said else ""
+            parts.append(f"I'm still working on {task.label}{doing}. It's been about {int(at - task.started)} seconds")
+        elif running:
+            parts.append("I'm working on " + str(len(running)) + " things: " + "; ".join(t.label for t in running))
+        if waiting:
+            parts.append(("Finished and waiting to be reported: " if parts else "") + "; ".join(t.label for t in waiting))
+        if not parts:
+            return None
+        return ". ".join(parts).rstrip(".") + "."
 
     # --- introspection -------------------------------------------------------------------------
 

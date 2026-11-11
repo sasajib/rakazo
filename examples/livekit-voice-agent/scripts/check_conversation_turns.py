@@ -18,6 +18,7 @@ from types import SimpleNamespace
 sys.path.insert(0, "/app")
 
 from agent import CallContext, RakazoAgent  # noqa: E402
+from conversation import Segment  # noqa: E402
 
 CALL = CallContext(call_id="call-1", bearer="", space_id="space-1", bot_id="bot-1", bot_name="Voice")
 
@@ -67,7 +68,8 @@ def progress(text: str) -> dict:
 async def collect(agent: RakazoAgent, text: str) -> list[str]:
     chunks: list[str] = []
     async for chunk in agent.llm_node(chat_ctx(text), [], None):
-        chunks.append(chunk)
+        if isinstance(chunk, str):  # a FlushSentinel is a speaker instruction, not words
+            chunks.append(chunk)
     return chunks
 
 
@@ -139,6 +141,70 @@ async def main() -> None:
         pass
     check("the superseded turn spoke its first chunk", "Dhaka" in first, first)
     check("and then stopped", rest == [], repr(rest))
+
+    # 4. A task that finishes while the caller is on something else is told afterwards, by name,
+    #    once — and the talk answer comes first.
+    client = FakeClient(
+        [
+            event("thread.progress", "run-task", **progress("On it.")),
+            event("thread.message.created", "run-task", role="bot", blocks=[{"kind": "text", "text": "Harness Check is created and checked in the fleet, id ending abc."}]),
+            event("run.completed", "run-task"),
+            event("thread.progress", "run-ours", **progress("New Delhi is the capital.")),
+            event("run.completed", "run-ours"),
+        ]
+    )
+    agent = RakazoAgent(CALL, client)
+    client.agent = agent
+    agent.state.register_task("run-task", "create a voice testing agent called harness check", now=0)
+    spoken = " ".join(await collect(agent, "What is the capital of India?"))
+    check("answers the question first", spoken.index("New Delhi") < spoken.index("Harness Check"), spoken)
+    check("then reports the finished task by name", "About your request to create a voice testing agent" in spoken, spoken)
+    check("reports it once", spoken.count("Harness Check is created") == 1, spoken)
+    check("nothing is left owed", agent.state.take_pending_report() is None)
+
+    # 5. Cutting a report off keeps the unheard part; the next turn returns to it, naming it.
+    client = FakeClient(
+        [
+            event("thread.progress", "run-ours", **progress("Four.")),
+            event("run.completed", "run-ours"),
+        ]
+    )
+    agent = RakazoAgent(CALL, client)
+    client.agent = agent
+    agent.state.register_task("run-task", "create a voice assistant", now=0)
+    report = "The assistant has three voices. It greets callers by name. It also keeps a call log."
+    segments = [
+        Segment("line", "About your request to create a voice assistant:", "run-task", "your request to create a voice assistant"),
+        Segment("report", report, "run-task", "your request to create a voice assistant"),
+    ]
+    agent.log_speech(segments)
+    agent.on_speech_cut("About your request to create a voice assistant: The assistant has three voices.")
+    check("keeps the unheard part", agent.state.paused_report() == "It greets callers by name. It also keeps a call log.", repr(agent.state.paused_report()))
+    spoken = " ".join(await collect(agent, "What is two plus two?"))
+    check("answers the interruption first", spoken.index("Four") < spoken.index("I was giving you an update"), spoken)
+    check("names the report it returns to", "I was giving you an update on your request to create a voice assistant. Let me continue." in spoken, spoken)
+    check("continues from where it stopped", spoken.endswith("It also keeps a call log.") and "three voices" not in spoken.split("Let me continue.")[1], spoken)
+
+    # 6. Cut off while the intro line is still being said: the whole report is still owed, and a
+    #    sentence the caller already heard in the answer is not said again.
+    agent = RakazoAgent(CALL, FakeClient())
+    agent.state.register_task("run-task", "create a voice assistant", now=0)
+    label = "your request to create a voice assistant"
+    segments = [
+        Segment("answer", "New Delhi is the capital of India.", "run-ours"),
+        Segment("line", f"About {label}:", "run-task", label),
+        Segment("report", "It has three voices. It keeps a call log.", "run-task", label),
+    ]
+    agent.log_speech(segments)
+    agent.on_speech_cut(f"New Delhi is the capital of India. About {label}:")
+    check("a cut inside the intro keeps the whole report", agent.state.paused_report() == "It has three voices. It keeps a call log.", repr(agent.state.paused_report()))
+    agent = RakazoAgent(CALL, FakeClient())
+    agent._spoken.add("New Delhi is the capital of India.")
+    agent.state.register_task("run-task", "create a voice assistant", now=0)
+    agent.state.note_task_message("run-task", "New Delhi is the capital of India. Both agents are created and verified.")
+    agent.state.finish_task("run-task", tell=True)
+    told = " ".join(seg.text for seg in agent.take_backlog())
+    check("a result does not repeat what was just answered", "New Delhi" not in told and "created and verified" in told, told)
 
     print()
     if failures:

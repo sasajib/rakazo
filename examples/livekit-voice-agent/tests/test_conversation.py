@@ -302,3 +302,74 @@ def test_text_already_streamed_is_not_said_again_from_its_message():
     spoken.add(streamed)
     assert spoken.has(streamed)
 
+
+
+# --- tasks, labels and what is owed ------------------------------------------------------------
+
+
+def test_a_task_is_named_from_the_clause_that_carries_the_work():
+    from conversation import task_label
+
+    assert task_label("Create a new voice testing agent called harness check.") == (
+        "your request to create a new voice testing agent called harness check"
+    )
+    assert task_label("Hey, chief. We want to create an, uh, voice assistant, uh, so we can test") == (
+        "your request to create a voice assistant"
+    )
+    assert task_label("Can you please check my email and then summarize it") == "your request to check my email"
+    assert task_label("What is the capital of India?") == "your last request"
+
+
+def test_a_finished_task_is_kept_to_be_told_unless_it_was_heard():
+    state = ConversationState()
+    state.register_task("r1", "create a voice test agent", now=0)
+    state.note_task_message("r1", "Voice Test is created and checked in the fleet.")
+    state.finish_task("r1", tell=True)
+    pending = state.take_pending_report()
+    assert pending is not None and pending.label == "your request to create a voice test agent"
+    state.report_told("r1")
+    assert state.take_pending_report() is None
+
+    state.register_task("r2", "write a poem", now=0)
+    state.note_task_message("r2", "Here is the poem.")
+    state.finish_task("r2", tell=False)
+    assert state.take_pending_report() is None
+
+
+def test_the_resume_line_names_the_report_it_returns_to():
+    state = ConversationState()
+    state.register_task("r1", "create a voice assistant", now=0)
+    state.note_report_interrupted("r1", "It has three voices and a greeting.")
+    assert state.has_paused_report()
+    assert state.resume_preface() == "I was giving you an update on your request to create a voice assistant. Let me continue."
+    assert state.resume_report() == "It has three voices and a greeting."
+    assert not state.has_paused_report()
+
+
+def test_status_names_what_is_running_and_what_is_waiting():
+    state = ConversationState()
+    state.register_task("r1", "create a voice assistant", now=0)
+    state.note_task_activity("r1", "Creating the bot")
+    line = state.task_status(now=30)
+    assert "your request to create a voice assistant" in line and "creating the bot" in line and "30 seconds" in line
+
+
+def test_progress_lines_are_never_the_same_sentence_twice():
+    from conversation import heartbeat_line
+
+    lines = [heartbeat_line("your request to create a voice assistant", "Checking your bots", n) for n in range(4)]
+    assert len(set(lines)) == 4
+    assert "checking your bots" in lines[0]
+
+
+def test_stop_words_wave_off_a_report():
+    from conversation import asks_to_stop
+
+    assert asks_to_stop("never mind") and asks_to_stop("Stop.") and asks_to_stop("skip that")
+    assert not asks_to_stop("what is the capital of India?")
+
+
+def test_spoken_lines_recognise_text_inside_a_longer_earlier_line():
+    spoken = SpokenLines()
+    spoken.add("On it — checking your fleet. You already have it, so I created nothing.")
+    assert spoken.has("On it — checking your fleet.")

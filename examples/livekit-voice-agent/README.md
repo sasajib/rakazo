@@ -119,3 +119,12 @@ Set `TTS_PROVIDER=kokoro` and `KOKORO_BASE_URL` (any OpenAI-compatible `/v1/audi
 - One worker handles one call per room; it does not reconnect a dropped browser.
 - Approvals and codes are deliberately not accepted by voice.
 - The web page is a test harness, not a Rakazo UI; embedding this into `apps/web`'s call card would be the next step.
+
+## Conversation gate
+
+`scripts/scenario_assert.py` runs one whole call with a synthetic caller and judges how it feels: the
+request is confirmed **aloud** before its result exists, a question asked mid-task is answered first,
+the finished task is reported by name, a report cut off mid-sentence is resumed from where it stopped
+("I was giving you an update on …"), nothing is said twice, and every spoken line is also in the chat
+(`threads/callNote` for lines no run wrote). It needs the stack up and creates real bots; use it after
+every change to `agent.py` / `conversation.py`.

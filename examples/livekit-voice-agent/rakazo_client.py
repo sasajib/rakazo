@@ -174,6 +174,13 @@ def progress_text(payload: dict[str, Any]) -> str | None:
     return text or None
 
 
+def activity_text(payload: dict[str, Any]) -> str | None:
+    """The tool status line of a `thread.progress` event (`{text, activity: true}`), else None."""
+    if payload.get("activity") and payload.get("text"):
+        return str(payload["text"])
+    return None
+
+
 def text_from_blocks(blocks: Iterable[dict[str, Any]]) -> str:
     """The speakable text of a bot message: text blocks and the question of an ask block."""
     parts = [b.get("text", "") for b in blocks if b.get("kind") in ("text", "ask") and b.get("text")]
@@ -334,6 +341,13 @@ class RakazoClient:
 
     async def threads_stop(self, bot_id: str) -> dict[str, Any]:
         return await self.rpc("threads/stop", {"botId": bot_id})
+
+    async def threads_call_note(self, bot_id: str, call_id: str, note_id: str, text: str) -> dict[str, Any]:
+        """Leave a line the voice agent said in the call's chat, so heard and written stay one thread."""
+        return await self.rpc(
+            "threads/callNote",
+            {"botId": bot_id, "callId": call_id, "noteId": note_id, "text": text[:2000]},
+        )
 
     async def threads_end_call(self, bot_id: str, call_id: str, duration_seconds: int | None = None) -> dict[str, Any]:
         input: dict[str, Any] = {"botId": bot_id, "callId": call_id}
