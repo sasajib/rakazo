@@ -255,6 +255,20 @@ async function verbatimMcpServersForRun(
  * restate a dictated request without sounding like an echo, so the model states what it understood
  * in its first sentence — before any tool call — and the platform publishes that sentence.
  */
+/**
+ * The rule this instance kept needing: a claim about the world has to come from a tool result in the
+ * run that makes it, and a promise to do work later is not work. Both were said on real calls —
+ * "it now genuinely exists and is verified" before anything was created, and "I'll put it together as
+ * soon as this step finishes", which no later step did.
+ */
+const EVIDENCE_INSTRUCTION = [
+  "State that something exists, was created, archived, deleted, sent or finished only when a tool",
+  "result in this turn showed it — and say what you saw (the name or id). If you have not checked,",
+  "check now or say you have not checked.",
+  "Never promise work for later: do it in this turn, or say exactly what is blocking it and that it is",
+  "queued. "I'll do that when this finishes" is not an answer.",
+].join(" ");
+
 const PLAN_FIRST_INSTRUCTION = [
   "Begin with one short sentence, in your own words, saying what you understood and what you will do first.",
   "Write it before calling any tool: the person reads it while the work runs.",
@@ -1648,6 +1662,9 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           talkRun ? TALK_RUN_INSTRUCTION : undefined,
           !talkRun && (run.trigger === "user" || run.trigger === "follow_up")
             ? PLAN_FIRST_INSTRUCTION
+            : undefined,
+          run.trigger === "user" || run.trigger === "follow_up" || talkRun
+            ? EVIDENCE_INSTRUCTION
             : undefined,
           takeoverResume?.promptNote,
           approvalContinuation,
