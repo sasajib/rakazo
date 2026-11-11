@@ -42,6 +42,7 @@ export async function createReplyState(
   deps: ExecutorDeps,
   run: Run,
   secrets: string[],
+  options: { confirmationFirst?: boolean } = {},
 ): Promise<ReplyState> {
   const reply: ReplyState = {
     assembled: "",
@@ -58,6 +59,7 @@ export async function createReplyState(
     turnStartedAtMs: run.startedAt?.getTime() ?? Date.now(),
     progressBudgetStart: 0,
     steeringReplyPending: false,
+    confirmationFirst: options.confirmationFirst ?? false,
     computerTaskStarted: false,
     steeringResets: 0,
     lastSteeringResetAt: Number.NEGATIVE_INFINITY,
@@ -98,9 +100,10 @@ export function recordExplicitNoResponse(reply: ReplyState, text: string) {
 /** Durable interim messages only on genuinely long turns, capped per run. */
 export function canPublishDurableProgress(reply: ReplyState) {
   return (
-    // A run's first sentence is its confirmation: the person is waiting on exactly that, so it is
-    // published at once instead of after the long-turn delay. It still counts against the budget.
-    reply.midTurnProgressCount === 0 ||
+    // On a call a run's first sentence is its confirmation: the caller is waiting on exactly that,
+    // so it is published at once instead of after the long-turn delay. It still counts against the
+    // budget. Typed chats keep the long-turn rule.
+    (reply.confirmationFirst && reply.midTurnProgressCount === 0) ||
     reply.steeringReplyPending ||
     midTurnProgressBudgetAllows(progressSinceBudgetStart(reply), Date.now() - reply.turnStartedAtMs)
   );
@@ -225,13 +228,24 @@ function phraseForTool(toolName: string) {
   }
 }
 
+const SPEAKS_FOR_ITSELF = new Set(["message_user", "message_bot"]);
+
 /** The confirmation for a run that reached for a tool before saying anything. */
 export async function announceFirstStep(ctx: RunContext, toolName: string): Promise<void> {
-  const { reply } = ctx.state;
+  const reply = ctx.state?.reply;
+  // A context that tracks no reply (a tool call outside a conversational turn) has nothing to announce.
+  // Spoken call turns only: typed chats keep their own pacing, and a tool that speaks for itself
+  // (message_user) needs no announcement.
+  if (!reply?.confirmationFirst || SPEAKS_FOR_ITSELF.has(toolName)) return;
   if (reply.midTurnProgressCount > 0 || reply.hasStreamedText) return;
   if (!isConversationalRun(ctx.run.trigger) || runAllowsSilentEmpty(ctx.run.trigger)) return;
   const phrase = FIRST_STEP_PHRASES[toolName] ?? phraseForTool(toolName);
-  await publishInterimMessage(ctx, `On it — ${phrase}.`);
+  // A courtesy line must never cost the tool call it announces.
+  try {
+    await publishInterimMessage(ctx, `On it — ${phrase}.`);
+  } catch (error) {
+    getLogger().error("first step announcement", error);
+  }
 }
 
 /** Whether text written before a step may be posted as an interim message at all. */

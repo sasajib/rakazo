@@ -5,23 +5,23 @@ import { BUILTIN_TOOL_NAMES, disabledBuiltinToolSet } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
   botMessageAllowsSilence,
+  continuationPrompt,
   expandSkillReferencesInPrompt,
   formatSkillRunPrompt,
   formatSkillsCatalogInstruction,
   isCallClientNonce,
   isMessagingChannelRun,
-  continuationPrompt,
   isOwnerStartedRun,
   isTerminal,
-  needsContinuation,
-  TALK_RUN_TRIGGER,
   messagingChannelId,
   messagingChannelPrivacyBlock,
   messagingDmSurfaceNote,
+  needsContinuation,
   nonOwnerChatPrivacyBlock,
   promptInvokesSkill,
   redactSecrets,
   renderBotDirectory,
+  TALK_RUN_TRIGGER,
   userTurnMessageForRun,
 } from "@rakazo/core";
 import type { ThreadEvents } from "@rakazo/db";
@@ -294,9 +294,7 @@ const TALK_RUN_INSTRUCTION = [
 async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
   const { deps, run, task } = ctx;
   const { reply } = ctx.state;
-  const request = ctx.source.ownerStartedRun
-    ? (ctx.task.prompt ?? "")
-    : (ctx.task.prompt ?? "");
+  const request = ctx.source.ownerStartedRun ? (ctx.task.prompt ?? "") : (ctx.task.prompt ?? "");
   const replyText = reply.assembled || reply.assistantTurnText || "";
   if (
     !needsContinuation({
@@ -1513,7 +1511,9 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             ? teamWorkspaceInstruction(bot.id)
             : "This entire computer workspace is your private home. Relative file paths and shell working directories start at its root.";
 
-        const reply = await createReplyState(deps, run, runSecrets);
+        const reply = await createReplyState(deps, run, runSecrets, {
+          confirmationFirst: voiceCall,
+        });
         const script = scripted ? inferScript(task.prompt, takeoverResume?.checkpoint) : undefined;
         const state: RunState = {
           lease,

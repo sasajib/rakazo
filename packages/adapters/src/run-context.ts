@@ -101,6 +101,11 @@ export interface ReplyState {
   progressBudgetStart: number;
   /** The first interim message after one may answer the person at once. */
   steeringReplyPending: boolean;
+  /**
+   * A spoken call turn: the run's first sentence is its confirmation and the caller is waiting on
+   * exactly that, so it is published at once instead of after the long-turn delay.
+   */
+  confirmationFirst: boolean;
   /** The bot called a browser or desktop tool, so it may say at once that this will take a while. */
   computerTaskStarted: boolean;
   steeringResets: number;
