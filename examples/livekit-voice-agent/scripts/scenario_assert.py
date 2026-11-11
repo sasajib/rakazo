@@ -51,7 +51,7 @@ def parse_iso(stamp: str) -> float:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default="", help="agent name; default is unique per run so it is never 'already there'")
-    ap.add_argument("--task", default="Please create three new voice testing agents called {name} One, {name} Two and {name} Three. Then read the fleet back and tell me the id of each one, and what script each of them reads.")
+    ap.add_argument("--task", default="Please run the shell command sleep forty on your computer, and after that create one new voice testing agent called {name}, then tell me its id.")
     ap.add_argument("--question", default="Quick question, what is the capital of India?")
     ap.add_argument("--interrupt", default="Wait, quick question. What is two plus two?")
     ap.add_argument("--max-seconds", type=float, default=240)

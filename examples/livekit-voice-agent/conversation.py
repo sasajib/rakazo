@@ -357,6 +357,18 @@ class SentenceGate:
         rest, self._buffer = self._buffer, ""
         return rest
 
+    def take_words(self) -> str:
+        """The held text up to its last whole word; a word still being written stays held."""
+        cut = self._buffer.rfind(" ")
+        if cut < 0:
+            return ""
+        done, self._buffer = self._buffer[: cut + 1], self._buffer[cut + 1 :]
+        return done
+
+    @property
+    def held(self) -> str:
+        return self._buffer
+
 
 class SpokenLines:
     """What this call has already said, so the same thing is never delivered twice.

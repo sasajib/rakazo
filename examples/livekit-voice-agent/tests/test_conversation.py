@@ -398,3 +398,13 @@ def test_a_restated_sentence_is_recognised_as_heard():
     spoken.add("I haven't checked the fleet this turn, so I'm making no claims about the bots.")
     assert spoken.has("I haven't checked the fleet this turn, so I'm making no claims about any bots.")
     assert not spoken.has("New Delhi is the capital of India.")
+
+
+def test_a_word_in_progress_stays_held_until_it_is_whole():
+    from conversation import SentenceGate
+
+    gate = SentenceGate()
+    gate.push("I understood you wa")
+    assert gate.take_words() == "I understood you "
+    assert gate.held == "wa"
+    assert gate.take_words() == ""
