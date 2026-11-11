@@ -23,6 +23,9 @@ import {
   mentionedGroupBotIds,
   messageBypassesTakeoverWait,
   QUEUE_HOLDING_RUN_STATUSES,
+  asksForAnswer,
+  talkLaneDue,
+  TALK_RUN_TRIGGER,
   resolveGroupTargetBotIds,
   runReadsThreadHistory,
 } from "@rakazo/core";
@@ -246,14 +249,98 @@ function sendEventRunIds(payload: Prisma.JsonValue | undefined): string[] {
   return Array.isArray(runIds) ? runIds.filter((id): id is string => typeof id === "string") : [];
 }
 
-function sendResult(message: { seq: number }, runs: Array<{ id: string; taskId: string }>) {
+/**
+ * How long the bot's own run must have been working before a message earns an answer beside it.
+ * Below this the run is still at its first model call and will read the message as steering within
+ * a second or two, so a second run would only duplicate the answer.
+ */
+const TALK_LANE_MIN_BUSY_MS = 8_000;
+
+/**
+ * Answer this message now, beside the run that is already working.
+ *
+ * The message is still written as steering, so the working run takes it up at its next step and can
+ * change course. This run is the person's answer in the meantime: no computer, no tools, its own pi
+ * session, its reply is the only thing it writes.
+ */
+async function createTalkRunBeside(
+  tx: Prisma.TransactionClient,
+  input: {
+    spaceId: string;
+    botId: string;
+    threadId: string;
+    userId: string;
+    messageId: string;
+    prompt: string;
+    active: { id: string; userId: string; startedAt: Date | null };
+    isCallTurn: boolean;
+    /** The message asks something, so it is answered beside the run however recently it started. */
+    asksAnswer?: boolean;
+    stopping: boolean;
+  },
+): Promise<{ id: string; taskId: string; status: string; trigger: string; userId: string } | null> {
+  if (input.stopping || input.isCallTurn) return null;
+  if (input.active.userId !== input.userId) return null;
+  if (!input.active.startedAt) return null;
+  const live = await tx.run.findFirst({
+    where: {
+      threadId: input.threadId,
+      botId: input.botId,
+      trigger: TALK_RUN_TRIGGER,
+      status: { in: ["queued", "leased", "running"] },
+    },
+    select: { id: true },
+  });
+  const due = talkLaneDue({
+    activeStartedAt: input.active.startedAt,
+    activeUserId: input.active.userId,
+    userId: input.userId,
+    hasLiveTalkRun: live !== null,
+    isCallTurn: input.isCallTurn,
+    asksAnswer: input.asksAnswer,
+    stopping: input.stopping,
+    now: new Date(),
+  });
+  if (!due) return null;
+  const task = await tx.task.create({
+    data: {
+      spaceId: input.spaceId,
+      botId: input.botId,
+      threadId: input.threadId,
+      userId: input.userId,
+      prompt: input.prompt,
+      status: "queued",
+    },
+  });
+  return tx.run.create({
+    data: {
+      spaceId: input.spaceId,
+      botId: input.botId,
+      threadId: input.threadId,
+      taskId: task.id,
+      userId: input.userId,
+      status: "queued",
+      trigger: TALK_RUN_TRIGGER,
+      sourceMessageId: input.messageId,
+    },
+    select: { id: true, taskId: true, status: true, trigger: true, userId: true },
+  });
+}
+
+function sendResult(
+  message: { seq: number },
+  runs: Array<{ id: string; taskId: string; trigger?: string | null }>,
+) {
   const first = runs[0];
   if (!first) throw new IsolationError("Send did not create a run");
+  const talk = runs.find((run) => run.trigger === TALK_RUN_TRIGGER);
   return {
     taskId: first.taskId,
     runId: first.id,
     seq: message.seq,
     runIds: runs.map((run) => run.id),
+    // The run that answers this turn beside the busy one, for a client that speaks one run.
+    talkRunId: talk?.id ?? null,
   };
 }
 
@@ -517,6 +604,10 @@ export async function sendThreadMessage(
     clientNonce?: string;
     /** No model to start a turn: the send may only stop active work. */
     noModel?: boolean;
+    /** The caller is asking something: this turn gets its own answer run while the bot works. */
+    answerNow?: boolean;
+    /** Leave open cards alone: this message answers none of them and retires none. */
+    leaveCards?: boolean;
   },
   releaseTakeover?: (runId: string) => Promise<void>,
   /** Runs saved with the message, after the thread lock and before the message is routed. */
@@ -624,6 +715,7 @@ export async function sendThreadMessage(
             status: true,
             trigger: true,
             userId: true,
+            startedAt: true,
             modelProvider: true,
             modelId: true,
             modelPinned: true,
@@ -658,7 +750,11 @@ export async function sendThreadMessage(
         const answered: typeof activeRuns = [];
         // Someone else's question stays on its card; this message starts the sender's own run.
         for (const run of activeRuns.filter(
-          (run) => !stopping && run.status === "waiting_input" && run.userId === actor.userId,
+          (run) =>
+            !stopping &&
+            !input.leaveCards &&
+            run.status === "waiting_input" &&
+            run.userId === actor.userId,
         )) {
           if (
             await answerWaitingRunWithTextInTransaction(tx, {
@@ -723,7 +819,9 @@ export async function sendThreadMessage(
           : activeRuns.filter(
               (run) =>
                 QUEUE_HOLDING_RUN_STATUSES.some((status) => status === run.status) &&
-                !messageBypassesTakeoverWait(run),
+                !messageBypassesTakeoverWait(run) &&
+                // A talk run answers one message and ends in seconds: it never owns the queue.
+                run.trigger !== TALK_RUN_TRIGGER,
             );
         const active =
           holdingRuns.find((run) => steersMessageFrom(run, actor)) ??
@@ -766,7 +864,28 @@ export async function sendThreadMessage(
             const stop = await cancelThreadRuns(actor, target, { botId: target.botId })(tx);
             return { message, runs: [active], routineRuns, eventSeq: event.seq, stop };
           }
-          return { message, runs: [active], routineRuns, eventSeq: event.seq };
+          // The bot is busy: answer the person now, in parallel, while the work carries on.
+          const talkRun = await createTalkRunBeside(tx, {
+            spaceId: actor.spaceId,
+            botId: target.botId,
+            threadId: target.threadId,
+            userId: actor.userId,
+            messageId: message.id,
+            prompt: buildSendPrompt(input.text, artifacts, connectorNames),
+            active,
+            // A spoken question gets its own answer; anything else keeps reporting the work. The
+            // voice agent's tag wins when it sent one: it tracked the conversation.
+            isCallTurn:
+              Boolean(callId) && Boolean(input.answerNow ?? asksForAnswer(input.text ?? "")),
+            asksAnswer: Boolean(input.answerNow ?? asksForAnswer(input.text ?? "")),
+            stopping,
+          });
+          return {
+            message,
+            runs: talkRun ? [active, talkRun] : [active],
+            routineRuns,
+            eventSeq: event.seq,
+          };
         }
         const task = await tx.task.create({
           data: {

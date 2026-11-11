@@ -21,6 +21,8 @@ import {
   COMPUTER_USING_RUNS,
   isRetryableError,
   parseScreenLeaseId,
+  planLeaseSlot,
+  QUEUE_HOLDING_RUN_STATUSES,
   screenLeaseId,
 } from "@rakazo/core";
 import type { Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
@@ -766,6 +768,8 @@ export interface ComputerExecutionLease {
   computerId: string;
   botId: string;
   runId: string;
+  /** The bot's execution slot this lease holds. Always 0 for a bot on the default concurrency. */
+  slot: number;
   fence: number;
 }
 
@@ -788,6 +792,8 @@ export async function acquireDedicatedScreenLeaseFence(
     runFence: number;
   },
 ): Promise<ComputerExecutionLease> {
+  // A dedicated computer is one bot's own machine, so it stays one run at a time whatever the
+  // bot's concurrency says: the screen, the browser profile and the desktop are single resources.
   return prisma.$transaction(async (tx) => {
     // Lock in a fixed order and fail fast if assignment or worker ownership is changing.
     const assignedBot = await tx.$queryRaw<Array<{ id: string }>>`
@@ -825,6 +831,7 @@ export async function acquireDedicatedScreenLeaseFence(
         computerId: input.computerId,
         botId: input.botId,
         runId: input.runId,
+        slot: 0,
         fence: existing.fence,
       };
     }
@@ -849,6 +856,7 @@ export async function acquireDedicatedScreenLeaseFence(
         computerId: input.computerId,
         botId: input.botId,
         runId: input.runId,
+        slot: 0,
         fence: created.fence,
       };
     } catch (error) {
@@ -880,6 +888,10 @@ export async function acquireComputerExecutionLease(
     computerId: string;
     runId: string;
     botId: string;
+    /** The conversation the run writes. Two runs of one bot never hold the same one at once. */
+    threadId?: string;
+    /** Execution slots the bot may use at once. Omitted means the product default, one. */
+    maxSlots?: number;
   } & ({ workerId: string; runFence: number } | { workerId?: never; runFence?: never }),
 ): Promise<ComputerExecutionLease | null> {
   const computer = await prisma.computer.findUniqueOrThrow({ where: { id: input.computerId } });
@@ -892,26 +904,58 @@ export async function acquireComputerExecutionLease(
     // API operations have no worker claim and may acquire only new or expired leases.
     const ownsRun = input.workerId !== undefined;
     if (ownsRun) await lockOwnedRun(tx, input);
+    // One writer per conversation, whatever the bot's concurrency. Two runs of one bot may hold
+    // different slots and work on different threads; the same thread stays single-writer, so a
+    // conversation, its history and its pi session are never edited from two places at once.
+    if (input.threadId) {
+      const writer = await tx.run.findFirst({
+        where: {
+          threadId: input.threadId,
+          botId: input.botId,
+          id: { not: input.runId },
+          status: { in: [...QUEUE_HOLDING_RUN_STATUSES] },
+        },
+        select: { id: true },
+      });
+      if (writer) throw new ComputerBusyError();
+    }
     const now = new Date();
     const expiresAt = new Date(now.getTime() + EXECUTION_LEASE_MS);
-    const [reclaimed] = await tx.computerExecutionLease.updateManyAndReturn({
-      where: {
-        computerId: input.computerId,
-        botId: input.botId,
-        OR: [{ expiresAt: { lt: now } }, ...(ownsRun ? [{ runId: input.runId }] : [])],
-      },
-      data: {
-        runId: input.runId,
-        expiresAt,
-        fence: { increment: 1 },
-      },
-      select: { fence: true },
+    const leases = await tx.computerExecutionLease.findMany({
+      where: { computerId: input.computerId, botId: input.botId },
+      select: { slot: true, runId: true, expiresAt: true },
     });
-    if (reclaimed) {
+    // Which slot this run may take is decided in one pure place; the unique key on
+    // (computerId, botId, slot) is what settles a race between two workers choosing the same one.
+    const plan = planLeaseSlot({
+      leases,
+      runId: input.runId,
+      maxSlots: input.maxSlots ?? 1,
+      now,
+    });
+    if (plan.kind === "busy") throw new ComputerBusyError();
+    if (plan.kind === "reclaim") {
+      const [reclaimed] = await tx.computerExecutionLease.updateManyAndReturn({
+        where: {
+          computerId: input.computerId,
+          botId: input.botId,
+          slot: plan.slot,
+          OR: [{ expiresAt: { lt: now } }, ...(ownsRun ? [{ runId: input.runId }] : [])],
+        },
+        data: {
+          runId: input.runId,
+          expiresAt,
+          fence: { increment: 1 },
+        },
+        select: { fence: true },
+      });
+      // Another worker took the slot between the read and the update: this run waits its turn.
+      if (!reclaimed) throw new ComputerBusyError();
       return validateAcquiredComputerLease(tx, {
         computerId: input.computerId,
         botId: input.botId,
         runId: input.runId,
+        slot: plan.slot,
         fence: reclaimed.fence,
       });
     }
@@ -921,6 +965,7 @@ export async function acquireComputerExecutionLease(
           computerId: input.computerId,
           botId: input.botId,
           runId: input.runId,
+          slot: plan.slot,
           fence: 1,
           expiresAt,
         },
@@ -930,6 +975,7 @@ export async function acquireComputerExecutionLease(
         computerId: input.computerId,
         botId: input.botId,
         runId: input.runId,
+        slot: plan.slot,
         fence: created.fence,
       });
     } catch (error) {
@@ -941,7 +987,7 @@ export async function acquireComputerExecutionLease(
 
 async function validateAcquiredComputerLease(
   prisma: Prisma.TransactionClient,
-  lease: ComputerExecutionLease,
+  lease: Pick<ComputerExecutionLease, "computerId" | "botId" | "runId" | "slot" | "fence">,
 ): Promise<ComputerExecutionLease> {
   const computer = await prisma.computer.findUniqueOrThrow({
     where: { id: lease.computerId },

@@ -1013,7 +1013,7 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     });
     const leaseOf = (botId: string) =>
       system.computerExecutionLease.findUniqueOrThrow({
-        where: { computerId_botId: { computerId: computer.id, botId } },
+        where: { computerId_botId_slot: { computerId: computer.id, botId, slot: 0 } },
       });
     const adaLease = await leaseOf(ada.id);
     const benLease = await system.computerExecutionLease.create({

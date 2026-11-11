@@ -7,6 +7,7 @@ import type {
   RealtimeFanout,
 } from "@rakazo/adapter-kit";
 import { dispatchBackgroundJob } from "@rakazo/adapter-kit";
+import { compareQueueOrder } from "@rakazo/core";
 import type { Prisma, PrismaClient } from "@rakazo/db";
 import { endTakeoverWaits, isTooManyDatabaseConnections, runAsSystem } from "@rakazo/db";
 import { getLogger, runCorrelatedJob } from "@rakazo/logging";
@@ -382,12 +383,15 @@ export class RunWorkerHost implements JobWorkerHost {
         botId: true,
         status: true,
         trigger: true,
-        bot: { select: { computerId: true } },
+        bot: { select: { computerId: true, concurrency: true } },
       },
     });
     // The executor still acquires the lease atomically to handle races here.
     const blockers = await findRunRecoveryBlockers(this.prisma, rows, now);
     const runnable = rows.filter((row) => !blockers.has(row.id));
+    // The scan itself pages by createdAt so a growing queue is walked without gaps; what it starts
+    // first is best-first, so a person's message does not wait behind a page of bot reports.
+    runnable.sort((left, right) => compareQueueOrder(left, right, now));
     // A takeover request holds its bot's computer. Chat work must not wait behind one the user
     // has not acted on, so end it; the freed rows start on the next scan.
     if (lane === "interactive") {

@@ -612,7 +612,7 @@ export class PiAgentRuntime implements AgentRuntime {
             );
         }
         agent = new Agent({
-          sessionId: conversationSessionId(request.threadId, request.botId),
+          sessionId: conversationSessionId(request.threadId, request.botId, request.sessionSuffix),
           steeringMode: "all",
           streamFn: (_m, ctx, options) =>
             fallbackAwareModelStream(

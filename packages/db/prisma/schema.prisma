@@ -996,6 +996,10 @@ model Bot {
   dailyCheckIns Boolean @default(true)
   fleetManagement        Boolean @default(true)
   replyMode              String  @default("chat")
+  /// Execution slots this bot may use at once. One is the product rule: a bot works on one run,
+  /// the way a person answers one thread. Raising it lets a second task run while a long one works,
+  /// and the queue still keeps one writer per thread.
+  concurrency            Int     @default(1)
   routines          Routine[]
   scratchpadItems   ScratchpadItem[]
   taughtSkills      TaughtSkill[]
@@ -1907,12 +1911,15 @@ model ComputerExecutionLease {
   computer   Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
   botId      String
   runId      String
+  /// Which of the bot's execution slots this lease holds. A bot with concurrency 1 only ever uses
+  /// slot 0; a bot with concurrency N may hold N leases at once, one run per slot.
+  slot       Int      @default(0)
   fence      Int      @default(0)
   expiresAt  DateTime
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([computerId, botId])
+  @@unique([computerId, botId, slot])
   @@index([runId])
   @@index([computerId, expiresAt])
   @@index([botId, expiresAt])

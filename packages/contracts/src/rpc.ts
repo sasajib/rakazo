@@ -251,7 +251,22 @@ const threadSendFields = threadTarget.safeExtend({
   clientNonce: z.string().min(1).max(200).optional(),
 });
 
-export const threadSendInput = threadSendFields.superRefine((input, ctx) => {
+export const threadSendInput = threadSendFields
+  .safeExtend({
+    /**
+     * The caller is asking something (or keeping a question going), so this turn must be answered
+     * by its own run even while the bot is working. Absent means "decide from the text".
+     */
+    answerNow: z.boolean().optional(),
+    /**
+     * A card the bot is waiting on (a secret, an approval) stays open: this message is a request of
+     * its own and starts or steers a run beside the parked one, instead of answering the card or
+     * retiring it. The voice agent sets it, because a spoken request must neither be taken as the
+     * answer nor cancel what someone at the screen can still fill in.
+     */
+    leaveCards: z.boolean().optional(),
+  })
+  .superRefine((input, ctx) => {
   const text = input.text?.trim() ?? "";
   const artifactIds = input.artifactIds ?? [];
   if (!text && artifactIds.length === 0) {
@@ -275,6 +290,8 @@ const threadSendOutput = z.object({
   runId: Id,
   seq: z.number().int(),
   runIds: z.array(Id).optional(),
+  /** The run that answers this turn beside a busy one, for a client that speaks a single run. */
+  talkRunId: Id.nullable().optional(),
 });
 
 /** Without text or attachments, only the routines run and no message is saved. */
@@ -709,9 +726,24 @@ export const appContract = {
           text: z.string().min(1),
           /** Carries the call id, so a turn taken mid-run stays in the call's card. */
           clientNonce: z.string().min(1).max(200).optional(),
+          /**
+           * The caller is asking something (or keeping a question going), so this turn must be
+           * answered by its own run even while the bot is working. Absent means "decide from the
+           * text", which older clients rely on.
+           */
+          answerNow: z.boolean().optional(),
         }),
       )
-      .output(z.object({ ok: z.literal(true) })),
+      .output(
+        z.object({
+          ok: z.literal(true),
+          /**
+           * The run that will answer this turn when the bot was already working: the talk run, not
+           * the busy run the message also steers. A caller has to be answered by its own run.
+           */
+          talkRunId: z.string().nullable().optional(),
+        }),
+      ),
     /** The client hung up: close the call card and let the bot finish what was asked on it. */
     endCall: oc
       // ":" separates the call id from the nonce suffix, so it can never appear inside one.
@@ -729,6 +761,28 @@ export const appContract = {
             .nonnegative()
             .max(7 * 24 * 60 * 60)
             .optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    /**
+     * A sentence the call's voice agent said that no run wrote (a progress line, "back to the
+     * update on ..."). Left in the chat as a bot message so what was heard and what is written
+     * stay the same conversation. Idempotent per `noteId`.
+     */
+    callNote: oc
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+          noteId: z
+            .string()
+            .min(1)
+            .max(80)
+            .regex(/^[A-Za-z0-9_-]+$/),
+          text: z.string().min(1).max(2000),
         }),
       )
       .output(z.object({ ok: z.literal(true) })),

@@ -497,7 +497,7 @@ describePostgres("Team Computer takeover recovery (PostgreSQL)", () => {
       await expect(replaceComputer(deps, computerId, "update", context)).resolves.toBeTruthy();
 
       await prisma.computerExecutionLease.upsert({
-        where: { computerId_botId: { computerId, botId } },
+        where: { computerId_botId_slot: { computerId, botId, slot: 0 } },
         create: {
           computerId,
           botId,
@@ -1012,7 +1012,7 @@ describePostgres("Team Computer takeover recovery (PostgreSQL)", () => {
       ).rejects.toBeInstanceOf(ComputerBusyError);
     }
     const held = await prisma.computerExecutionLease.findUniqueOrThrow({
-      where: { computerId_botId: { computerId, botId: identity.botId } },
+      where: { computerId_botId_slot: { computerId, botId: identity.botId, slot: 0 } },
     });
     expect(held.fence).toBe(first!.fence);
     expect(held.expiresAt.getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
@@ -1048,7 +1048,7 @@ describePostgres("Team Computer takeover recovery (PostgreSQL)", () => {
     expect(first).not.toBeNull();
     await expect(holdComputerExecutionLeaseForTakeover(prisma, first)).resolves.toBe(true);
     const held = await prisma.computerExecutionLease.findUniqueOrThrow({
-      where: { computerId_botId: { computerId, botId } },
+      where: { computerId_botId_slot: { computerId, botId, slot: 0 } },
     });
     expect(held.expiresAt.getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
 
@@ -1118,7 +1118,7 @@ describePostgres("Team Computer takeover recovery (PostgreSQL)", () => {
       );
     });
     const active = await prisma.computerExecutionLease.findUniqueOrThrow({
-      where: { computerId_botId: { computerId, botId } },
+      where: { computerId_botId_slot: { computerId, botId, slot: 0 } },
     });
     expect(active.fence).toBe(recovered!.fence);
     expect(active.expiresAt.getTime()).toBeLessThan(Date.now() + 6 * 60_000);

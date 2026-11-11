@@ -26,13 +26,22 @@ const TERMINAL: RunStatus[] = ["completed", "failed", "cancelled"];
  * its reply goes back to that bot. The creation intro can only ask what it is for; a message
  * that lands during any of them waits, and the continuation after the turn finishes answers it.
  */
+/**
+ * The run that answers a message while the bot's own run is still working. It never touches the
+ * computer, so it neither waits for nor blocks the run it runs beside.
+ */
+export const TALK_RUN_TRIGGER = "talk";
+
 const NON_CONVERSATIONAL_RUN_TRIGGERS = new Set([
   "routine",
   "webhook",
   "created",
   "tickets",
   "bot_message",
+  // A talk run is the answer to one message, and is over in seconds: nothing steers it.
+  TALK_RUN_TRIGGER,
 ]);
+
 
 /**
  * Background triggers do internal work that must not leak into the chat: the
@@ -139,6 +148,67 @@ export function runReadsThreadHistory(trigger: string | null | undefined): boole
 }
 
 /** Whether a run's turn is part of the thread's conversation and may take user steering. */
+/**
+ * Whether a spoken turn is asking for an answer, rather than listening to the work.
+ *
+ * A caller who says "hmm", "okay", or "go on" wants the run to keep going and keep reporting what
+ * it is doing; one who asks something wants the answer to that, now. Only the second kind gets its
+ * own run — the first keeps the current behaviour, where the busy run's progress is what is heard.
+ */
+const ANSWER_REQUESTED_START = new RegExp(
+  "^(?:what|why|how|when|where|who|which|whose|can|could|do|does|did|is|are|was|were|will|would|" +
+    "should|shall|may|might|have|has|tell me|explain|give me|show me|list|summari[sz]e|read me)\\b",
+  "i",
+);
+
+export function asksForAnswer(text: string | null | undefined): boolean {
+  const said = (text ?? "").trim();
+  if (!said) return false;
+  if (said.includes("?")) return true;
+  return ANSWER_REQUESTED_START.test(said);
+}
+
+/** How long a run must have been working before a message earns an answer beside it. */
+export const TALK_LANE_MIN_BUSY_MS = 8_000;
+
+/**
+ * Whether a message sent while the bot is busy should also be answered now, beside the working run.
+ *
+ * The message still steers the working run; this decides whether the person additionally gets an
+ * immediate answer from a talk run. Short runs read steering within a second or two, so answering
+ * beside them would only duplicate the reply — hence the busy threshold. A call turn is never
+ * answered twice: the voice agent speaks exactly one run's output.
+ */
+export function talkLaneDue(input: {
+  /** When the working run started; null while it is still queued. */
+  activeStartedAt: Date | null | undefined;
+  /** Whose run is working; another person's run is not this person's conversation. */
+  activeUserId: string;
+  userId: string;
+  /** A live talk run already exists for this thread and bot. */
+  hasLiveTalkRun: boolean;
+  /**
+   * The turn is a spoken one (its client nonce carries the call id). A caller cannot wait: the
+   * threshold below exists to avoid a duplicate answer to a typed message, and does not apply to a
+   * person who is on the phone and spoke.
+   */
+  isCallTurn: boolean;
+  /**
+   * The turn asks something. A question is answered beside the run however recently it started:
+   * the threshold exists so a quick "go on" does not spawn a duplicate answer, not to make a person
+   * wait to have their question heard.
+   */
+  asksAnswer?: boolean;
+  stopping: boolean;
+  now: Date;
+}): boolean {
+  if (input.stopping || input.hasLiveTalkRun) return false;
+  if (input.activeUserId !== input.userId) return false;
+  if (!input.activeStartedAt) return false;
+  if (input.isCallTurn || input.asksAnswer) return true;
+  return input.now.getTime() - input.activeStartedAt.getTime() >= TALK_LANE_MIN_BUSY_MS;
+}
+
 export function isConversationalRun(trigger: string | null | undefined): boolean {
   return !NON_CONVERSATIONAL_RUN_TRIGGERS.has(trigger ?? "");
 }

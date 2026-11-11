@@ -377,13 +377,20 @@ export function threadsRoutes(ctx: RouterContext) {
             prompt: input.text,
             trigger: "follow_up",
             clientNonce: input.clientNonce,
+            answerNow: input.answerNow,
           });
           if (sent.taskId && sent.runId) {
             await deps.jobs.enqueue(runContinueJob(sent.runId)).catch((error) => {
               getLogger().error("follow-up enqueue", error);
             });
           }
-          return { ok: true as const };
+          if (sent.talkRunId) {
+            // The run that answers this turn while the busy one keeps working.
+            await deps.jobs.enqueue(runContinueJob(sent.talkRunId)).catch((error) => {
+              getLogger().error("talk run enqueue", error);
+            });
+          }
+          return { ok: true as const, talkRunId: sent.talkRunId ?? null };
         }
         const committed = await deps.prisma.$transaction(async (tx) => {
           if (input.clientNonce) {
@@ -619,6 +626,42 @@ export function threadsRoutes(ctx: RouterContext) {
         await deps.jobs.enqueue(runContinueJob(committed.runId)).catch((error) => {
           getLogger().error("call end enqueue", error);
         });
+        return { ok: true as const };
+      }),
+      callNote: callsEnabled.threads.callNote.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        const { botId, threadId } = target;
+        const blocks = [{ kind: "text" as const, text: input.text }];
+        const committed = await deps.prisma
+          .$transaction(async (tx) => {
+            const message = await createThreadMessageInTransaction(tx, {
+              threadId,
+              role: "bot",
+              botId,
+              blocks,
+              // Same call prefix as a spoken turn, so clients keep it inside the call's card.
+              clientNonce: `${CALL_CLIENT_NONCE_PREFIX}${input.callId}:note-${input.noteId}`,
+            });
+            const event = await appendEventInTransaction(tx, {
+              spaceId: context.actor.spaceId,
+              threadId,
+              botId,
+              type: "thread.message.created",
+              payload: { messageId: message.id, role: "bot", blocks, callId: input.callId },
+            });
+            return { eventSeq: event.seq };
+          })
+          .catch((error) => {
+            if (!isUniqueViolation(error)) throw error;
+            return null;
+          });
+        if (committed) {
+          await deps.events.notify(threadId, committed.eventSeq).catch((error) => {
+            getLogger().error("call note realtime notification", error);
+          });
+        }
         return { ok: true as const };
       }),
       answer: authed.threads.answer.handler(async ({ context, input }) => {

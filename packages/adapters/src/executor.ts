@@ -1,7 +1,7 @@
 import type { AgentRunRequest, ComputerRef, SemanticMemoryProvider } from "@rakazo/adapter-kit";
 import { DEFAULT_CONTEXT_STRATEGY, runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock, RunStatus } from "@rakazo/contracts";
-import { disabledBuiltinToolSet } from "@rakazo/contracts";
+import { BUILTIN_TOOL_NAMES, disabledBuiltinToolSet } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
   botMessageAllowsSilence,
@@ -10,8 +10,11 @@ import {
   formatSkillsCatalogInstruction,
   isCallClientNonce,
   isMessagingChannelRun,
+  continuationPrompt,
   isOwnerStartedRun,
   isTerminal,
+  needsContinuation,
+  TALK_RUN_TRIGGER,
   messagingChannelId,
   messagingChannelPrivacyBlock,
   messagingDmSurfaceNote,
@@ -245,6 +248,101 @@ async function verbatimMcpServersForRun(
   return { ids: servers.map((server) => server.id), slugs: servers.map((server) => server.slug) };
 }
 
+/**
+ * What a talk run is told. It exists to answer the person now, beside work that is still going, so
+ * it must not narrate that work as finished and must not start any of its own.
+ */
+/**
+ * What a person's run says before it starts working, in the model's words. A template cannot
+ * restate a dictated request without sounding like an echo, so the model states what it understood
+ * in its first sentence — before any tool call — and the platform publishes that sentence.
+ */
+/**
+ * The rule this instance kept needing: a claim about the world has to come from a tool result in the
+ * run that makes it, and a promise to do work later is not work. Both were said on real calls —
+ * "it now genuinely exists and is verified" before anything was created, and "I'll put it together as
+ * soon as this step finishes", which no later step did.
+ */
+const EVIDENCE_INSTRUCTION = [
+  "State that something exists, was created, archived, deleted, sent or finished only when a tool",
+  "result in this turn showed it — and say what you saw (the name or id). If you have not checked,",
+  "check now or say you have not checked.",
+  "Never promise work for later: do it in this turn, or say exactly what is blocking it and that it is",
+  "queued — saying you will do it when the current step finishes is not an answer.",
+].join(" ");
+
+const PLAN_FIRST_INSTRUCTION = [
+  "Begin with one short sentence, in your own words, saying what you understood and what you will do first.",
+  "That sentence is not the answer and does not end the turn: after writing it, do the work in this",
+  "same turn — call the tools, and only then report the result. Ending after the sentence leaves the",
+  "task undone and makes the person ask again.",
+].join(" ");
+
+const TALK_RUN_INSTRUCTION = [
+  "You are answering the person now, while your longer work continues in the background.",
+  "Answer in one to three short sentences, from what you already know and what the conversation above says.",
+  "If they ask for something new, say you have noted it and will pick it up as soon as the current step",
+  "finishes — it is with you, not lost. Never say you cannot do it, and never claim it is done.",
+  "If they ask how it is going, say briefly what you are working on; if you do not know, say so.",
+].join(" ");
+
+/**
+ * The deterministic part of "it will do the work": a person's run that announced work and used no
+ * tool is continued once, automatically. No model is asked whether the work happened — the rule
+ * reads the trigger, the tool count and the person's own words.
+ */
+async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
+  const { deps, run, task } = ctx;
+  const { reply } = ctx.state;
+  const request = ctx.source.ownerStartedRun
+    ? (ctx.task.prompt ?? "")
+    : (ctx.task.prompt ?? "");
+  const replyText = reply.assembled || reply.assistantTurnText || "";
+  if (
+    !needsContinuation({
+      trigger: run.trigger,
+      request,
+      toolCallCount: reply.toolCalls.length,
+      replyText,
+      taskPrompt: task?.prompt ?? null,
+      status: "completed",
+    })
+  ) {
+    return;
+  }
+  const created = await deps.prisma.$transaction(async (tx) => {
+    const nextTask = await tx.task.create({
+      data: {
+        spaceId: run.spaceId,
+        botId: run.botId,
+        threadId: run.threadId,
+        userId: run.userId,
+        prompt: continuationPrompt(request),
+        status: "queued",
+      },
+    });
+    return tx.run.create({
+      data: {
+        spaceId: run.spaceId,
+        botId: run.botId,
+        threadId: run.threadId,
+        taskId: nextTask.id,
+        userId: run.userId,
+        status: "queued",
+        trigger: "follow_up",
+      },
+      select: { id: true },
+    });
+  });
+  getLogger().warn("run continued: it announced work and used no tool", {
+    "run.id": run.id,
+    "run.continuation": created.id,
+  });
+  await deps.jobs.enqueue(runContinueJob(created.id)).catch((error) => {
+    getLogger().error("continuation enqueue", error);
+  });
+}
+
 export function createRunExecutor(executorDeps: ExecutorDeps) {
   const contextStrategy = executorDeps.contextStrategy ?? DEFAULT_CONTEXT_STRATEGY;
   const web = executorDeps.web ?? createWebProvider();
@@ -328,14 +426,18 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         select: {
           computerId: true,
           computerSwitching: true,
+          concurrency: true,
           computer: { select: { scope: true } },
         },
       });
       if (!leaseTarget.computerId) throw new Error("Bot has no computer");
-      // A background helper never uses the computer, so it neither waits for a switch nor holds
-      // the bot's next turn.
+      // A background helper and a talk run never use the computer, so they neither wait for a
+      // switch nor hold the bot's next turn. That is what lets a talk run answer beside a long
+      // computer run of the same bot in the same thread instead of queueing behind it.
       const backgroundHelper = run.trigger === BACKGROUND_HELPER_TRIGGER;
-      if (leaseTarget.computerSwitching && !backgroundHelper) {
+      const talkRun = run.trigger === TALK_RUN_TRIGGER;
+      const leaseFreeRun = backgroundHelper || talkRun;
+      if (leaseTarget.computerSwitching && !leaseFreeRun) {
         await requeueComputerRun(deps, runId, workerId, fence, resumeCheckpoint, heldForTakeover);
         return;
       }
@@ -361,16 +463,18 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
       }
       let computerLease: ComputerExecutionLease | null = null;
       try {
-        computerLease = backgroundHelper
+        computerLease = leaseFreeRun
           ? null
           : await acquireComputerExecutionLease(deps.prisma, {
               computerId: leaseTarget.computerId,
               runId,
               botId: run.botId,
+              threadId: run.threadId,
+              maxSlots: leaseTarget.concurrency,
               workerId,
               runFence: fence,
             });
-        if (!computerLease && !backgroundHelper && leaseTarget.computer?.scope === "dedicated") {
+        if (!computerLease && !leaseFreeRun && leaseTarget.computer?.scope === "dedicated") {
           computerLease = await acquireDedicatedScreenLeaseFence(deps.prisma, {
             computerId: leaseTarget.computerId,
             runId,
@@ -1197,7 +1301,12 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                 mainRunModel,
               ));
         const sourceMessage =
-          (run.trigger === "user" || run.trigger === "follow_up") && run.sourceMessageId
+          (run.trigger === "user" ||
+            run.trigger === "follow_up" ||
+            // A talk run is often a spoken turn: its nonce carries the call, and the reply is
+            // spoken, so it needs the same voice instruction a user turn gets.
+            run.trigger === TALK_RUN_TRIGGER) &&
+          run.sourceMessageId
             ? await deps.prisma.message.findUnique({
                 where: { id: run.sourceMessageId },
                 select: { clientNonce: true, role: true, blocks: true, threadId: true },
@@ -1215,10 +1324,15 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           deps.runtime.describe().capabilities.scripted ||
           modelSeesImages ||
           Boolean(computerModel || checkpointModelResolver);
-        const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover;
+        const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover && !talkRun;
         const pageBrowserAllowed =
-          graphical && browser.describe().capabilities.page && !heldForTakeover;
-        const disabledBuiltinTools = disabledBuiltinToolSet(bot.disabledBuiltinTools);
+          graphical && browser.describe().capabilities.page && !heldForTakeover && !talkRun;
+        // A talk run answers a message while the bot's own run keeps working. It holds no tool:
+        // it cannot start a second piece of work, touch the computer or write memory, so the run it
+        // runs beside stays the only writer of the bot's state. Its answer is its text.
+        const disabledBuiltinTools = talkRun
+          ? new Set<string>(BUILTIN_TOOL_NAMES)
+          : disabledBuiltinToolSet(bot.disabledBuiltinTools);
         const replyMode = runReplyMode(run.trigger, bot.replyMode, disabledBuiltinTools);
         const emailName = deps.inboundEmailDomain
           ? await deps.prisma.botEmailAddress.findUnique({
@@ -1606,6 +1720,13 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const prompt = [
           replyContext,
           run.trigger === "reaction" && replyContext ? undefined : basePrompt,
+          talkRun ? TALK_RUN_INSTRUCTION : undefined,
+          !talkRun && (run.trigger === "user" || run.trigger === "follow_up")
+            ? PLAN_FIRST_INSTRUCTION
+            : undefined,
+          run.trigger === "user" || run.trigger === "follow_up" || talkRun
+            ? EVIDENCE_INSTRUCTION
+            : undefined,
           takeoverResume?.promptNote,
           approvalContinuation,
           // A hang-up turn is read, not heard: no spoken-reply constraint.
@@ -1743,6 +1864,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               verbatimMcpServers,
               threadId: thread.id,
               runId,
+              ...(talkRun ? { sessionSuffix: "talk" } : {}),
               routineId: run.routineId,
               sourceMessageId: run.sourceMessageId,
               onUsage: async (event) => {
@@ -1973,6 +2095,10 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           if (await consumeRunEvents(ctx, runtimeEvents)) return;
           if (await interruptedByShutdown()) return;
           await completeRun(ctx);
+          // The work is only done if it was done: a run that only announced it is continued once.
+          await continueUnfinishedTask(ctx).catch((error) => {
+            getLogger().error("continuation check", error);
+          });
         } catch (turnError) {
           if (await interruptedByShutdown()) return;
           let caughtError = turnError;

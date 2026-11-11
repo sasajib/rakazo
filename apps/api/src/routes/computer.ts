@@ -386,8 +386,9 @@ export function computerRoutes(ctx: RouterContext) {
           throw new ORPCError("BAD_REQUEST", { message: "computer must be running" });
         }
 
-        const executionLease = await deps.prisma.computerExecutionLease.findUnique({
-          where: { computerId_botId: { computerId: bot.computer.id, botId: bot.id } },
+        const executionLease = await deps.prisma.computerExecutionLease.findFirst({
+          where: { computerId: bot.computer.id, botId: bot.id },
+          orderBy: { expiresAt: "desc" },
         });
         const executionRun = executionLease
           ? await deps.prisma.run.findUnique({

@@ -16,6 +16,7 @@ import {
 } from "@rakazo/contracts";
 import {
   BACKGROUND_RUN_TRIGGERS,
+  botConcurrency,
   displayName,
   isBackgroundRunTrigger,
   phoneCallSettings,
@@ -107,6 +108,7 @@ function mapBot(
     dailyCheckIns?: boolean;
     fleetManagement?: boolean;
     replyMode?: string;
+    concurrency?: number | null;
     disabledBuiltinTools?: string[];
     webhookSecretId?: string | null;
     spawnKey?: string | null;
@@ -156,6 +158,7 @@ function mapBot(
     dailyCheckIns: bot.dailyCheckIns ?? true,
     fleetManagement: bot.fleetManagement ?? true,
     replyMode: bot.replyMode === "messages" ? "messages" : "chat",
+    concurrency: botConcurrency(bot.concurrency as number | null | undefined),
     // Stored lists may name a tool that no longer exists; settings resend what they read.
     disabledBuiltinTools: [...disabledBuiltinToolSet(bot.disabledBuiltinTools)],
     webhookConfigured: Boolean(bot.webhookSecretId),

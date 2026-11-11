@@ -2319,6 +2319,7 @@ describe("computer execution leases", () => {
       computerId: "computer-1",
       botId: "bot-1",
       runId: "run-1",
+      slot: 0,
       fence: 1,
     });
     expect(prisma.create).toHaveBeenCalledWith(
@@ -2376,7 +2377,13 @@ describe("computer execution leases", () => {
       computer: {
         findUniqueOrThrow: vi.fn().mockResolvedValue({ scope: "team", state: "running" }),
       },
-      computerExecutionLease: { create, updateMany, updateManyAndReturn },
+      computerExecutionLease: {
+        findMany: vi.fn(async () => [{ slot: 0, runId: "run-1", expiresAt }]),
+        create,
+        updateMany,
+        updateManyAndReturn,
+      },
+      run: { findFirst: vi.fn().mockResolvedValue(null) },
     };
     const prisma = {
       ...client,
@@ -2386,6 +2393,7 @@ describe("computer execution leases", () => {
       computerId: "computer-1",
       botId: "bot-1",
       runId: "run-1",
+      slot: 0,
       fence: 1,
     };
 
@@ -2393,7 +2401,14 @@ describe("computer execution leases", () => {
     await expect(renewComputerExecutionLease(prisma, lease)).resolves.toBe(false);
     expect(expiresAt).toEqual(new Date(0));
     expect(updateMany).toHaveBeenLastCalledWith({
-      where: { ...lease, expiresAt: { gt: expect.any(Date) } },
+      // The lease row is matched by run and fence; its slot is not part of the key.
+      where: {
+        computerId: lease.computerId,
+        botId: lease.botId,
+        runId: lease.runId,
+        fence: lease.fence,
+        expiresAt: { gt: expect.any(Date) },
+      },
       data: { expiresAt: expect.any(Date) },
     });
     await expect(
@@ -2425,7 +2440,7 @@ describe("computer execution leases", () => {
           return { count: 1 };
         });
         const prisma = { computerExecutionLease: { updateMany } } as unknown as PrismaClient;
-        const lease = { computerId: "computer-1", botId: "bot-1", runId: "run-1", fence: 1 };
+        const lease = { computerId: "computer-1", botId: "bot-1", runId: "run-1", slot: 0, fence: 1 };
 
         await expect(extend(prisma, lease)).resolves.toBe(true);
         const extendedExpiry = expiresAt;
@@ -2468,6 +2483,7 @@ describe("computer execution leases", () => {
       computerId: "computer-1",
       botId: "bot-1",
       runId: "run-2",
+      slot: 0,
       fence: 2,
     });
     await expect(
@@ -2506,6 +2522,7 @@ describe("computer execution leases", () => {
       },
       run: {
         findMany: vi.fn().mockResolvedValue([{ id: "run-1", taskId: "task-1" }]),
+        findFirst: vi.fn().mockResolvedValue(null),
         updateManyAndReturn: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
           where.id.in.map((id) => ({ id })),
         ),
@@ -2514,6 +2531,9 @@ describe("computer execution leases", () => {
       task: { updateMany: vi.fn() },
       secret: { deleteMany: vi.fn() },
       computerExecutionLease: {
+        findMany: vi.fn(async () => [
+          { slot: 0, runId: lease.runId, expiresAt: lease.expiresAt },
+        ]),
         updateMany: vi.fn().mockImplementation(async ({ data }) => {
           lease.expiresAt = data.expiresAt;
           return { count: 1 };
@@ -2634,7 +2654,12 @@ describe("computer execution leases", () => {
   });
 
   it("reclaims an active same-run lease for the current run owner", async () => {
-    const prisma = leasePrisma({ scope: "team", reclaim: true, fence: 8 });
+    const prisma = leasePrisma({
+      scope: "team",
+      reclaim: true,
+      fence: 8,
+      leases: [{ slot: 0, runId: "run-1", expiresAt: new Date(Date.now() + 60_000) }],
+    });
 
     await acquireComputerExecutionLease(prisma.client, {
       workerId: "worker-1",
@@ -2772,6 +2797,7 @@ describe("computer execution leases", () => {
       computerId: "computer-1",
       botId: "bot-1",
       runId: "run-1",
+      slot: 0,
       fence: 1,
     });
   });
@@ -2820,16 +2846,33 @@ function leasePrisma(options: {
   reclaim?: boolean;
   fence?: number;
   uniqueConflict?: boolean;
+  leases?: { slot: number; runId: string; expiresAt: Date }[];
 }) {
-  const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+  // The fake keeps one row per slot, like the table: a release writes an epoch expiry (a
+  // tombstone), and the next acquire reclaims it rather than creating a row the key would refuse.
+  const rows = (options.leases ?? []).map((lease) => ({ botId: "bot-1", ...lease }));
+  const updateMany = vi.fn().mockImplementation(async ({ where, data }) => {
+    const slot = rows.find((row) => row.runId === where.runId && row.runId !== undefined);
+    if (slot && data?.expiresAt instanceof Date) slot.expiresAt = data.expiresAt;
+    return { count: 1 };
+  });
   const deleteMany = vi.fn().mockResolvedValue({ count: 1 });
-  const updateManyAndReturn = vi
-    .fn()
-    .mockResolvedValue(options.reclaim ? [{ fence: options.fence ?? 1 }] : []);
-  const create = vi.fn().mockImplementation(async () => {
+  const updateManyAndReturn = vi.fn().mockImplementation(async ({ where, data }) => {
+    if (!options.reclaim && rows.length === 0) return [];
+    const fence = options.fence ?? 1;
+    if (rows[0] && data?.expiresAt instanceof Date) rows[0].expiresAt = data.expiresAt;
+    return [{ fence }];
+  });
+  const create = vi.fn().mockImplementation(async ({ data }) => {
     if (options.uniqueConflict) {
       throw Object.assign(new Error("unique"), { code: "P2002" });
     }
+    rows.push({
+      botId: data.botId,
+      slot: data.slot ?? 0,
+      runId: data.runId,
+      expiresAt: data.expiresAt,
+    });
     return { fence: 1 };
   });
   const findUniqueOrThrow = vi.fn().mockResolvedValue({
@@ -2837,10 +2880,15 @@ function leasePrisma(options: {
     state: "running",
   });
   const queryRaw = vi.fn().mockResolvedValue([{ id: "run-1" }]);
+  const findMany = vi.fn(async ({ where }: { where: { botId?: string } }) =>
+    rows.filter((row) => !where?.botId || row.botId === where.botId).map((row) => ({ ...row })),
+  );
+  const findFirst = vi.fn().mockResolvedValue(null);
   const client = {
     $queryRaw: queryRaw,
     computer: { findUniqueOrThrow },
-    computerExecutionLease: { updateManyAndReturn, create, updateMany, deleteMany },
+    computerExecutionLease: { findMany, updateManyAndReturn, create, updateMany, deleteMany },
+    run: { findFirst },
   };
   return {
     client: {
@@ -2853,6 +2901,8 @@ function leasePrisma(options: {
     create,
     deleteMany,
     findUniqueOrThrow,
+    findMany,
+    findFirst,
   };
 }
 

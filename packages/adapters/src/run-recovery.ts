@@ -1,4 +1,4 @@
-import { BACKGROUND_HELPER_TRIGGER, isTerminal } from "@rakazo/core";
+import { BACKGROUND_HELPER_TRIGGER, botConcurrency, isTerminal, TALK_RUN_TRIGGER } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { expireComputerExecutionLeases } from "@rakazo/db";
 import { EXECUTION_LEASE_MS } from "./computer-lifecycle.js";
@@ -7,7 +7,8 @@ type RecoveryRun = {
   id: string;
   botId: string;
   trigger: string;
-  bot: { computerId: string | null };
+  /** The bot's row as the caller selected it; absent in callers that only need the lease count. */
+  bot?: { computerId: string | null; concurrency?: number };
 };
 
 /**
@@ -36,16 +37,19 @@ export async function findRunRecoveryBlockers(
   }
   const blockers = new Map<string, string>();
   for (const run of runs) {
-    // A background helper never takes the computer, so the bot's own turn does not hold it.
-    if (run.trigger === BACKGROUND_HELPER_TRIGGER) continue;
-    const lease = leases.find(
+    // Neither a background helper nor a talk run takes the computer, so the bot's own turn does
+    // not hold either one.
+    if (run.trigger === BACKGROUND_HELPER_TRIGGER || run.trigger === TALK_RUN_TRIGGER) continue;
+    const held = leases.filter(
       (lease) =>
         lease.botId === run.botId &&
-        lease.computerId === run.bot.computerId &&
+        lease.computerId === run.bot?.computerId &&
         lease.runId !== run.id &&
         !abandoned.has(lease.runId),
     );
-    if (lease) blockers.set(run.id, lease.runId);
+    // A bot with more slots than its live leases can start this run: only a full bot is blocked.
+    if (held.length < botConcurrency(run.bot?.concurrency)) continue;
+    blockers.set(run.id, held[0]?.runId ?? run.id);
   }
   return blockers;
 }
