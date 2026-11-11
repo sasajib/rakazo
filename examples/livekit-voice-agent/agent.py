@@ -41,7 +41,12 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, openai, silero
 
-from conversation import ConversationState, asks_to_continue, belongs_to_turn
+from conversation import (
+    ConversationState,
+    asks_to_continue,
+    belongs_to_turn,
+    spoken_decision_action,
+)
 from rakazo_client import (
     HEARTBEAT_EVENT,
     RUN_TERMINAL,
@@ -228,8 +233,28 @@ class RakazoAgent(Agent):
             yield ENTER_CODE_LINE
             return
         if decision.kind == "approve_on_screen":
-            yield APPROVE_ON_SCREEN_LINE
-            return
+            # A caller can decide this out loud: the card is the app's way of asking, not the only
+            # one. Without an explicit word, say what is being asked so they can answer.
+            choice = spoken_decision_action(utterance, decision.actions)
+            if choice:
+                logger.info("spoken approval: %s for %r", choice, decision.question[:60])
+                try:
+                    await self.client.threads_answer(
+                        self.call.bot_id,
+                        decision.run_id or "",
+                        decision.message_id or "",
+                        choice,
+                        call_client_nonce(self.call.call_id),
+                    )
+                except RakazoError as exc:
+                    logger.warning("spoken approval failed: %s", exc)
+                    yield "I couldn't record that decision. Please approve it in the app."
+                    return
+                run_id = decision.run_id
+            else:
+                asking = decision.question or "something it wants to do"
+                yield f"That needs your okay — {asking}. Say approve, or deny, and I'll take that."
+                return
 
         nonce = call_client_nonce(self.call.call_id)
         # Tag the turn: a question (or filler that follows one) must be answered by its own run;

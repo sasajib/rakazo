@@ -156,6 +156,32 @@ _CONTINUE_REQUEST = re.compile(
 )
 
 
+_APPROVE = re.compile(r"\b(?:approve|allow|yes|yeah|okay|ok|go ahead|do it|proceed|fine)\b", re.I)
+_ALWAYS = re.compile(r"\b(?:always|every time|from now on|don'?t ask again)\b", re.I)
+_DENY = re.compile(r"\b(?:deny|no|nope|don'?t|stop|cancel|reject|not now)\b", re.I)
+
+
+def spoken_decision_action(text: str, actions: list[dict]) -> str | None:
+    """The action id a caller just chose out loud, or None when they did not clearly decide.
+
+    An approval card is the app's way of asking; a caller on the phone answers the same question
+    with a word. Only an explicit word counts — "hmm" is not consent to archive a bot.
+    """
+    said = (text or "").strip()
+    if not said:
+        return None
+    ids = {str(action.get("id")) for action in actions if action.get("id")}
+    if not ids:
+        return None
+    if _ALWAYS.search(said) and "always" in ids:
+        return "always"
+    if _DENY.search(said) and "deny" in ids:
+        return "deny"
+    if _APPROVE.search(said) and "allow" in ids:
+        return "allow"
+    return None
+
+
 def asks_to_continue(text: str) -> bool:
     """Whether the caller is asking for the rest of something, rather than a new question."""
     return bool(_CONTINUE_REQUEST.match((text or "").strip())) and not asks_question(text)

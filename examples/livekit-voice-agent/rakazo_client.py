@@ -21,7 +21,7 @@ import re
 import secrets
 import uuid
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -105,6 +105,9 @@ class CallTurn:
     run_id: str | None = None
     message_id: str | None = None
     answer: str | None = None
+    # An approval ask's choices and what it is asking for, so a caller can decide out loud.
+    actions: list[dict[str, Any]] = field(default_factory=list)
+    question: str = ""
 
 
 def _unanswered_ask(block: dict[str, Any]) -> bool:
@@ -138,7 +141,14 @@ def call_turn(thread: dict[str, Any] | None, text: str) -> CallTurn:
         return CallTurn("enter_code")
     ask = _pending_ask(thread, (thread or {}).get("run"))
     if ask and any(is_approval_ask_block(b) for b in ask["blocks"]):
-        return CallTurn("approve_on_screen", run_id=ask["run_id"], message_id=ask["message"]["id"])
+        approval = next((b for b in ask["blocks"] if is_approval_ask_block(b)), {})
+        return CallTurn(
+            "approve_on_screen",
+            run_id=ask["run_id"],
+            message_id=ask["message"]["id"],
+            actions=list(approval.get("actions") or []),
+            question=str(approval.get("text") or ""),
+        )
     if ask:
         return CallTurn(
             "answer",

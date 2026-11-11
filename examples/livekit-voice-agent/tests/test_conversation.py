@@ -6,6 +6,7 @@ from conversation import (
     ConversationState,
     asks_for_status,
     asks_for_work,
+    spoken_decision_action,
     asks_to_continue,
     asks_question,
     is_filler,
@@ -240,3 +241,27 @@ def test_a_question_after_an_interruption_still_gets_its_own_answer():
     assert state.wants_answer("What is the capital of Bangladesh?") is True
     # The interrupted update is still offered, not lost, after that answer.
     assert state.has_paused_report()
+
+
+ACTIONS = [{"id": "allow", "label": "Allow once"}, {"id": "always", "label": "Always allow"}, {"id": "deny", "label": "Deny"}]
+
+
+def test_a_caller_can_approve_out_loud():
+    assert spoken_decision_action("approve", ACTIONS) == "allow"
+    assert spoken_decision_action("yes, go ahead", ACTIONS) == "allow"
+    assert spoken_decision_action("always allow this", ACTIONS) == "always"
+
+
+def test_a_caller_can_deny_out_loud():
+    assert spoken_decision_action("no", ACTIONS) == "deny"
+    assert spoken_decision_action("cancel that", ACTIONS) == "deny"
+
+
+def test_an_unclear_answer_is_not_consent():
+    for said in ("hmm", "", "what is it asking", "wait a second"):
+        assert spoken_decision_action(said, ACTIONS) is None, said
+
+
+def test_no_actions_means_no_decision():
+    assert spoken_decision_action("approve", []) is None
+
