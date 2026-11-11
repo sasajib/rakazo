@@ -994,7 +994,7 @@ describeIntegration("run executor lifecycle", () => {
       });
       expect(first.fence).toBe(8);
       await releaseComputerExecutionLease(db, first);
-      const leaseKey = { computerId_botId: { computerId, botId: seeded.bot.id } };
+      const leaseKey = { computerId_botId_slot: { computerId, botId: seeded.bot.id, slot: 0 } };
       await expect(
         db.computerExecutionLease.findUniqueOrThrow({ where: leaseKey }),
       ).resolves.toMatchObject({
@@ -1171,7 +1171,7 @@ describeIntegration("run executor lifecycle", () => {
     // A stale cleanup must not expire a successor's lease.
     await releaseComputerExecutionLease(db, reclaimed);
     const held = await db.computerExecutionLease.findUniqueOrThrow({
-      where: { computerId_botId: { computerId, botId: bot.id } },
+      where: { computerId_botId_slot: { computerId, botId: bot.id, slot: 0 } },
     });
     expect(held.fence).toBe(afterPause.fence);
     expect(held.expiresAt.getTime()).toBeGreaterThan(Date.now());
@@ -1206,6 +1206,7 @@ describeIntegration("run executor lifecycle", () => {
       computerId: string;
       botId: string;
       runId: string;
+      slot: number;
       fence: number;
     } | null = null;
 
@@ -1236,7 +1237,7 @@ describeIntegration("run executor lifecycle", () => {
       ).rejects.toBeInstanceOf(ComputerBusyError);
       await expect(
         db.computerExecutionLease.findUnique({
-          where: { computerId_botId: { computerId: dedicatedBot.computerId, botId: team.bot.id } },
+          where: { computerId_botId_slot: { computerId: dedicatedBot.computerId, botId: team.bot.id, slot: 0 } },
         }),
       ).resolves.toBeNull();
 
@@ -1248,7 +1249,7 @@ describeIntegration("run executor lifecycle", () => {
       expect(teamLease).not.toBeNull();
       if (!teamLease) throw new Error("Team execution did not receive its lease");
       const teamLeaseBefore = await db.computerExecutionLease.findUniqueOrThrow({
-        where: { computerId_botId: { computerId: teamBot.computerId, botId: team.bot.id } },
+        where: { computerId_botId_slot: { computerId: teamBot.computerId, botId: team.bot.id, slot: 0 } },
       });
       await expect(
         acquireDedicatedScreenLeaseFence(db, {
@@ -1260,7 +1261,7 @@ describeIntegration("run executor lifecycle", () => {
         }),
       ).rejects.toBeInstanceOf(ComputerBusyError);
       const teamLeaseAfter = await db.computerExecutionLease.findUniqueOrThrow({
-        where: { computerId_botId: { computerId: teamBot.computerId, botId: team.bot.id } },
+        where: { computerId_botId_slot: { computerId: teamBot.computerId, botId: team.bot.id, slot: 0 } },
       });
       expect(teamLeaseAfter).toMatchObject({ runId: teamLease.runId, fence: teamLease.fence });
       expect(teamLeaseAfter.expiresAt).toEqual(teamLeaseBefore.expiresAt);
@@ -1269,6 +1270,7 @@ describeIntegration("run executor lifecycle", () => {
         computerId: dedicatedBot.computerId,
         botId: dedicated.bot.id,
         runId: "foreign-live-lease",
+        slot: 0,
         fence: 23,
       };
       const heldUntil = new Date(Date.now() + 60_000);
@@ -1287,7 +1289,7 @@ describeIntegration("run executor lifecycle", () => {
       await expect(
         db.computerExecutionLease.findUniqueOrThrow({
           where: {
-            computerId_botId: { computerId: dedicatedBot.computerId, botId: dedicated.bot.id },
+            computerId_botId_slot: { computerId: dedicatedBot.computerId, botId: dedicated.bot.id, slot: 0 },
           },
         }),
       ).resolves.toMatchObject({ ...conflictingLease, expiresAt: heldUntil });

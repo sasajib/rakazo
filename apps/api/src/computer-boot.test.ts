@@ -85,11 +85,17 @@ describe("computer boot", () => {
     const tx = {
       computer: { findUniqueOrThrow: vi.fn().mockResolvedValue(stoppedBot.computer) },
       computerExecutionLease: {
+        // No row for this bot yet: the takeover lease is created in slot 0.
+        findMany: vi.fn().mockResolvedValue([]),
         updateManyAndReturn: vi.fn().mockResolvedValue([]),
         create: busy
           ? vi.fn().mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }))
           : vi.fn().mockResolvedValue({ fence: 1 }),
         findUnique: vi.fn().mockResolvedValue({
+          runId: "run-1",
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
+        findFirst: vi.fn().mockResolvedValue({
           runId: "run-1",
           expiresAt: new Date(Date.now() + 60_000),
         }),
@@ -105,13 +111,14 @@ describe("computer boot", () => {
 
     const response = await boot(prisma);
 
-    expect(tx.computerExecutionLease.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(tx.computerExecutionLease.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: {
+        data: expect.objectContaining({
           computerId: "computer-1",
           botId: "bot-1",
-          OR: [{ expiresAt: { lt: expect.any(Date) } }],
-        },
+          slot: 0,
+          runId: expect.stringMatching(/^boot:/),
+        }),
       }),
     );
     if (busy) {
@@ -139,16 +146,18 @@ describe("computer boot", () => {
           runId: "run-1",
           expiresAt: new Date(Date.now() + 60_000),
         }),
+        findFirst: vi.fn().mockResolvedValue({
+          runId: "run-1",
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
       },
       run: { findUnique: vi.fn().mockResolvedValue({ status: "completed" }) },
     } as unknown as PrismaClient;
 
     await boot(prisma);
 
-    expect(prisma.computerExecutionLease.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { computerId_botId: { computerId: "computer-1", botId: "bot-1" } },
-      }),
+    expect(prisma.computerExecutionLease.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { computerId: "computer-1", botId: "bot-1" } }),
     );
     expect(lifecycle.acquireComputerExecutionLease).toHaveBeenCalledTimes(2);
     expect(lifecycle.provisionComputer).toHaveBeenCalledOnce();
@@ -161,6 +170,10 @@ describe("computer boot", () => {
       bot: { findFirst: vi.fn().mockResolvedValue(stoppedBot) },
       computerExecutionLease: {
         findUnique: vi.fn().mockResolvedValue({
+          runId: "run-1",
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
+        findFirst: vi.fn().mockResolvedValue({
           runId: "run-1",
           expiresAt: new Date(Date.now() + 60_000),
         }),
@@ -240,6 +253,7 @@ describe("computer stop", () => {
         updateMany: vi.fn().mockResolvedValue({ count: 0 }),
         deleteMany: vi.fn(),
         findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
       },
       computerRun: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     } as unknown as PrismaClient;

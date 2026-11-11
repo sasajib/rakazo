@@ -328,6 +328,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         select: {
           computerId: true,
           computerSwitching: true,
+          concurrency: true,
           computer: { select: { scope: true } },
         },
       });
@@ -367,6 +368,8 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               computerId: leaseTarget.computerId,
               runId,
               botId: run.botId,
+              threadId: run.threadId,
+              maxSlots: leaseTarget.concurrency,
               workerId,
               runFence: fence,
             });

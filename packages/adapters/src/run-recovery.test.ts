@@ -18,7 +18,7 @@ describe("run recovery blockers", () => {
       id,
       botId: "bot",
       trigger,
-      bot: { computerId: "computer" },
+      bot: { computerId: "computer", concurrency: 1 },
     });
     const blockers = await findRunRecoveryBlockers(
       prisma,

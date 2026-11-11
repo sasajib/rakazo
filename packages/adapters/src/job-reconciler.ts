@@ -235,7 +235,7 @@ export function createJobReconciler(
             updatedAt: true,
             botId: true,
             trigger: true,
-            bot: { select: { computerId: true } },
+            bot: { select: { computerId: true, concurrency: true } },
           },
         }),
         deps.prisma.messagingOutbound.findFirst({

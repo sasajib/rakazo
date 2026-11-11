@@ -11,7 +11,7 @@ import { RunJobPublisher, RunStarter, RunWorkerHost, withRunWorker } from "./run
 afterEach(() => vi.useRealTimers());
 
 function fixture() {
-  const rows = new Map<string, { status: string; wakeAt: Date | null; trigger?: string }>();
+  const rows = new Map<string, { status: string; wakeAt: Date | null; trigger?: string; createdAt?: Date }>();
   const updateMany = vi.fn(async ({ where, data }) => {
     const row = rows.get(where.id);
     if (!row || !where.status.in.includes(row.status) || (where.wakeAt === null && row.wakeAt))
@@ -30,7 +30,14 @@ function fixture() {
               ? args.where.trigger.in.includes(row.trigger ?? "user")
               : !args.where.trigger.notIn!.includes(row.trigger ?? "user")),
         )
-        .map(([id]) => ({ id, botId: id, bot: { computerId: "computer" } })),
+        .map(([id, row]) => ({
+          id,
+          botId: id,
+          // The columns the scan orders and gates by, as the real select returns them.
+          createdAt: row.createdAt ?? new Date(0),
+          trigger: row.trigger ?? "user",
+          bot: { computerId: "computer", concurrency: 1 },
+        })),
   );
   const leases = vi.fn(
     async () => [] as { computerId: string; botId: string; runId: string; expiresAt: Date }[],
@@ -104,8 +111,9 @@ describe("durable direct run wakeups", () => {
       return Array.from({ length: 100 }, (_, index) => ({
         id: `${lane}-${page}-${index}`,
         createdAt: new Date(page * 100 + index),
+        trigger: lane === "background" ? "routine" : "user",
         botId: `${lane}-${index}`,
-        bot: { computerId: "computer" },
+        bot: { computerId: "computer", concurrency: 1 },
       }));
     });
     const admission = vi.spyOn(RunExecutionHost.prototype, "execute").mockResolvedValue(false);
@@ -142,10 +150,26 @@ describe("durable direct run wakeups", () => {
         }
         if (lane === "background") {
           if (backgroundPage++ > 0) return [];
-          return [{ id: "timer", botId: "timer", bot: { computerId: "computer" } }];
+          return [
+            {
+              id: "timer",
+              botId: "timer",
+              createdAt: new Date(0),
+              trigger: "routine",
+              bot: { computerId: "computer", concurrency: 1 },
+            },
+          ];
         }
         return readyAtSnapshot
-          ? [{ id: "chat", botId: "chat", bot: { computerId: "computer" } }]
+          ? [
+              {
+                id: "chat",
+                botId: "chat",
+                createdAt: new Date(0),
+                trigger: "user",
+                bot: { computerId: "computer", concurrency: 1 },
+              },
+            ]
           : [];
       });
       const host = new RunWorkerHost(f.prisma, f.realtime, f.starter, { batchSize: 1 });
@@ -200,8 +224,9 @@ describe("durable direct run wakeups", () => {
             {
               id: trigger,
               botId: trigger,
+              trigger,
               createdAt: new Date(0),
-              bot: { computerId: "computer" },
+              bot: { computerId: "computer", concurrency: 1 },
             },
           ];
         }
@@ -212,8 +237,9 @@ describe("durable direct run wakeups", () => {
           {
             id: `chat-${page}`,
             botId: `chat-${page}`,
+            trigger: "user",
             createdAt: new Date(page * 1_000),
-            bot: { computerId: "computer" },
+            bot: { computerId: "computer", concurrency: 1 },
           },
         ];
       });

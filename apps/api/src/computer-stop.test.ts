@@ -105,6 +105,7 @@ describe("Stop during a computer reconnect", () => {
         computerExecutionLease: {
           updateMany: vi.fn(async () => ({ count: 0 })),
           findUnique: vi.fn(async () => null),
+          findFirst: vi.fn(async () => null),
         },
         computerRun: {
           updateMany: vi.fn(async () => ({ count: 0 })),
