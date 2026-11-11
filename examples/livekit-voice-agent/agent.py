@@ -61,6 +61,9 @@ AGENT_NAME = os.environ.get("LIVEKIT_AGENT_NAME", "rakazo-voice")
 RAKAZO_API_URL = os.environ.get("RAKAZO_API_URL", "http://127.0.0.1:3311")
 TURN_TIMEOUT_S = float(os.environ.get("RAKAZO_TURN_TIMEOUT_S", "120"))
 
+# A line from another run of this bot read out on the call: a confirmation, not a report.
+SIBLING_LINE_MAX_CHARS = 220
+
 ENTER_CODE_LINE = "The bot is asking for a code or password. Hang up, then enter it on screen."
 APPROVE_ON_SCREEN_LINE = "That needs your approval. Approve or deny it on screen."
 
@@ -100,6 +103,9 @@ class RakazoAgent(Agent):
         self.call = call
         self.client = client
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # What this bot said in another run of the same thread (a task confirmed in chat during a
+        # call). Spoken by the idle session, never spoken over an answer.
+        self.to_speak: asyncio.Queue[str] = asyncio.Queue()
         # The call's conversation, kept apart from what the bot's other runs are doing.
         self.state = ConversationState()
         self._turn_run_id: str | None = None
@@ -150,7 +156,18 @@ class RakazoAgent(Agent):
             self._note_background(event)
 
     def _note_background(self, event: dict[str, Any]) -> None:
-        """Remember what a run that is not this turn's said, so it can be reported on request."""
+        """Remember what a run that is not this turn's said, so it can be reported on request.
+
+        A short progress line — the bot confirming a task it was given in chat, while this call is
+        going — is queued to be spoken: the person is on the phone with this bot and should hear
+        what it just told them in writing. Anything longer stays a note.
+        """
+        payload = event.get("payload") or {}
+        if event.get("type") == "thread.message.created" and payload.get("role") == "bot":
+            said = text_from_blocks(payload.get("blocks") or [])
+            # Short and stated: a confirmation or a one-line update. A report stays a note.
+            if said and len(said) <= SIBLING_LINE_MAX_CHARS:
+                self.to_speak.put_nowait(said)
         payload = event.get("payload") or {}
         etype = event.get("type")
         run_id = event.get("runId")
@@ -526,6 +543,33 @@ async def entrypoint(ctx: JobContext) -> None:
                 ctx.shutdown(reason="bot ended the call")
 
         ev.speech_handle.add_done_callback(done)
+
+    async def speak_sibling_lines() -> None:
+        """Speak what this bot wrote in another run, between turns.
+
+        Events are otherwise only read inside a turn, so a task confirmed in chat while the call is
+        quiet would never be seen. This drains them while no turn owns the conversation, keeps the
+        short ones to say, and says them when the speaker is free.
+        """
+        while True:
+            try:
+                if agent.state.current is None:
+                    # No turn is reading the stream: take what arrived so it is not lost.
+                    while not agent.events.empty():
+                        agent._note_background(agent.events.get_nowait())
+                    if session.agent_state == "listening" and not agent.to_speak.empty():
+                        said = agent.to_speak.get_nowait()
+                        logger.info("speaking a line from another run: %s", said[:80])
+                        session.say(said, allow_interruptions=True)
+                await asyncio.sleep(0.4)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a spoken courtesy must never end the call
+                logger.warning("sibling line not spoken: %s", exc)
+                await asyncio.sleep(1.0)
+
+    speak_task = asyncio.create_task(speak_sibling_lines(), name="rakazo-sibling-lines")
+    ctx.add_shutdown_callback(lambda: (speak_task.cancel(), None))
 
     started_at = time.monotonic()
 
