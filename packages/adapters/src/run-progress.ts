@@ -162,22 +162,128 @@ export async function publishInterimMessage(ctx: RunContext, text: string, markU
   }
 }
 
-/** How much of the person's request the acknowledgement quotes back. */
-export const ACK_MAX_CHARS = 160;
+/** How long the restated task may be before it is cut. */
+export const ACK_MAX_CHARS = 140;
+
+// Speech-to-text keeps the caller's noises; repeating them back is not an acknowledgement.
+const FILLERS = new Set([
+  "uh",
+  "uhh",
+  "um",
+  "umm",
+  "ah",
+  "ahh",
+  "eh",
+  "er",
+  "erm",
+  "hmm",
+  "hm",
+  "mm",
+  "mhm",
+  "like",
+  "well",
+  "so",
+  "okay",
+  "ok",
+  "right",
+]);
+
+// Openers that carry no task: a greeting, or a request wrapper.
+const OPENERS = [
+  /^(?:hi|hey|hello|yo)[\s,]+(?:chief|bot|there)\b[\s,.:]*/i,
+  /^(?:okay|ok|so|well|right|now)[\s,]+/i,
+  /^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i,
+  /^(?:please|kindly)\s+/i,
+  /^(?:i\s+(?:want|need)\s+you\s+to|i\s+need\s+you\s+to|i'd\s+like\s+you\s+to)\s+/i,
+];
 
 /**
- * The line a person's run says before it starts working: what was asked, and that it is on it.
+ * The task in one short line, in the bot's words rather than the caller's.
+ *
+ * Speech to text keeps every "uh" and every repeated word, so quoting the transcript back reads as
+ * a bad echo instead of a confirmation. This drops the noises and the request wrappers, and states
+ * what is left as the thing being done.
+ */
+export function summariseRequest(requestText: string): string {
+  let said = requestText.replace(/\s+/g, " ").trim();
+  if (!said) return "";
+  // Leading noise first ("uh, can you please …"), then the wrapper it was hiding.
+  said = said.replace(/^(?:(?:uh|uhh|um|umm|ah|ahh|eh|er|erm|hmm|hm|mm|like|so|well|okay|ok)\b[,. ]*)+/i, "");
+  for (const opener of OPENERS) said = said.replace(opener, "");
+  // The wrapper can sit mid-sentence once the caller starts over: "…agent. can you please create…"
+  said = said
+    .replace(/\b(?:can|could|would|will)\s+you\s+(?:please\s+)?/gi, "")
+    .replace(/\b(?:please|kindly)\b/gi, "");
+  said = said.replace(/^(?:(?:uh|uhh|um|umm|ah|ahh|eh|er|erm|hmm|hm|mm|like|so|well|okay|ok)\b[,. ]*)+/i, "");
+  // "we we we going" -> "we going"; repeat-words come from stuttering, not meaning.
+  said = said.replace(/\b(\w+)(\s+\1\b)+/gi, "$1");
+  const words = said
+    .split(" ")
+    .filter((word) => {
+      const bare = word.toLowerCase().replace(/[^a-z']/g, "");
+      return bare === "" || !FILLERS.has(bare);
+    });
+  said = words
+    .join(" ")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/,\s*,/g, ",")
+    .replace(/^[\s,.;:!?-]+/, "")
+    .trim();
+  if (!said) return "";
+  // A dictated request wanders: pick the clause that names the work, not the first one heard.
+  const clauses = said
+    .replace(/\.{2,}|\u2026/g, ",")
+    .split(/[.!?,;]/)
+    .map((clause) => clause.trim().replace(/^[\s,;:-]+|[\s,;:-]+$/g, ""))
+    .filter((clause) => clause.split(/\s+/).length >= 2);
+  said = clauses.length > 0 ? taskClause(clauses) : said;
+  // "create a voice agent so we can run tests": the outcome follows, the task is before it.
+  const head = (said.split(/\bsotha?t?\b|\bso\b/i)[0] ?? "").replace(/^[\s,;:-]+|[\s,;:-]+$/g, "");
+  if (head.split(/\s+/).length >= 2) said = head;
+  said = said.replace(/\s+/g, " ").trim();
+  const clipped = said.length > ACK_MAX_CHARS ? `${said.slice(0, ACK_MAX_CHARS).trimEnd()}…` : said;
+  return clipped.replace(/[?]+$/, "");
+}
+
+// Verbs that name work; the clause carrying one is the task, whatever the caller said around it.
+const TASK_VERBS = new Set(
+  (
+    "add analyse analyze answer book build buy call cancel check clean close compare compile " +
+    "connect copy create cut delete deploy describe design draft draw edit email export find " +
+    "finish fix follow generate get give install list look make merge move open order organise " +
+    "organize plan post prepare print publish read remove rename reply report research review " +
+    "run save schedule search send set setup show sort start stop summarise summarize tell test " +
+    "translate update upload write"
+  ).split(" "),
+);
+
+/** The clause that names the work: the first with a task verb, else the longest. */
+function taskClause(clauses: readonly string[]): string {
+  for (const clause of clauses) {
+    const words = clause
+      .toLowerCase()
+      .split(/\s+/)
+      .map((word) => word.replace(/[^a-z]/g, ""));
+    if (words.some((word) => TASK_VERBS.has(word))) return clause;
+  }
+  return clauses.reduce((longest, clause) =>
+    clause.split(/\s+/).length > longest.split(/\s+/).length ? clause : longest,
+  );
+}
+
+/**
+ * The line a person's run says before it starts working: what it understood, and that it is on it.
  *
  * Deterministic on purpose. A model's own plan arrives whenever its first turn does — seconds, or
  * minutes if the turn starts with a long tool call — and a task that begins in silence reads as
- * ignored. This is posted before the runtime is asked for anything.
+ * ignored. This is posted before the runtime is asked for anything, and it restates the task rather
+ * than repeating the transcript.
  */
 export function acknowledgementFor(trigger: string, requestText: string): string | null {
   if (trigger !== "user" && trigger !== "follow_up") return null;
-  const request = requestText.replace(/\s+/g, " ").trim();
-  if (!request) return null;
-  const quoted = request.length > ACK_MAX_CHARS ? `${request.slice(0, ACK_MAX_CHARS).trimEnd()}…` : request;
-  return `On it — “${quoted}”\n\nWorking through it now; I'll tell you when it's finished.`;
+  const task = summariseRequest(requestText);
+  if (!task) return null;
+  return `Got it — ${task}. Working through it now; I'll tell you when it's finished.`;
 }
 
 /** Posts that line as an interim message, if this run is a person's turn. */
