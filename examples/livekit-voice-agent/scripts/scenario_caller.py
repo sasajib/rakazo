@@ -201,7 +201,10 @@ async def main() -> None:
 
     # 3. wait for the report on the task to begin, and for some of it to be spoken
     ok = await wait_text(
-        lambda t: words_after(t, args.report_marker) >= 7,
+        # The report on the task arrives as "About your request…" when it finished while the
+        # question was being answered, or as "I was giving you an update on your request…" when the
+        # task's own result was already being told and the question cut it off: either is a report.
+        lambda t: max(words_after(t, args.report_marker), words_after(t, "update on your request")) >= 7,
         mark2,
         max(10, deadline - time.monotonic() - 60),
         "report on the task",

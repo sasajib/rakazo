@@ -47,6 +47,7 @@ from livekit.plugins import deepgram, openai, silero
 from conversation import (
     ConversationState,
     Segment,
+    SentenceGate,
     SpokenLines,
     Task,
     asks_for_work,
@@ -336,34 +337,39 @@ class RakazoAgent(Agent):
         )
         if not heard_words:
             return
-        tail = [w.lower() for w in re.sub(r"[^A-Za-z0-9 ]", " ", " ".join(heard_words)).split()][-6:]
+        tail = re.findall(r"[a-z0-9]+", heard.lower())[-6:]
+        if not tail:
+            return
         for segments in reversed(self._speech_log):
-            flat: list[tuple[int, str]] = []  # (segment index, word) in the order spoken
-            for index, seg in enumerate(segments):
-                flat.extend((index, w.lower()) for w in re.sub(r"[^A-Za-z0-9 ]", " ", seg.text).split())
-            words_only = [w for _, w in flat]
-            # Where in this speech the audio stopped: the last words heard, found in what was said.
-            cut = next(
+            # The speech as it was spoken, with where each segment sits in it. Chunks of one stream
+            # are joined as they came; separate thoughts are separated by a space.
+            full = ""
+            spans: list[tuple[int, int]] = []
+            for seg in segments:
+                if full and not seg.joined:
+                    full += " "
+                spans.append((len(full), len(full) + len(seg.text)))
+                full += seg.text
+            tokens = list(re.finditer(r"[a-z0-9]+", full.lower()))
+            words = [t.group(0) for t in tokens]
+            at = next(
                 (
-                    k + len(tail)
-                    for k in range(len(words_only) - len(tail), -1, -1)
-                    if words_only[k : k + len(tail)] == tail
+                    k
+                    for k in range(len(words) - len(tail), -1, -1)
+                    if words[k : k + len(tail)] == tail
                 ),
                 None,
             )
-            if cut is None:
+            if at is None:
                 continue
+            cut = tokens[at + len(tail) - 1].end()  # character position where the audio stopped
             remaining: list[str] = []
             run_id: str | None = None
             label = ""
-            for index, seg in enumerate(segments):
-                if seg.kind != "report":
+            for seg, (start, end) in zip(segments, spans):
+                if seg.kind != "report" or end <= cut:
                     continue
-                seg_words = [k for k, (i, _) in enumerate(flat) if i == index]
-                if not seg_words or seg_words[-1] < cut:
-                    continue  # fully heard
-                skip = max(0, cut - seg_words[0])
-                rest = " ".join(seg.text.split()[skip:]).strip()
+                rest = seg.text[max(0, cut - start) :].lstrip(" .,;:!?-—").strip()
                 if rest:
                     remaining.append(rest)
                     run_id, label = seg.run_id, seg.label
@@ -405,13 +411,19 @@ class RakazoAgent(Agent):
     # --- nodes ---------------------------------------------------------------------------------
 
     async def _emit(
-        self, segments: list[Segment], kind: str, text: str, run_id: str | None = None, label: str = ""
+        self,
+        segments: list[Segment],
+        kind: str,
+        text: str,
+        run_id: str | None = None,
+        label: str = "",
+        joined: bool = False,
     ) -> AsyncIterable[str | FlushSentinel]:
         """Speak one thought: remember what it was (so a cut-off report can be resumed), say it, and
         flush it to the speaker now instead of when more text arrives."""
         if not text.strip():
             return
-        segments.append(Segment(kind, text, run_id, label))
+        segments.append(Segment(kind, text, run_id, label, joined))
         self._account_speech(text)
         # What a run wrote is already in the chat. What this agent says on its own account (a
         # progress line, which report it is returning to, a status answer) is not: leave it there,
@@ -624,8 +636,28 @@ class RakazoAgent(Agent):
         # the last sentence before the bot goes quiet (the confirmation, while it works for half a
         # minute) was never voiced. Flush as soon as the stream pauses.
         unflushed = False
+        gate = SentenceGate()
         said_first = False
         heartbeats = 0
+
+        async def voice(text: str, kind: str) -> AsyncIterable[str]:
+            """Say `text` a sentence at a time, skipping any the caller has already heard."""
+            nonlocal unflushed
+            for sentence in re.split(r"(?<=[.!?])\s+", text):
+                if not sentence.strip():
+                    continue
+                if self._spoken.has(sentence):
+                    logger.info("not repeating: %s", sentence[:70])
+                    continue
+                self._spoken.add(sentence)
+                segments.append(
+                    Segment(kind, sentence + " ", run_id, self.state.label_of(run_id), joined=unflushed)
+                )
+                logger.info("speaking (%s): %s", kind, sentence[:70])
+                self._account_speech(sentence)
+                yield sentence + " "
+                unflushed = True
+
         next_beat = t0 + HEARTBEAT_FIRST_S
         try:
             while True:
@@ -635,14 +667,16 @@ class RakazoAgent(Agent):
                     logger.warning("turn timed out waiting for Rakazo", extra={"runId": run_id})
                     break
                 wait = remaining
-                if unflushed:
+                if unflushed or gate._buffer:
                     wait = min(wait, FLUSH_AFTER_S)
                 else:
                     wait = min(wait, max(0.2, max(next_beat, self._voiced_until + HEARTBEAT_QUIET_S) - now))
                 try:
                     event = await asyncio.wait_for(self.events.get(), wait)
                 except asyncio.TimeoutError:
-                    if unflushed:
+                    if unflushed or gate._buffer:
+                        async for chunk in voice(gate.take(), "report" if reporting else "answer"):
+                            yield chunk
                         unflushed = False
                         yield FlushSentinel()
                         continue
@@ -712,11 +746,10 @@ class RakazoAgent(Agent):
                             self._marks["first_delta"] = first_delta_at
                             logger.info("rakazo first delta after %.2fs", first_delta_at - t0)
                         streamed.append(text)
-                        segments.append(Segment("report" if reporting else "answer", text, run_id, self.state.label_of(run_id)))
-                        logger.info("speaking (delta): %s", text[:70])
-                        self._account_speech(text)
-                        yield text
-                        unflushed = True
+                        ready = gate.push(text)
+                        if ready:
+                            async for chunk in voice(ready, "report" if reporting else "answer"):
+                                yield chunk
                 elif etype == "thread.message.created" and payload.get("role") == "bot":
                     final = text_from_blocks(payload.get("blocks") or [])
                     self.state.note_task_message(run_id, final)
@@ -730,13 +763,16 @@ class RakazoAgent(Agent):
                     )
                     if not rest and final and not already_streamed and not self._spoken.has(final):
                         rest = final
-                    if rest:
-                        logger.info("speaking (message %s): %s", etype, rest[:70])
+                    # What the stream held back mid-sentence continues straight into the tail of the
+                    # finished message (a split word stays one word).
+                    held = gate.take()
+                    if rest or held:
+                        logger.info("speaking (message %s): %s", etype, (held + rest)[:70])
                         streamed.append(rest)
-                        # A whole message is a whole thought: voice it now, not when more arrives.
                         kind = "report" if (reporting and said_first) else ("ack" if not said_first else "answer")
-                        async for chunk in self._emit(segments, kind, rest, run_id, self.state.label_of(run_id)):
+                        async for chunk in voice(held + rest, kind):
                             yield chunk
+                        yield FlushSentinel()
                         unflushed = False
                         if not said_first:
                             said_first = True
@@ -753,6 +789,8 @@ class RakazoAgent(Agent):
                                 async for chunk in self._emit(segments, "line", line):
                                     yield chunk
                 elif etype in RUN_TERMINAL:
+                    async for chunk in voice(gate.take(), "report" if reporting else "answer"):
+                        yield chunk
                     logger.info("%s after %.2fs", etype, time.monotonic() - t0, extra={"runId": run_id})
                     if self.state.tasks.get(run_id or ""):
                         self.state.finish_task(run_id, tell=False)

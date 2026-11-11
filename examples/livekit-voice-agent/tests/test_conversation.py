@@ -381,3 +381,20 @@ def test_a_caller_declining_a_secret_is_recognised():
     for said in ("It's already given, can you check the MCP server?", "skip that", "never mind", "I don't have it"):
         assert wants_to_move_on(said), said
     assert not wants_to_move_on("what is the capital of India")
+
+
+def test_sentence_gate_holds_the_unfinished_sentence_and_joins_split_words():
+    from conversation import SentenceGate
+
+    gate = SentenceGate()
+    assert gate.push("You as") == ""
+    assert gate.push("ked for India's capital. It's New") == "You asked for India's capital. "
+    assert gate.push(" Delhi.") == ""  # no whitespace after the full stop yet: it may be "Delhi.com"
+    assert gate.take() == "It's New Delhi."
+
+
+def test_a_restated_sentence_is_recognised_as_heard():
+    spoken = SpokenLines()
+    spoken.add("I haven't checked the fleet this turn, so I'm making no claims about the bots.")
+    assert spoken.has("I haven't checked the fleet this turn, so I'm making no claims about any bots.")
+    assert not spoken.has("New Delhi is the capital of India.")

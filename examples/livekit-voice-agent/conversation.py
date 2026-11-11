@@ -333,6 +333,31 @@ def speakable(text: str) -> str:
     return " ".join(_LONG_ID.sub(fix, word) for word in text.split(" "))
 
 
+class SentenceGate:
+    """Streamed text in whole sentences, so a sentence the caller has already heard can be dropped.
+
+    A bot restates itself ("I haven't checked the fleet this turn, so ...") at the end of answer
+    after answer. Chunks arrive split anywhere, so text is held until a sentence ends; `take` hands
+    back the unfinished remainder, to be joined with whatever continues it.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def push(self, text: str) -> str:
+        """Add a chunk; return the complete sentences so far (trailing space kept), keep the rest."""
+        self._buffer += text
+        parts = re.split(r"(?<=[.!?])(\s+)", self._buffer)
+        # parts alternates sentence, separator, sentence, ... ; the last item is unfinished
+        done = "".join(parts[:-1]) if len(parts) > 1 else ""
+        self._buffer = parts[-1] if len(parts) > 1 else self._buffer
+        return done
+
+    def take(self) -> str:
+        rest, self._buffer = self._buffer, ""
+        return rest
+
+
 class SpokenLines:
     """What this call has already said, so the same thing is never delivered twice.
 
@@ -411,6 +436,9 @@ class Segment:
     text: str
     run_id: str | None = None
     label: str = ""
+    # Streamed text arrives in chunks that split words ("Bo" + "th"): a chunk that goes on from the
+    # one before is joined to it without a space when the speech is reconstructed.
+    joined: bool = False
 
 
 @dataclass

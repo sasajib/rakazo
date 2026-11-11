@@ -207,6 +207,19 @@ async def main() -> None:
     told = " ".join(seg.text for seg in agent.take_backlog())
     check("a result does not repeat what was just answered", "New Delhi" not in told and "created and verified" in told, told)
 
+    # 6b. Streamed chunks split words ("B" + "oth"): the cut must still be placed.
+    agent = RakazoAgent(CALL, FakeClient())
+    agent.state.register_task("run-task", "create a voice assistant", now=0)
+    label = "your request to create a voice assistant"
+    segments = [
+        Segment("ack", "You want a new voice bot, so I'm checking the fleet first.", "run-task", label),
+        Segment("report", "B", "run-task", label),
+        Segment("report", "oth are created. The creation calls returned ok.", "run-task", label, joined=True),
+    ]
+    agent.log_speech(segments)
+    agent.on_speech_cut("You want a new voice bot, so I'm checking the fleet first.Both are created. The")
+    check("a cut inside split chunks is placed", agent.state.paused_report() == "creation calls returned ok.", repr(agent.state.paused_report()))
+
     # 7. A run parked on a secret card never blocks the caller: a question about it gets one honest
     #    answer; a request of their own goes ahead (the card is set aside), and no word is ever sent
     #    as the secret.
