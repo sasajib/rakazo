@@ -20,6 +20,22 @@ function message(fields: Partial<ThreadMessage> & { role: ThreadMessage["role"] 
   };
 }
 
+describe("groupVoiceChats cards that wait on the person", () => {
+  it("keeps a secret card out of the call card, so it is visible during the call", () => {
+    const user = message({ role: "user", callId: "call-1", runId: "run-1" });
+    const ask = message({
+      role: "bot",
+      runId: "run-1",
+      blocks: [{ kind: "ask", text: "MCP token", input: "secret", status: "pending" } as never],
+    });
+    const reply = message({ role: "bot", runId: "run-1" });
+    const items = groupVoiceChats([user, ask, reply]);
+    const group = items.find((item) => item.kind === "voiceChat");
+    expect(items.some((item) => item.kind === "message" && item.message === ask)).toBe(true);
+    expect(group && group.kind === "voiceChat" ? group.messages : []).toEqual([user, reply]);
+  });
+});
+
 describe("groupVoiceChats", () => {
   it.each([0, 125])(
     "keeps an initial hang-up marker's metadata (%s seconds)",

@@ -193,6 +193,14 @@ const FIRST_STEP_PHRASES: Record<string, string> = {
   message_user: "writing back",
 };
 
+/** "install" -> "installing", "installed" -> "installing", "make" -> "making": never "installeding". */
+function gerund(verb: string) {
+  if (verb.endsWith("ing")) return verb;
+  if (verb.endsWith("ed")) return `${verb.slice(0, -2)}ing`;
+  if (verb.endsWith("e")) return `${verb.slice(0, -1)}ing`;
+  return `${verb}ing`;
+}
+
 /** A readable phrase for a tool nobody mapped: "list_fleet" reads as "checking your fleet". */
 function phraseForTool(toolName: string) {
   const [verb, ...rest] = toolName.split("_");
@@ -211,9 +219,9 @@ function phraseForTool(toolName: string) {
     case "delete":
     case "archive":
     case "remove":
-      return `${verb === "remove" ? "removing" : `${verb}ing`} the ${noun || "item"}`;
+      return `${gerund(verb)} the ${noun || "item"}`;
     default:
-      return noun ? `${verb}ing the ${noun}` : toolName.replace(/_/g, " ");
+      return noun ? `${gerund(verb)} the ${noun}` : toolName.replace(/_/g, " ");
   }
 }
 

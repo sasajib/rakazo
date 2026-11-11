@@ -43,6 +43,14 @@ export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): Thre
   let openRunIds = new Set<string>();
   const segments = new Map<string, number>();
   for (const message of messages) {
+    // A card that waits on the person (a secret, an approval) is not part of the spoken
+    // transcript: the call card shows captions only, so folding it in hid the card for as long as
+    // the call lasted and left the run parked behind it. It stays a message of its own, and the
+    // call's group carries on around it.
+    if (needsPersonOnScreen(message)) {
+      items.push({ kind: "message", message });
+      continue;
+    }
     if (open) {
       const joinsByRun = Boolean(
         message.role === "bot" && message.runId && openRunIds.has(message.runId),
@@ -104,6 +112,12 @@ export function latestSpokenCallReply<T extends VoiceChatMessage>(
     if (message?.role === "bot") return message;
   }
   return undefined;
+}
+
+const ON_SCREEN_BLOCKS = new Set(["ask", "mcp_approval", "app_connect", "connect"]);
+
+function needsPersonOnScreen(message: VoiceChatMessage): boolean {
+  return message.role === "bot" && message.blocks.some((block) => ON_SCREEN_BLOCKS.has(block.kind));
 }
 
 function isCallMarker(message: VoiceChatMessage): boolean {
