@@ -452,6 +452,8 @@ export async function sendUserMessage(
       seq: message.seq,
       taskId: created?.taskId ?? null,
       runId: run?.id ?? null,
+      // A replay reads one run (see send-replay-source-run.postgres.test.ts); the talk run of the first send is not re-read.
+      talkRunId: null,
     };
   };
   const existing = await replay();

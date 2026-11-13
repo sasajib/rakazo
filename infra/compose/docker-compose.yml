@@ -46,6 +46,8 @@ x-app-environment: &app-environment # Runtime
   BOT_EMAIL_SMTP_URL:
   RAKAZO_SECRETS_ALLOW_PRIVATE_HTTP:
   EXPO_ACCESS_TOKEN:
+  # Optional LiveKit voice agent for duplex calls; the API and the worker both ring through it.
+  VOICE_AGENT_URL:
   APNS_VOIP_KEY_ID:
   APNS_VOIP_TEAM_ID:
   APNS_VOIP_PRIVATE_KEY:
@@ -428,6 +430,7 @@ services:
       <<: *app-environment
       # Sign-in, sessions, billing and inbound webhooks: API only.
       API_HOST: "0.0.0.0"
+      VOICE_AGENT_INTERNAL_TOKEN:
       API_PORT:
       BETTER_AUTH_SECRET:
       BETTER_AUTH_URL:

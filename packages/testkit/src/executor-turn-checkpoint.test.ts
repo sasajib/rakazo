@@ -1081,18 +1081,18 @@ describe("executor paused transcript", () => {
           expect(request) {
             const names = request.tools?.map((tool) => tool.function.name);
             expect(names).toEqual(expect.arrayContaining(["find_tool", "use_tool"]));
-            expect(names).not.toContain("scratchpad_add");
+            expect(names).not.toContain("render_plot");
           },
           response: {
             type: "tool",
             id: "find",
             name: "find_tool",
-            arguments: { query: "scratchpad add" },
+            arguments: { query: "render plot chart" },
           },
         },
         {
           expect(request) {
-            expect(toolResult(request, "find")).toContain("Short title for the item.");
+            expect(toolResult(request, "find")).toContain("render_plot");
           },
           response: {
             type: "tool",
@@ -1109,7 +1109,7 @@ describe("executor paused transcript", () => {
             type: "tool",
             id: "pending",
             name: "use_tool",
-            arguments: { name: "scratchpad_add", arguments: args },
+            arguments: { name: "render_plot", arguments: args },
           },
         },
         {
@@ -1121,12 +1121,12 @@ describe("executor paused transcript", () => {
       ],
     });
     try {
-      const state = fixture(model.model, false, "scratchpad_add");
+      const state = fixture(model.model, false, "render_plot");
       state.run.trigger = "user";
       await state.executor.continueRun(state.run.id, "fixture-worker");
       expect(state.pauseRunForInput).toHaveBeenCalledOnce();
       const pending = state.effects.filter((effect) => effect.status === "intended");
-      expect(pending.map((effect) => effect.kind)).toEqual(["scratchpad_add"]);
+      expect(pending.map((effect) => effect.kind)).toEqual(["render_plot"]);
       expect(pending[0]!.request).toEqual(args);
       expect(state.effects.some((effect) => effect.kind === "call_user")).toBe(false);
       for (const effect of pending) effect.status = "approved";
@@ -1134,7 +1134,7 @@ describe("executor paused transcript", () => {
       await state.executor.continueRun(state.run.id, "fixture-worker");
       model.assertComplete();
       expect(state.pauseRunForInput).toHaveBeenCalledOnce();
-      expect(state.effects.find((effect) => effect.kind === "scratchpad_add")?.status).not.toBe(
+      expect(state.effects.find((effect) => effect.kind === "render_plot")?.status).not.toBe(
         "intended",
       );
       expect(state.finalizeRun).toHaveBeenCalledWith(
