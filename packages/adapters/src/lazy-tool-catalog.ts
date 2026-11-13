@@ -21,20 +21,28 @@ export const CATALOG_SEARCH = "__catalog_search";
 export const CATALOG_LOAD = "__catalog_load";
 export const CATALOG_EXECUTE = "__catalog_execute";
 
-/** How many tools each catalog wrapper stands for, for logs only. */
-const catalogSizes = new WeakMap<ConnectorTool, number>();
-
-/** Tools reachable only through catalog wrappers in `tools`; null if a wrapper does not say. */
+/**
+ * Tools reachable only through the catalog wrappers in `tools`, for logs only. Read from the
+ * wrapper's own description (a tool list is copied on its way to a run, so nothing can ride on
+ * the object): either "Sources: name (count), …" or the full name index, one source per block.
+ */
 export function deferredToolCount(tools: readonly ConnectorTool[]): number | null {
   let total = 0;
-  let unknown = false;
+  let wrappers = 0;
   for (const tool of tools) {
     if (!/_search_tools$/.test(tool.name)) continue;
-    const size = catalogSizes.get(tool);
-    if (size === undefined) unknown = true;
-    else total += size;
+    wrappers += 1;
+    const description = tool.description ?? "";
+    const sources = /\nSources: ([^\n]*)/.exec(description)?.[1];
+    if (sources) {
+      for (const match of sources.matchAll(/\((\d+)\)/g)) total += Number(match[1]);
+    } else {
+      for (const line of description.split("\n").slice(1)) {
+        if (line.startsWith("  ")) total += line.split(",").filter((name) => name.trim()).length;
+      }
+    }
   }
-  return unknown && total === 0 ? null : total;
+  return wrappers === 0 ? 0 : total;
 }
 
 export type CatalogEntry = { id: string; tool: ConnectorTool; group: string };
@@ -75,7 +83,7 @@ export function lazyCatalogTools(
     grouped.length > 0 && fitsNameIndexBudget(grouped)
       ? `Search connected ${label} tools. Empty query lists names by source. Pass group to expand one source.\n${formatNameIndexText(grouped)}`
       : `Search connected ${label} tools. Empty query lists sources. Pass group to list names in one source, or query to search.${sourceSummaryText(grouped)}`;
-  const wrappers: ConnectorTool[] = [
+  return [
     {
       name: `${prefix}_search_tools`,
       description: searchDescription,
@@ -133,9 +141,6 @@ export function lazyCatalogTools(
       route: { connectorId, toolName: CATALOG_EXECUTE },
     },
   ];
-  // Lets the run's audit log say how many tools sit behind the wrappers (`run.prompt_manifest`).
-  for (const wrapper of wrappers) catalogSizes.set(wrapper, entries.length);
-  return wrappers;
 }
 
 export function isLazyCatalogControlRoute(route: ConnectorRoute | undefined): boolean {
