@@ -251,6 +251,39 @@ async def main() -> None:
     check("the card is NOT cancelled", client.stopped == 0, f"stopped={client.stopped}")
     check("it is answered, not stonewalled, and says the card stays", "Creating it now" in spoken and "stays open" in spoken, spoken)
 
+    # 9. A half sentence is held, not sent: the caller carries on, and Rakazo gets ONE request with both halves.
+    client = FakeClient(
+        [
+            event("thread.message.created", "run-ours", role="bot", blocks=[{"kind": "text", "text": "Yes, all of it."}]),
+            event("run.completed", "run-ours"),
+        ]
+    )
+    agent = RakazoAgent(CALL, client)
+    client.agent = agent
+    half = asyncio.create_task(collect(agent, "Did you study"))
+    await asyncio.sleep(0.3)
+    half.cancel()  # the caller started speaking again: the framework cancels the pending turn
+    try:
+        await half
+    except asyncio.CancelledError:
+        pass
+    check("a half sentence is not sent on its own", client.sends == [], repr(client.sends))
+    spoken = "".join(await collect(agent, "Sana's full research?"))
+    check(
+        "the rest is sent joined to the half, once",
+        client.sends == ["Did you study Sana's full research?"],
+        repr(client.sends),
+    )
+    check("and answered", "all of it" in spoken, spoken)
+
+    # 10. A finished sentence is not delayed.
+    client = FakeClient([event("run.completed", "run-ours")])
+    agent = RakazoAgent(CALL, client)
+    client.agent = agent
+    started = asyncio.get_event_loop().time()
+    await collect(agent, "Why are you researching?")
+    check("a finished sentence goes out at once", len(client.sends) == 1 and asyncio.get_event_loop().time() - started < 1.0)
+
     print()
     if failures:
         print(f"{len(failures)} check(s) failed: {', '.join(failures)}")

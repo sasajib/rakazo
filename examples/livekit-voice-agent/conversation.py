@@ -727,3 +727,37 @@ class ConversationState:
     def trace(self) -> list[str]:
         """A readable log line per turn, for the agent's debug output."""
         return [f"{turn.id} {turn.kind} topic={turn.topic!r} {turn.text[:60]!r}" for turn in self.turns]
+
+# --- half-said turns ----------------------------------------------------------------------------
+# Speech-to-text hands over a long sentence in pieces when the caller pauses to think ("merge them, and
+# what about the" ... "summary"). Each piece used to become its own request and its own reply, so the bot
+# answered half sentences, asked what they meant, and the real question arrived into a pile of stale answers.
+_DANGLING_WORDS = frozenset(
+    "a an the and or but so if of to in on at by for with from about as that than then because while "
+    "is are was were be been am do does did have has had will would can could should my your his her our "
+    "their its this these those what which who whom whose when where why how i you we they he she it".split()
+)
+UNFINISHED_HOLD_S = 1.8
+UNFINISHED_MERGE_WINDOW_S = 10.0
+
+
+def looks_unfinished(text: str) -> bool:
+    """Whether a finished-looking turn is probably a half sentence: no closing mark, or it ends on a word
+    that always needs another (\"and\", \"the\", \"what about\"). One word and commands never count."""
+    said = (text or "").strip()
+    words = re.findall(r"[A-Za-z']+", said)
+    if len(words) < 2:
+        return False
+    if asks_to_stop(said) or asks_to_continue(said) or is_filler(said):
+        return False
+    if words[-1].lower() in _DANGLING_WORDS:
+        return True
+    return not said.endswith((".", "?", "!", "\u2026", '"'))
+
+
+def merge_held(held: str, held_at: float, utterance: str, now: float, window: float = UNFINISHED_MERGE_WINDOW_S) -> str:
+    """The caller's half sentence plus the rest, when the rest arrives soon enough to be the same thought."""
+    held = (held or "").strip()
+    if held and (now - held_at) <= window:
+        return f"{held} {utterance.strip()}".strip()
+    return utterance

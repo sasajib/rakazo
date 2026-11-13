@@ -50,12 +50,15 @@ from conversation import (
     SentenceGate,
     SpokenLines,
     Task,
+    UNFINISHED_HOLD_S,
     asks_for_work,
     asks_to_continue,
     is_filler,
     asks_to_stop,
     belongs_to_turn,
     heartbeat_line,
+    looks_unfinished,
+    merge_held,
     speakable,
     spoken_decision_action,
     wants_to_move_on,
@@ -168,6 +171,8 @@ class RakazoAgent(Agent):
         self._turn_activity = ""
         self._user_changed = 0.0
         self._mirrors: set[asyncio.Task[None]] = set()
+        # A half sentence whose turn was cut off by the caller carrying on: (text, when). The next turn starts with it.
+        self._held: tuple[str, float] | None = None
 
     # --- Rakazo event stream ------------------------------------------------------------------
 
@@ -459,6 +464,22 @@ class RakazoAgent(Agent):
         utterance = _last_user_text(chat_ctx)
         if not utterance:
             return
+        if self._held is not None:
+            held_text, held_at = self._held
+            self._held = None
+            joined = merge_held(held_text, held_at, utterance, time.monotonic())
+            if joined != utterance:
+                logger.info("joined the half sentence %r with %r", held_text, utterance)
+                utterance = joined
+        if looks_unfinished(utterance) and UNFINISHED_HOLD_S > 0:
+            # Looks cut off mid-sentence: give the caller a moment to finish. If they carry on, this turn is
+            # cancelled at the sleep and its words are kept for the next one; nothing was sent to Rakazo yet.
+            try:
+                await asyncio.sleep(UNFINISHED_HOLD_S)
+            except (asyncio.CancelledError, GeneratorExit):
+                self._held = (utterance, time.monotonic())
+                logger.info("holding a half sentence: %r", utterance)
+                raise
         t0 = time.monotonic()
         self._marks = {"turn_start": t0}
         # This turn owns the conversation from here: an older turn's generator sees is_current
@@ -909,7 +930,10 @@ def make_stt():
     model = os.environ.get("DEEPGRAM_STT_MODEL", "flux-general-en")
     key = os.environ["DEEPGRAM_API_KEY"]
     if model.startswith("flux"):
-        return deepgram.STTv2(model=model, api_key=key), "stt"  # Flux: semantic end-of-turn
+        # Flux: semantic end-of-turn. A higher threshold waits for a surer end (default 0.7), so a caller who
+        # pauses to think mid-sentence is split less often; costs a little latency on every turn.
+        eot = float(os.environ.get("DEEPGRAM_EOT_THRESHOLD", "0.8"))
+        return deepgram.STTv2(model=model, api_key=key, eot_threshold=eot), "stt"
     return deepgram.STT(model=model, api_key=key, interim_results=True), None  # session picks VAD
 
 
