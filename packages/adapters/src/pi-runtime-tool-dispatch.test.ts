@@ -562,12 +562,13 @@ const scheduleListTool: ConnectorTool = {
   inputSchema: { type: "object", properties: {} },
 };
 
+// A built-in that is still deferred behind find_tool/use_tool in this fork (schedule_cancel is always listed now).
 const scheduleCancelTool: ConnectorTool = {
-  name: "schedule_cancel",
-  description: "Cancel a schedule by routineId or exact name.",
+  name: "render_plot",
+  description: "Render a chart from data.",
   inputSchema: {
     type: "object",
-    properties: { routineId: { type: "string" }, name: { type: "string" } },
+    properties: { title: { type: "string" } },
   },
 };
 
@@ -1210,7 +1211,7 @@ describe("Pi connector tool dispatch", () => {
     // the row, so the bot reports "no schedules" for a reminder it just made.
     expect(modes.get("schedule_create")).toBe("sequential");
     expect(modes.get("schedule_list")).toBe("sequential");
-    // schedule_cancel is deferred, so the use_tool that runs it is sequential.
+    // render_plot is deferred, so the use_tool that runs it is sequential.
     expect(modes.get("use_tool")).toBe("sequential");
     expect(modes.get("remember")).toBe("sequential");
     // Two code requests in one batch would each wait on a card that one answer approves.
