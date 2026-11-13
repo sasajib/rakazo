@@ -21,6 +21,22 @@ export const CATALOG_SEARCH = "__catalog_search";
 export const CATALOG_LOAD = "__catalog_load";
 export const CATALOG_EXECUTE = "__catalog_execute";
 
+/** How many tools each catalog wrapper stands for, for logs only. */
+const catalogSizes = new WeakMap<ConnectorTool, number>();
+
+/** Tools reachable only through catalog wrappers in `tools`; null if a wrapper does not say. */
+export function deferredToolCount(tools: readonly ConnectorTool[]): number | null {
+  let total = 0;
+  let unknown = false;
+  for (const tool of tools) {
+    if (!/_search_tools$/.test(tool.name)) continue;
+    const size = catalogSizes.get(tool);
+    if (size === undefined) unknown = true;
+    else total += size;
+  }
+  return unknown && total === 0 ? null : total;
+}
+
 export type CatalogEntry = { id: string; tool: ConnectorTool; group: string };
 
 export type CatalogSearchHit = {
@@ -59,7 +75,7 @@ export function lazyCatalogTools(
     grouped.length > 0 && fitsNameIndexBudget(grouped)
       ? `Search connected ${label} tools. Empty query lists names by source. Pass group to expand one source.\n${formatNameIndexText(grouped)}`
       : `Search connected ${label} tools. Empty query lists sources. Pass group to list names in one source, or query to search.${sourceSummaryText(grouped)}`;
-  return [
+  const wrappers: ConnectorTool[] = [
     {
       name: `${prefix}_search_tools`,
       description: searchDescription,
@@ -117,6 +133,9 @@ export function lazyCatalogTools(
       route: { connectorId, toolName: CATALOG_EXECUTE },
     },
   ];
+  // Lets the run's audit log say how many tools sit behind the wrappers (`run.prompt_manifest`).
+  for (const wrapper of wrappers) catalogSizes.set(wrapper, entries.length);
+  return wrappers;
 }
 
 export function isLazyCatalogControlRoute(route: ConnectorRoute | undefined): boolean {

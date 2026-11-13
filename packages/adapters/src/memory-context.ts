@@ -114,9 +114,13 @@ export async function loadAgentMemoryContext(
   botId: string,
   context: AdapterContext,
   maxBytes = AGENT_MEMORY_MAX_BYTES,
+  /** Told what reached the block (see `memory.prompt.built`); never changes the block. */
+  onPlan?: (plan: MemoryPromptBudget) => void,
 ): Promise<string | undefined> {
   const documents = await readAgentMemory(memory, botId, context);
-  return buildAgentMemoryPrompt(documents, maxBytes).text;
+  const built = buildAgentMemoryPrompt(documents, maxBytes);
+  onPlan?.(built.plan);
+  return built.text;
 }
 
 /** The bot's own memory plus the user's, in the shape the prompt builder reads. */

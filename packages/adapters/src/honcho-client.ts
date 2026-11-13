@@ -1,3 +1,4 @@
+import { logHonchoFailure } from "./honcho-request-log.js";
 import type { LocalServiceConnection } from "./local-service-endpoint.js";
 import { fetchLocalService } from "./local-service-endpoint.js";
 import { truncateUtf8 } from "./utf8.js";
@@ -79,13 +80,27 @@ async function honchoRequest(
     redirect: "error",
     signal,
   };
+  const startedAt = Date.now();
+  const failed = (kind: "http" | "network" | "timeout" | "unreadable", status: number | null) =>
+    logHonchoFailure({
+      method,
+      path,
+      body,
+      kind,
+      status,
+      elapsedMs: Date.now() - startedAt,
+    });
   let response: Response;
   try {
     response =
       config.baseUrl === HONCHO_CLOUD_BASE_URL
         ? await (config.fetch ?? fetch)(url, init)
         : await fetchLocalService(config, url, init);
-  } catch {
+  } catch (error) {
+    failed(
+      (error as { name?: unknown } | null)?.name === "TimeoutError" ? "timeout" : "network",
+      null,
+    );
     return {
       ok: false,
       error: "Honcho is unreachable or the request timed out.",
@@ -94,6 +109,7 @@ async function honchoRequest(
   if (!response.ok || !options.readJson) {
     await response.body?.cancel().catch(() => undefined);
     if (response.status === 404 && options.allowNotFound) return { ok: true, value: null };
+    if (!response.ok) failed("http", response.status);
     return response.ok
       ? { ok: true, value: undefined }
       : { ok: false, error: `Honcho request failed: ${response.status}` };
@@ -102,6 +118,7 @@ async function honchoRequest(
     const bytes = await readBodyCapped(response, MAX_HONCHO_RESPONSE_BYTES, signal);
     return { ok: true, value: JSON.parse(new TextDecoder().decode(bytes)) };
   } catch {
+    failed("unreadable", response.status);
     return {
       ok: false,
       error: "Honcho returned an unreadable response.",

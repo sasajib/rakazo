@@ -1,6 +1,6 @@
 import type { AgentRunRequest, ComputerRef, SemanticMemoryProvider } from "@rakazo/adapter-kit";
 import { DEFAULT_CONTEXT_STRATEGY, runContinueJob } from "@rakazo/adapter-kit";
-import type { MessageBlock, RunStatus } from "@rakazo/contracts";
+import type { MemoryPromptBudget, MessageBlock, RunStatus } from "@rakazo/contracts";
 import { BUILTIN_TOOL_NAMES, disabledBuiltinToolSet } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
@@ -107,6 +107,7 @@ import {
   neutralizeSpeakerLabels,
   personSpeaker,
 } from "./history-speakers.js";
+import { deferredToolCount } from "./lazy-tool-catalog.js";
 import { createMediaGenerationProvider } from "./media-generation-factory.js";
 import { loadAgentMemoryContext } from "./memory-context.js";
 import { resolveMemberMainModel, selectConfiguredModel } from "./model-roles.js";
@@ -130,6 +131,13 @@ import {
 } from "./reply-context.js";
 import { backOffRoutineAfterAccountError } from "./routine-backoff.js";
 import { lateRoutineRunDueAt, lateRoutineRunInstruction } from "./routine-lateness.js";
+import { noteAutoContinuation } from "./run-audit.js";
+import {
+  holdAuditSummary,
+  logPromptAudit,
+  onRunFinalized,
+  releaseAuditSummary,
+} from "./run-audit-run.js";
 import { lazyRunComputer } from "./run-computer.js";
 import type {
   RunComputerUseState,
@@ -346,6 +354,7 @@ async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
       select: { id: true },
     });
   });
+  noteAutoContinuation(run.id);
   getLogger().warn("run continued: it announced work and used no tool", {
     "run.id": run.id,
     "run.continuation": created.id,
@@ -380,6 +389,19 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
       const result = await executorDeps.events.finalizeRun(input);
       if (result || (await runEndedForThisWorker(executorDeps.prisma, input))) {
         endRunConnectorState(input.runId);
+      }
+      // Log-only: `run.audit_summary` for the run this attempt just ended.
+      if (result) {
+        await onRunFinalized(
+          executorDeps.prisma,
+          {
+            runId: input.runId,
+            spaceId: input.spaceId,
+            threadId: input.threadId,
+            botId: input.botId,
+          },
+          input.outcome,
+        ).catch(() => undefined);
       }
       return result;
     },
@@ -1005,6 +1027,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                 context,
               )
             : Promise.resolve(null);
+        const memoryPlanRef: { plan?: MemoryPromptBudget } = {};
         const [
           discovered,
           currentTurnImages,
@@ -1017,7 +1040,9 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           loadCurrentTurnImages(deps, turnBlocks, context),
           nonOwnerChatRun
             ? Promise.resolve("")
-            : loadAgentMemoryContext(deps.memory, bot.id, context),
+            : loadAgentMemoryContext(deps.memory, bot.id, context, undefined, (plan) => {
+                memoryPlanRef.plan = plan;
+              }),
           nonOwnerChatRun
             ? Promise.resolve("")
             : loadAgentScratchpadContext(deps, {
@@ -1043,7 +1068,13 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             // conversation was this bot's own. Storage cannot promote it to owner authority.
             recalledMemory = stored.length ? formatRecalledMemory(stored) : "";
           } else {
-            getLogger().error("semantic memory recall failed", recalled.error);
+            getLogger().error("semantic memory recall failed", recalled.error, {
+              "run.id": runId,
+              "space.id": run.spaceId,
+              "thread.id": thread.id,
+              "bot.id": bot.id,
+              "memory.operation": "recall",
+            });
           }
         }
         if (!compactedHistory.usedLocalSummary) {
@@ -1969,6 +2000,35 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               }),
             )
             .catch((error: unknown) => getLogger().warn("run.prompt_version_failed", { error }));
+          // Log-only: what this run's prompt is made of (sizes and fingerprints, never text).
+          const auditTarget = {
+            runId,
+            spaceId: run.spaceId,
+            threadId: thread.id,
+            botId: bot.id,
+          };
+          logPromptAudit(auditTarget, {
+            trigger: run.trigger,
+            model: mainRunModel,
+            memoryPlan: memoryPlanRef.plan,
+            tools: { exposed: tools.length, deferred: deferredToolCount(tools) },
+            sections: [
+              ["bot_instructions", runIdentityInstruction(bot, run.trigger)],
+              ["memory_block", memoryContext],
+              ["scratchpad", scratchpadContext],
+              ["tickets", ticketContext],
+              ["task_catalog", taskCatalogInstruction],
+              ["talk_run", talkRun ? TALK_RUN_INSTRUCTION : undefined],
+              ["skills_list", [agentSkillsLine, taughtSkillsLine].filter(Boolean).join("\n")],
+              ["plugins", pluginLine],
+              ["group_context", groupContext],
+              ["messaging_context", messagingContext],
+              ["computer", computerInstruction],
+              ["workspace", workspaceInstruction],
+              ["environment", agentEnvironmentInstruction],
+              ["turn_prompt", prompt],
+            ],
+          });
           const runtimeEvents = deps.runtime.run(
             {
               botId: bot.id,
@@ -2206,12 +2266,15 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           );
           if (await consumeRunEvents(ctx, runtimeEvents)) return;
           if (await interruptedByShutdown()) return;
+          holdAuditSummary(runId);
           await completeRun(ctx);
           // The work is only done if it was done: a run that only announced it is continued once.
           await continueUnfinishedTask(ctx).catch((error) => {
             getLogger().error("continuation check", error);
           });
+          await releaseAuditSummary(deps.prisma, auditTarget).catch(() => undefined);
         } catch (turnError) {
+          holdAuditSummary(runId, false);
           if (await interruptedByShutdown()) return;
           let caughtError = turnError;
           if (handoffEndedTurn(state, caughtError)) {

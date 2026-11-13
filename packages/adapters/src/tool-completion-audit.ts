@@ -5,6 +5,10 @@ import { RunHistoryWriteError } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { isToolPauseResult } from "./approval-effect.js";
 import { sanitizeConnectorError } from "./connector-safety.js";
+import { redactErrorText } from "./error-redaction.js";
+import type { ToolCallAudit } from "./run-audit.js";
+import { noteToolError, noteToolRefusal, toolCallAudit, toolCallAuditFields } from "./run-audit.js";
+import { classifyToolError } from "./tool-error-class.js";
 import type { ToolRefusal } from "./tool-refusal.js";
 import { refusalCode } from "./tool-refusal.js";
 import { isFailedToolResult, toolResultError } from "./tool-result-error.js";
@@ -117,6 +121,8 @@ export async function appendToolCompletionAudit(
     tool: payload.name,
     "tool.outcome": payload.outcome,
     "tool.duration_ms": payload.durationMs,
+    ...toolCallAuditFields(toolCallAudit(target.runId, completion.executionId)),
+    ...toolErrorFields(completion, payload, target.runId, secrets),
   });
   try {
     await deps.events.append({
@@ -137,6 +143,28 @@ export async function appendToolCompletionAudit(
       executionId: redactSecrets(completion.executionId, secrets),
     });
   }
+}
+
+/**
+ * Why a call failed, for the log: a class from a fixed list and the first 200 characters of the
+ * failure with credentials, tokens, emails and URL secrets removed. Only for a failed call.
+ */
+function toolErrorFields(
+  completion: AgentToolCompletion,
+  payload: Record<string, unknown>,
+  runId: string,
+  secrets: string[],
+): Record<string, unknown> {
+  if (payload.outcome !== "error") return {};
+  const raw =
+    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  const message = typeof payload.error === "string" ? payload.error : "";
+  const errorClass = classifyToolError({ message, error: raw, tool: completion.name });
+  noteToolError(runId, errorClass);
+  return {
+    "tool.error_class": errorClass,
+    "tool.error_message": redactErrorText(message, secrets),
+  };
 }
 
 type RunLogTarget = {
@@ -166,9 +194,11 @@ export function logToolRefusal(
   refused: unknown,
   secrets: string[] = [],
   resolvedTool?: string,
+  callAudit?: ToolCallAudit,
 ): ToolRefusal | undefined {
   const code = refusalCode(refused);
   if (!code) return undefined;
+  noteToolRefusal(target.runId);
   const logged: ToolRefusal = {
     code,
     ...(resolvedTool ? { target: redactSecrets(resolvedTool, secrets) } : {}),
@@ -178,6 +208,7 @@ export function logToolRefusal(
     tool: redactSecrets(tool, secrets),
     ...(logged.target ? { "tool.target": logged.target } : {}),
     "tool.refusal": code,
+    ...toolCallAuditFields(callAudit),
   });
   return logged;
 }

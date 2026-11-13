@@ -86,12 +86,7 @@ import {
   isBlockedAuthPath,
   publicSignInProviders,
 } from "@rakazo/auth";
-import type {
-  Actor,
-  AuthCapabilities,
-  MessageBlock,
-  ModelCredential,
-} from "@rakazo/contracts";
+import type { Actor, AuthCapabilities, MessageBlock, ModelCredential } from "@rakazo/contracts";
 import {
   isLocalhostOrLoopbackIp,
   PLUGIN_SUBMISSIONS_PATH,

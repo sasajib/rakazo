@@ -248,9 +248,13 @@ describe("tool completion audit", () => {
         tool: "mcp__notes__create",
         "tool.outcome": "error",
         "tool.duration_ms": 3,
+        // A failure's cause is logged as a class and a short redacted message (see
+        // error-redaction.ts); results and execution ids still never are.
+        "tool.error_class": "mcp_error",
+        "tool.error_message": "private failure detail",
       }),
     ]);
-    expect(JSON.stringify(sink.events)).not.toMatch(/private|call-1|call-2/);
+    expect(JSON.stringify(sink.events)).not.toMatch(/private search|call-1|call-2/);
     installLogger(createLogger({ service: "test", level: "off", sinks: [] }));
   });
 

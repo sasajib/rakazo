@@ -1,5 +1,6 @@
 import { MEMORY_REVISION_CONFLICT_ERROR } from "@rakazo/adapter-kit";
 import {
+  BOT_MEMORY_MAX_BYTES,
   HistoryReadInputSchema,
   HistorySearchInputSchema,
   MEMORY_INDEX_PATH,
@@ -9,10 +10,12 @@ import { sharedMemorySaveError } from "./builtin-tools.js";
 import { redactConnectorPayload } from "./connector-safety.js";
 import { MAX_RECALLED_MEMORIES } from "./history-compaction.js";
 import { editMemory } from "./memory-tools.js";
+import { logMemorySave, memoryRefusalReason, memorySaveOp } from "./run-audit-log.js";
 import type { RunContext } from "./run-context.js";
 import { markReadOutsideContent } from "./run-context.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
 import { argsError } from "./tool-args.js";
+import { byteLength } from "./utf8.js";
 
 /** Cross-chat history requires a surviving direct human request in this app thread. */
 export function historyMyChatsAllowed(
@@ -101,6 +104,8 @@ export const memoryTools: ToolHandlers = {
     const { args } = call;
     // One document per bot keeps the size cap meaningful.
     const path = MEMORY_INDEX_PATH;
+    const logTarget = { runId, spaceId: ctx.run.spaceId, threadId: thread.id, botId: bot.id };
+    const op = memorySaveOp(String(args.content ?? ""), String(args.old_text ?? ""));
     // A concurrent save changes the revision, so re-read and apply the edit again.
     for (let attempt = 1; ; attempt += 1) {
       const snapshot = await deps.memory.read({ scope: "bot", botId: bot.id, path }, context);
@@ -110,9 +115,30 @@ export const memoryTools: ToolHandlers = {
         String(args.content ?? ""),
         String(args.old_text ?? ""),
       );
-      if ("error" in edit) return call.finish(edit);
+      const bytesBefore = byteLength(existing?.content ?? "");
+      if ("error" in edit) {
+        logMemorySave(logTarget, {
+          op,
+          bytesBefore,
+          bytesAfter: bytesBefore,
+          capBytes: BOT_MEMORY_MAX_BYTES,
+          attempt,
+          reason: memoryRefusalReason(edit.error),
+        });
+        return call.finish(edit);
+      }
       const { content } = edit;
-      if (content === (existing?.content ?? "")) return call.finish({ ok: true });
+      if (content === (existing?.content ?? "")) {
+        logMemorySave(logTarget, {
+          op,
+          bytesBefore,
+          bytesAfter: bytesBefore,
+          capBytes: BOT_MEMORY_MAX_BYTES,
+          attempt,
+          unchanged: true,
+        });
+        return call.finish({ ok: true });
+      }
       try {
         await deps.memory.commit(
           {
@@ -126,10 +152,27 @@ export const memoryTools: ToolHandlers = {
           },
           context,
         );
+        logMemorySave(logTarget, {
+          op,
+          bytesBefore,
+          bytesAfter: byteLength(content),
+          capBytes: BOT_MEMORY_MAX_BYTES,
+          attempt,
+        });
         return call.finish({ ok: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        if (message !== MEMORY_REVISION_CONFLICT_ERROR || attempt >= 3) throw error;
+        if (message !== MEMORY_REVISION_CONFLICT_ERROR || attempt >= 3) {
+          logMemorySave(logTarget, {
+            op,
+            bytesBefore,
+            bytesAfter: bytesBefore,
+            capBytes: BOT_MEMORY_MAX_BYTES,
+            attempt,
+            reason: "commit_failed",
+          });
+          throw error;
+        }
       }
     }
   },
