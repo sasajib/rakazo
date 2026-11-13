@@ -36,6 +36,7 @@ describe("built-in tool bridge", () => {
       "connect_app",
       "find_tool",
       "list_files",
+      "message_bot",
       "message_user",
       "read_file",
       "read_history",
@@ -43,8 +44,10 @@ describe("built-in tool bridge", () => {
       "request_secret",
       "request_takeover",
       "run_subagent",
+      "schedule_cancel",
       "schedule_create",
       "schedule_list",
+      "schedule_update",
       "scratchpad_add",
       "scratchpad_complete",
       "scratchpad_list",
@@ -64,10 +67,17 @@ describe("built-in tool bridge", () => {
     // the history tools point at files from earlier messages; a watch says it takes no other timing;
     // read_file takes a line range; ask_user carries the content being decided about;
     // search_history lists earlier tool work by kind without a keyword.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(33_853);
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(37_688);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );
+  });
+
+  it("keeps the tools a bot needs without searching for them in the core set", () => {
+    // call_user is offered per run (one-to-one chats that may ring) but must never be hidden behind find_tool when it is
+    for (const name of ["call_user", "schedule_cancel", "schedule_update", "message_bot", "scratchpad_list"]) {
+      expect(CORE_BUILTIN_TOOL_NAMES.has(name)).toBe(true);
+    }
   });
 
   it("names only real built-ins as core", () => {

@@ -49,6 +49,12 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "reflect_memory",
   "schedule_create",
   "schedule_list",
+  // call_user was reachable only through find_tool, so a bot that did not ask for it said "I cannot call" (it is offered only in
+  // one-to-one chats of runs that may ring). schedule_cancel/update finish the check-back flow; message_bot is how bots hand work over.
+  "call_user",
+  "schedule_cancel",
+  "schedule_update",
+  "message_bot",
   // The scratchpad is a bot's task list: its standing rules say "load it before every task", and a model that must first
   // find_tool it sometimes never does (fork: always listed, so the first call cannot fail with "tool not found").
   "scratchpad_list",
