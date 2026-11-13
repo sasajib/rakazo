@@ -48,6 +48,16 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     result = { ...result, android: { ...result.android, googleServicesFile } };
   }
 
+  // Expo push tokens belong to an EAS project; a self-built app that sends through its own
+  // Expo project (with its own FCM key) names that project here instead of the store one.
+  const easProjectId = process.env.RAKAZO_EAS_PROJECT_ID;
+  if (easProjectId) {
+    result = {
+      ...result,
+      extra: { ...result.extra, eas: { ...result.extra?.eas, projectId: easProjectId } },
+    };
+  }
+
   // A self-built Android APK is signed with its builder's key, so it cannot install over the
   // store app. Another package id lets both live on one phone; the name tells them apart on
   // the home screen. The store build never sets these, so its id stays as configured.
