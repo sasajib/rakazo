@@ -45,6 +45,11 @@ describe("built-in tool bridge", () => {
       "run_subagent",
       "schedule_create",
       "schedule_list",
+      "scratchpad_add",
+      "scratchpad_complete",
+      "scratchpad_list",
+      "scratchpad_remove",
+      "scratchpad_update",
       "search_history",
       "shell",
       "skill_read",
@@ -59,9 +64,9 @@ describe("built-in tool bridge", () => {
     // the history tools point at files from earlier messages; a watch says it takes no other timing;
     // read_file takes a line range; ask_user carries the content being decided about;
     // search_history lists earlier tool work by kind without a keyword.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(32_579);
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(33_853);
     expect(deferred.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["render_plot", "create_space", "generate_secret", "scratchpad_add"]),
+      expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );
   });
 
@@ -96,8 +101,8 @@ describe("built-in tool bridge", () => {
     expect(names("chart")).toContain("render_plot");
     expect(names("new space")[0]).toBe("create_space");
     expect(names("generate password")[0]).toBe("generate_secret");
-    expect(names("scratchpad add")[0]).toBe("scratchpad_add");
-    expect(names("scratchpad").length).toBe(3);
+    // the scratchpad is always listed (fork), so find_tool no longer has to be asked for it
+    expect(names("scratchpad")).toEqual([]);
     expect(findTools(deferred, { query: "zzzz" })).toMatchObject({
       tools: [],
       hint: expect.any(String),
