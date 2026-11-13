@@ -465,3 +465,14 @@ describe("group routing metadata", () => {
     expect(directory.split("</bot_groups>")).toHaveLength(2);
   });
 });
+
+describe("buildBotMessageWakePrompt on a call", () => {
+  const from = { id: "bot-2", name: "Barakah" };
+
+  it("asks for a spoken summary only while the user is on a call", () => {
+    const live = buildBotMessageWakePrompt({ from, text: "done", intent: "result", onCall: true });
+    const idle = buildBotMessageWakePrompt({ from, text: "done", intent: "result" });
+    expect(live).toContain("concise summary");
+    expect(idle).not.toContain("concise summary");
+  });
+});

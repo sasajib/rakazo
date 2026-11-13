@@ -6,6 +6,7 @@ import {
   botMessageContext,
   botMessageHopExhausted,
   buildBotMessageWakePrompt,
+  callIdFromClientNonce,
   clampBotMessage,
   nextBotMessageHop,
   resolveBotAddress,
@@ -65,6 +66,39 @@ export async function loadBotMessageContext(
         (block.intent === undefined || block.intent === "request" || block.intent === "question"),
     );
   return { ...context, repliesToRequest };
+}
+
+const LIVE_CALL_WINDOW_MS = 5 * 60_000;
+
+/**
+ * A call has no row of its own: it is the "call:<id>:" nonce on its messages, ended by a call_end
+ * run. A call counts as live while its latest message is recent and no call_end followed it.
+ */
+export async function threadHasLiveCall(
+  prisma: Pick<ExecutorDeps["prisma"], "message" | "run">,
+  threadId: string,
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    const last = await prisma.message.findFirst({
+      where: {
+        threadId,
+        clientNonce: { startsWith: "call:" },
+        createdAt: { gt: new Date(now.getTime() - LIVE_CALL_WINDOW_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { clientNonce: true },
+    });
+    const callId = callIdFromClientNonce(last?.clientNonce);
+    if (!callId) return false;
+    const ended = await prisma.run.findFirst({
+      where: { threadId, trigger: "call_end", clientNonce: { startsWith: `call:${callId}:` } },
+      select: { id: true },
+    });
+    return !ended;
+  } catch {
+    return false;
+  }
 }
 
 export async function messageBot(
@@ -141,7 +175,8 @@ export async function messageBot(
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
 
-  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent });
+  const onCall = await threadHasLiveCall(deps.prisma, targetThreadId);
+  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent, onCall });
   const outboundBlock: MessageBlock = {
     kind: "bot_message_sent",
     toBotId: target.id,

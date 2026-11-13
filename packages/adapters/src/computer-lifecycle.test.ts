@@ -2669,6 +2669,23 @@ describe("computer execution leases", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("ignores sibling runs that hold no live lease yet", async () => {
+    const prisma = leasePrisma({ scope: "team" });
+    await acquireComputerExecutionLease(prisma.client, {
+      workerId: "worker-1",
+      runFence: 1,
+      computerId: "computer-1",
+      runId: "run-1",
+      botId: "bot-1",
+      threadId: "thread-1",
+      maxSlots: 4,
+    });
+
+    // Runs claimed together are all "running" before any holds a lease; only a live lease
+    // makes a sibling a writer, or each claim sees the others and all of them back off forever.
+    expect(prisma.findFirst).not.toHaveBeenCalled();
+  });
+
   it("lets two Team bots hold leases at the same time", async () => {
     const prisma = leasePrisma({ scope: "team" });
 

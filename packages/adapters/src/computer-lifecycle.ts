@@ -926,15 +926,23 @@ export async function acquireComputerExecutionLease(
       // different slots and work on different threads; the same thread stays single-writer, so a
       // conversation, its history and its pi session are never edited from two places at once.
       if (input.threadId) {
-        const writer = await tx.run.findFirst({
-          where: {
-            threadId: input.threadId,
-            botId: input.botId,
-            id: { not: input.runId },
-            status: { in: [...QUEUE_HOLDING_RUN_STATUSES] },
-          },
-          select: { id: true },
+        // A run is writing the conversation only once it holds a live lease. Status alone cannot
+        // say: a run is marked running when claimed, before its lease, so several runs claimed
+        // together would each see the others as writers and all back off, forever.
+        const live = await tx.computerExecutionLease.findMany({
+          where: { botId: input.botId, runId: { not: input.runId }, expiresAt: { gt: new Date() } },
+          select: { runId: true },
         });
+        const writer = live.length
+          ? await tx.run.findFirst({
+              where: {
+                id: { in: live.map((lease) => lease.runId) },
+                threadId: input.threadId,
+                status: { in: [...QUEUE_HOLDING_RUN_STATUSES] },
+              },
+              select: { id: true },
+            })
+          : null;
         if (writer) throw new ComputerBusyError();
       }
       const now = new Date();

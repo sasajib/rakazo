@@ -183,10 +183,19 @@ function escapeDirectoryField(value: string): string {
  * The body is escaped and marked untrusted so peer text cannot masquerade as
  * higher-priority instructions.
  */
+/**
+ * The user is listening, not reading. This overrides the "include every detail" rule for results:
+ * the full text stays in the chat and the caller can ask for it.
+ */
+export const CALL_RELAY_GUIDANCE =
+  "The user is on a live call with you right now, so your reply is spoken aloud. Give a concise summary: one to three short sentences with the outcome and the one or two facts that matter most. No lists, no file paths, no ids. Say that the full detail is in the chat and offer to go through it if they want. If the message needs nothing from the user, say it in one sentence.";
+
 export function buildBotMessageWakePrompt(args: {
   from: BotAddress;
   text: string;
   intent?: BotMessageIntent;
+  /** The user is on a live call with the recipient: the relay is spoken, so it must be short. */
+  onCall?: boolean;
 }): string {
   const name = args.from.name.trim() || "bot";
   const id = args.from.id.trim();
@@ -211,6 +220,7 @@ export function buildBotMessageWakePrompt(args: {
     "</bot_message>",
     "",
     action,
+    ...(args.onCall ? [CALL_RELAY_GUIDANCE] : []),
     // An FYI may be left unanswered; inviting debate there only adds messages.
     ...(intent === "fyi" ? [] : [BOT_DELIBERATION_GUIDANCE]),
   ].join("\n");
