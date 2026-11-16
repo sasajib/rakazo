@@ -6,6 +6,7 @@ import { deferredToolCount } from "./lazy-tool-catalog.js";
 import { backgroundHelpersAllowed } from "./background-helpers.js";
 import { builtinAgentTools } from "./builtin.tool-definition.js";
 import { personSpeaker } from "./history-speakers.js";
+import { isUnattendedRun } from "./notice-ledger.js";
 import { promptVersion } from "./prompt-version.js";
 import type { AssembledTurn } from "./run-assembly.js";
 import type { RunExecutorServices, RunHold } from "./run-attempt.js";
@@ -265,6 +266,7 @@ function modelTurnRequest(
       // A background helper is not offered the history tools, so it gets no guidance on them.
       historyRetrievalEnabled:
         contextStrategy !== "current" && tools.some((tool) => tool.name === "search_history"),
+      historyThisChatOnly: isUnattendedRun(run.trigger),
       computerInstruction,
       pageBrowserAllowed,
       taskCatalogInstruction,

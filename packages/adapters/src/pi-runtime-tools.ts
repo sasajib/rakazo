@@ -267,6 +267,7 @@ export function describeToolActivity(
   if (toolName === "set_child_bot_model") return "Setting a bot's model";
   if (toolName === "create_child_routine") return `Scheduling routine: ${detail(record.name)}`;
   if (toolName === "remember") return "Saving a note to memory";
+  if (toolName === "standing_set") return `Updating a standing order: ${detail(record.key)}`;
   if (toolName === "save_shared_memory") return `Saving shared memory: ${detail(record.path)}`;
   if (toolName === "web_search") return `Searching the web: ${detail(record.query)}`;
   if (toolName === "web_fetch") return `Reading page: ${detail(redactActivityUrl(record.url))}`;
@@ -381,6 +382,7 @@ function toAgentTool(
     // so a sibling request cannot start after one pauses for its card and share its answer.
     ...(SCHEDULE_TOOL_NAMES.has(tool.name) ||
     tool.name === "remember" ||
+    tool.name === "standing_set" ||
     tool.name === "request_secret"
       ? { executionMode: "sequential" as const }
       : {}),
