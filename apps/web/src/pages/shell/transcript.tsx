@@ -8,6 +8,7 @@ import type {
   MessageReaction,
   ThreadMessage,
 } from "@rakazo/contracts";
+import { canReactToThreadMessage } from "@rakazo/contracts";
 import type { ChildBotBlock, FoldedTranscript } from "@rakazo/core";
 import {
   expandPeerReplies,
@@ -25,7 +26,7 @@ import {
 } from "@rakazo/core";
 import type { GroupAvatarMember } from "@rakazo/ui-web";
 import { Button, cn, Spinner } from "@rakazo/ui-web";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Check } from "lucide-react";
 import type { CSSProperties, RefObject } from "react";
 import { Fragment, memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ActiveBotGlyph } from "../../components/ai/CollaborationMarker";
@@ -234,6 +235,17 @@ export const Transcript = memo(function Transcript({
     [onJumpToMessage],
   );
   const reactionView = useMemo(() => projectMessageReactions(pageView.visibleMessages), [pageView]);
+  // Runs a person started have a message with an author; a bot message from any other run
+  // (watch event, routine, another bot) is a notification the person can tick as done.
+  const personRunIds = useMemo(
+    () =>
+      new Set(
+        pageView.visibleMessages
+          .filter((message) => message.role === "user" && message.author && message.runId)
+          .map((message) => message.runId),
+      ),
+    [pageView],
+  );
   const separateAnswers = useMemo(
     () => separateAskAnswers(reactionView.visibleMessages),
     [reactionView.visibleMessages],
@@ -682,6 +694,23 @@ export const Transcript = memo(function Transcript({
                     />
                   </div>
                 </div>
+                {!peerReceipt &&
+                message.role === "bot" &&
+                message.runId &&
+                !personRunIds.has(message.runId) &&
+                canReactToThreadMessage(message) &&
+                !messageReactions?.has("✅") ? (
+                  <button
+                    type="button"
+                    data-testid="message-tick"
+                    aria-label={t`Mark as done`}
+                    onClick={() => void onReact(message, "✅")}
+                    className="mt-1 inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-label text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <Check size={12} strokeWidth={2} />
+                    {t`Done`}
+                  </button>
+                ) : null}
                 {!peerReceipt && messageReactions ? (
                   <div
                     data-testid="message-reactions"

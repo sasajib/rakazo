@@ -1,4 +1,5 @@
 import { botMessageAllowsSilence, userTurnMessageForRun } from "@rakazo/core";
+import type { PrismaClient } from "@rakazo/db";
 import { isPartialReplyClientNonce, storedMessageBlocks } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { PARTIAL_REPLY_NOTE } from "./automated-messages.prompt.js";
@@ -11,6 +12,7 @@ import {
   neutralizeSpeakerLabels,
 } from "./history-speakers.js";
 import { loadAgentMemoryContext } from "./memory-context.js";
+import { loadRecentNotices, renderNoticeLedger } from "./notice-ledger.js";
 import { messageToAgentHistorySegments, messageToAgentHistoryText } from "./reply-context.js";
 import type { ConnectedRun, RunRecords } from "./run-assembly-records.js";
 import type { RunHold } from "./run-attempt.js";
@@ -214,9 +216,10 @@ export async function loadTurnContext(
       nonOwnerChatRun ? Promise.resolve("") : loadAgentMemoryContext(deps.memory, bot.id, context),
       nonOwnerChatRun
         ? Promise.resolve("")
-        : loadAgentScratchpadContext(deps, {
+        : loadScratchpadAndNotices(deps, {
             spaceId: run.spaceId,
             botId: bot.id,
+            threadId: thread.id,
           }),
       nonOwnerChatRun || !ticketBoardEnabled
         ? Promise.resolve(undefined)
@@ -269,3 +272,22 @@ export async function loadTurnContext(
 }
 
 export type TurnContext = Awaited<ReturnType<typeof loadTurnContext>>;
+
+/** Open scratchpad work plus what the bot already told the user (ticked or not). */
+async function loadScratchpadAndNotices(
+  deps: Parameters<typeof loadAgentScratchpadContext>[0] & { prisma: PrismaClient },
+  input: { spaceId: string; botId: string; threadId: string },
+): Promise<string | undefined> {
+  const [scratchpad, notices] = await Promise.all([
+    loadAgentScratchpadContext(deps, { spaceId: input.spaceId, botId: input.botId }),
+    loadRecentNotices(deps.prisma, {
+      threadId: input.threadId,
+      botId: input.botId,
+      now: new Date(),
+    }).catch((error) => {
+      getLogger().warn("notice ledger unavailable", error);
+      return [];
+    }),
+  ]);
+  return [scratchpad, renderNoticeLedger(notices)].filter(Boolean).join("\n\n") || undefined;
+}

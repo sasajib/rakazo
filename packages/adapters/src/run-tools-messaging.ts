@@ -7,6 +7,7 @@ import {
   redactSecrets,
   resolveBotAddress,
 } from "@rakazo/core";
+import { getLogger } from "@rakazo/logging";
 import {
   connectAgent,
   messageConnectedAgent,
@@ -17,6 +18,7 @@ import { messageBot } from "./bot-messages.js";
 import { endCallFromTool, requestUserCall } from "./call-request.js";
 import { normalizeWorkspacePath, resolveBotWorkspacePath } from "./computer-support.js";
 import { handoffToGroupBot } from "./group-handoff.js";
+import { findDuplicateNotice, isUnattendedRun, loadRecentNotices } from "./notice-ledger.js";
 import type { RunContext } from "./run-context.js";
 import {
   canPostLongTaskHeadsUp,
@@ -258,6 +260,27 @@ export const messagingTools: ToolHandlers = {
     const maxLength = messageUserMaxLength();
     const text = clampUserProgressMessage(rawMessage, maxLength);
     if (!text) return call.finish({ error: "message is required" });
+    // An unattended run (watch event, routine, another bot) must not tell the user what he was
+    // already told: refuse a near-identical message and say when it was sent.
+    if (isUnattendedRun(ctx.run.trigger)) {
+      const recent = await loadRecentNotices(ctx.deps.prisma, {
+        threadId: ctx.thread.id,
+        botId: ctx.bot.id,
+        now: new Date(),
+      }).catch(() => []);
+      const same = findDuplicateNotice(text, recent);
+      if (same) {
+        getLogger().info("notice.duplicate_suppressed", {
+          "notice.run_id": ctx.run.id,
+          "notice.earlier_message_id": same.id,
+          "notice.ticked": same.ticked,
+        });
+        return call.finish({
+          ok: true,
+          note: `Not sent: the user already got this at ${same.at.toISOString().slice(0, 16)} UTC${same.ticked ? " and marked it done" : ""}. Do not repeat it; if something is new, send only the new part.`,
+        });
+      }
+    }
     const truncated = isProgressMessageTruncated(rawMessage, maxLength);
     await flushProgress(ctx);
     // Text written before an answer to the person's mid-task message doesn't use up the

@@ -787,6 +787,26 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "standing_set",
+    description:
+      "Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry. One short entry, the user's exact values.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["rule", "decision"] },
+        key: {
+          type: "string",
+          description: "Short topic name; the same key replaces the old entry.",
+        },
+        text: {
+          type: "string",
+          description: "The rule or decision, with exact values. Empty removes it.",
+        },
+      },
+      required: ["kind", "key", "text"],
+    },
+  },
+  {
     name: "web_search",
     description:
       "Search the public web. Returns titles, URLs, and snippets. Use when you need current information or links; follow with web_fetch to read a page. Does not need a computer.",
@@ -2049,6 +2069,8 @@ export const MAX_SHARED_MEMORY_CHARS = 4_000;
 export function sharedMemorySaveError(args: Record<string, unknown>): string | undefined {
   const path = String(args.path ?? "").trim();
   if (!path) return "path is required";
+  if (path === "STANDING.md")
+    return "STANDING.md changes only through standing_set (it replaces by key).";
   const content = String(args.content ?? "");
   if (content.length > MAX_SHARED_MEMORY_CHARS) {
     return `content exceeds ${MAX_SHARED_MEMORY_CHARS} characters`;

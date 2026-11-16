@@ -5,6 +5,7 @@ import {
   MEMORY_INDEX_PATH,
 } from "@rakazo/contracts";
 import { readHistory, searchHistory } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { sharedMemorySaveError } from "./builtin.tool-definition.js";
 import { redactConnectorPayload } from "./connector-safety.js";
 import { MAX_RECALLED_MEMORIES } from "./history-compaction.prompt.js";
@@ -12,6 +13,7 @@ import { editMemory } from "./memory-tools.js";
 import type { RunContext } from "./run-context.js";
 import { markReadOutsideContent } from "./run-context.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
+import { STANDING_ORDERS_PATH, setStandingOrder } from "./standing-orders.js";
 import { argsError } from "./tool-args.js";
 
 /** Cross-chat history requires a surviving direct human request in this app thread. */
@@ -128,6 +130,63 @@ export const memoryTools: ToolHandlers = {
           context,
         );
         return call.finish({ ok: true });
+      } catch (error) {
+        if (!(error instanceof MemoryRevisionConflictError) || attempt >= 3) throw error;
+      }
+    }
+  },
+  async standing_set(ctx, call) {
+    const { deps, runId, thread, run, context } = ctx;
+    const { args } = call;
+    // Standing orders bind every bot, so only the user's own words may change them: not a watch
+    // event, a webhook, a mail or another bot (the same trust gate as cross-chat history).
+    if (!ctx.source.myChatsAllowed || (await ctx.trust.receivedOutsideMessage())) {
+      return call.finish({
+        error:
+          "Standing orders change only when the user says so himself in a direct chat or call. Tell him what you would change and let him say it.",
+      });
+    }
+    const today = new Date(run.createdAt ?? Date.now()).toISOString().slice(0, 10);
+    for (let attempt = 1; ; attempt += 1) {
+      const snapshot = await deps.memory.read(
+        { scope: "user", path: STANDING_ORDERS_PATH },
+        context,
+      );
+      const existing = snapshot.documents[0];
+      const edit = setStandingOrder(
+        existing?.content ?? "",
+        {
+          kind: String(args.kind ?? "") as "rule" | "decision",
+          key: String(args.key ?? ""),
+          text: String(args.text ?? ""),
+        },
+        today,
+      );
+      if ("error" in edit) return call.finish({ error: edit.error });
+      if (edit.action === "unchanged") return call.finish({ ok: true, note: "Already set." });
+      try {
+        await deps.memory.commit(
+          {
+            scope: "user",
+            path: STANDING_ORDERS_PATH,
+            content: edit.content,
+            expectedRevision: existing?.revision ?? 0,
+            sourceRunId: runId,
+            sourceThreadId: thread.id,
+          },
+          context,
+        );
+        getLogger().info("standing.set", {
+          "standing.key": String(args.key ?? ""),
+          "standing.action": edit.action,
+          "standing.run_id": runId,
+          ...(edit.previous ? { "standing.replaced_len": edit.previous.length } : {}),
+        });
+        return call.finish({
+          ok: true,
+          action: edit.action,
+          ...(edit.previous ? { replaced: edit.previous } : {}),
+        });
       } catch (error) {
         if (!(error instanceof MemoryRevisionConflictError) || attempt >= 3) throw error;
       }
