@@ -7,6 +7,7 @@ import {
   redactSecrets,
   resolveBotAddress,
 } from "@rakazo/core";
+import { readMessageBlocks } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import {
   connectAgent,
@@ -15,6 +16,7 @@ import {
 } from "./agent-connections.js";
 import { startBackgroundHelper } from "./background-helpers.js";
 import { messageBot } from "./bot-messages.js";
+import { CALL_END_NOT_ASKED, callEndRequested } from "./call-end-intent.js";
 import { endCallFromTool, requestUserCall } from "./call-request.js";
 import { normalizeWorkspacePath, resolveBotWorkspacePath } from "./computer-support.js";
 import { handoffToGroupBot } from "./group-handoff.js";
@@ -221,6 +223,15 @@ export const messagingTools: ToolHandlers = {
   async end_call(ctx, call) {
     const { deps, run, bot, thread } = ctx;
     const { args } = call;
+    // Only the caller ends a live call. A call_end run (the caller already hung up) just files the marker.
+    if (
+      ctx.source.voiceCall &&
+      !ctx.source.callEndRun &&
+      !callEndRequested(await callerWordsThisRun(ctx))
+    ) {
+      getLogger().info("call.end_refused", { "call.run_id": run.id });
+      return call.finish({ error: CALL_END_NOT_ASKED });
+    }
     return call.finish(
       await endCallFromTool(
         deps,
@@ -429,3 +440,25 @@ export const messagingTools: ToolHandlers = {
     return call.finish(result);
   },
 };
+
+/** What the caller said in this run: the turn that started it plus what reached it as steering. */
+async function callerWordsThisRun(ctx: RunContext): Promise<string> {
+  const words = [ctx.task.prompt];
+  try {
+    const steering = await ctx.deps.prisma.steeringMessage.findMany({
+      where: { runId: ctx.run.id },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { message: { select: { id: true, role: true, blocks: true } } },
+    });
+    for (const row of steering) {
+      const { blocks } = readMessageBlocks(row.message as never);
+      for (const block of blocks as Array<{ kind: string; text?: string }>) {
+        if (block.kind === "text" && block.text) words.push(block.text);
+      }
+    }
+  } catch {
+    // Without the steering text, fall back to the task prompt alone.
+  }
+  return words.join("\n");
+}

@@ -189,7 +189,25 @@ export const memoryTools: ToolHandlers = {
           "Standing orders change only when the user says so himself in a direct chat or call. Tell him what you would change and let him say it.",
       });
     }
-    const today = new Date(run.createdAt ?? Date.now()).toISOString().slice(0, 10);
+    let zone = "UTC";
+    try {
+      const user = await deps.prisma.user.findUnique({
+        where: { id: run.userId },
+        select: { timezone: true },
+      });
+      if (user?.timezone) zone = user.timezone;
+    } catch {
+      // The date is context only; UTC is a fine fallback.
+    }
+    const today = (() => {
+      try {
+        return new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(
+          new Date(run.createdAt ?? Date.now()),
+        );
+      } catch {
+        return new Date(run.createdAt ?? Date.now()).toISOString().slice(0, 10);
+      }
+    })();
     for (let attempt = 1; ; attempt += 1) {
       const snapshot = await deps.memory.read(
         { scope: "user", path: STANDING_ORDERS_PATH },

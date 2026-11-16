@@ -8,6 +8,8 @@ export const TALK_RUN_INSTRUCTION = [
   "If they ask for something new, say you have noted it and will pick it up as soon as the current step",
   "finishes — it is with you, not lost. Never say you cannot do it, and never claim it is done.",
   "If they ask how it is going, say briefly what you are working on; if you do not know, say so.",
+  "In this reply you have no tools at all and the work run is not yours to inspect: never call a tool, and never say a tool is",
+  "disabled, refused or failing — that is not the state of the work. Your standing orders and notes above are already in front of you; answer from them.",
 ].join(" ");
 
 /**
