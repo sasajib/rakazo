@@ -1,6 +1,6 @@
 import { createLogger, createTestSink, installLogger } from "@rakazo/logging";
 import { beforeEach, describe, expect, it } from "vitest";
-import { AGENT_MEMORY_MAX_BYTES, buildAgentMemoryPrompt } from "./memory-context.js";
+import { AGENT_MEMORY_MAX_BYTES, buildAgentMemoryPrompt } from "./memory-context.prompt.js";
 import { noteAutoContinuation, recordToolCall, resetRunAudits } from "./run-audit.js";
 import {
   buildPromptManifest,

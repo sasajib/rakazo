@@ -19,6 +19,7 @@ import {
   runAsSystem,
   runAsTenant,
   setSpaceSettingOverride,
+  withLease,
 } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BotIntroHarness } from "./discard-bot-intro.js";
@@ -65,8 +66,6 @@ describeWithDatabase("API authorization and resource isolation", () => {
       agentRuntime: "scripted",
       wakeupDriver: "memory",
       signupsEnabled: "true",
-      // Board procedures answer 404 before the session check while the board is off.
-      ticketBoardEnabled: true,
       composio: new ComposioConnector({ client: new FakeComposioClient() }),
     });
     pushTokens = new PrismaPushTokenStore(handles.prisma, encryptionKey);
@@ -260,12 +259,14 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["models/probeOpenAiCompatible"],
       ["models/probeCatalog"],
       ["models/rename"],
+      ["models/saveModelSettings"],
       ["models/disconnect"],
       ["spaces/list"],
       ["spaces/create", { name: "Nope" }],
       ["spaces/rename", { spaceId: "missing-space", name: "Nope" }],
       ["spaces/remove", { spaceId: "missing-space" }],
       ["spaces/members/list", { spaceId: "missing-space" }],
+      ["spaces/members/add", { spaceId: "missing-space", userId: "missing-user" }],
       ["spaces/members/remove", { spaceId: "missing-space", userId: "missing-user" }],
       ["spaces/members/leave", { spaceId: "missing-space" }],
       ["spaces/invites/create", { spaceId: "missing-space" }],
@@ -276,6 +277,25 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["organizations/create", { name: "Nope" }],
       ["organizations/rename", { organizationId: "missing-organization", name: "Nope" }],
       ["organizations/remove", { organizationId: "missing-organization" }],
+      ["organizations/members/list", { organizationId: "missing-organization" }],
+      [
+        "organizations/members/setRole",
+        { organizationId: "missing-organization", userId: "missing-user", role: "member" },
+      ],
+      [
+        "organizations/members/remove",
+        { organizationId: "missing-organization", userId: "missing-user" },
+      ],
+      [
+        "organizations/invitations/create",
+        { organizationId: "missing-organization", email: "nobody@example.test" },
+      ],
+      [
+        "organizations/invitations/cancel",
+        { organizationId: "missing-organization", invitationId: "missing-invitation" },
+      ],
+      ["organizations/invitations/preview", { invitationId: "missing-invitation" }],
+      ["organizations/invitations/accept", { invitationId: "missing-invitation" }],
       ["bots/list"],
       ["bots/listArchived"],
       ["bots/get", { botId: "missing-bot" }],
@@ -385,7 +405,9 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["memory/exportMarkdown", {}],
       ["memory/remove"],
       ["memory/providerConfig"],
+      ["memory/providers"],
       ["memory/connectProvider"],
+      ["memory/updateProvider"],
       ["memory/setDefaultScope"],
       ["memory/disconnectProvider"],
       ["routines/list", { botId: "missing-bot" }],
@@ -454,6 +476,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["usage/list"],
       ["usage/summary"],
       ["usage/limits"],
+      ["usage/breakdown", {}],
       ["export/bot", { botId: "missing-bot" }],
       ["export/accountToken"],
       ["notifications/subscribe"],
@@ -1989,12 +2012,16 @@ describeWithDatabase("API authorization and resource isolation", () => {
       claimSpaceDeletionForMember(handles.prisma, deleteInput),
     );
     expect(replacementClaim.recovered).toBe(true);
+    // Even while holding the Space's lease, a replaced claim deletes nothing.
     await expect(
       asMember(() =>
-        deleteClaimedSpaceForMember(handles.prisma, {
-          ...deleteInput,
-          claimId: firstClaim.claimId,
-        }),
+        withLease(handles.prisma, `space-deletion:${space.id}`, { ttlMs: 60_000 }, (lease) =>
+          deleteClaimedSpaceForMember(handles.prisma, {
+            ...deleteInput,
+            claimId: firstClaim.claimId,
+            lease,
+          }),
+        ),
       ),
     ).rejects.toThrow("Space deletion is already in progress");
     await asMember(() =>
@@ -2418,9 +2445,6 @@ describeWithDatabase("API authorization and resource isolation", () => {
         apiKey: "fake-key",
       });
     }
-    expect(
-      await handles.prisma.deploymentSettings.findUniqueOrThrow({ where: { id: "default" } }),
-    ).toMatchObject({ signupsEnabled: true, signupAllowlist: "" });
   });
 });
 

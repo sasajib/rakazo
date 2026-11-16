@@ -1,3 +1,4 @@
+import { bestEffort } from "@rakazo/logging";
 import { logHonchoFailure } from "./honcho-request-log.js";
 import type { LocalServiceConnection } from "./local-service-endpoint.js";
 import { fetchLocalService } from "./local-service-endpoint.js";
@@ -107,7 +108,7 @@ async function honchoRequest(
     };
   }
   if (!response.ok || !options.readJson) {
-    await response.body?.cancel().catch(() => undefined);
+    await bestEffort("cancel unread response body", response.body?.cancel());
     if (response.status === 404 && options.allowNotFound) return { ok: true, value: null };
     if (!response.ok) failed("http", response.status);
     return response.ok

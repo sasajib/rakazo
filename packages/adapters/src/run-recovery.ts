@@ -1,9 +1,4 @@
-import {
-  BACKGROUND_HELPER_TRIGGER,
-  botConcurrency,
-  isTerminal,
-  TALK_RUN_TRIGGER,
-} from "@rakazo/core";
+import { BACKGROUND_HELPER_TRIGGER, isTerminal, TALK_RUN_TRIGGER } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { expireComputerExecutionLeases } from "@rakazo/db";
 import { EXECUTION_LEASE_MS } from "./computer-lifecycle.js";
@@ -42,19 +37,20 @@ export async function findRunRecoveryBlockers(
   }
   const blockers = new Map<string, string>();
   for (const run of runs) {
-    // Neither a background helper nor a talk run takes the computer, so the bot's own turn does
-    // not hold either one.
+    // Ordinary runs claim the computer only on first use. Only a held takeover still needs the
+    // dispatcher to arrange a release before a new run starts. Neither a background helper nor a
+    // talk run takes the computer, so the bot's own turn does not hold either one.
     if (run.trigger === BACKGROUND_HELPER_TRIGGER || run.trigger === TALK_RUN_TRIGGER) continue;
     const held = leases.filter(
       (lease) =>
         lease.botId === run.botId &&
         lease.computerId === run.bot?.computerId &&
         lease.runId !== run.id &&
+        lease.expiresAt.getTime() > now.getTime() + 2 * EXECUTION_LEASE_MS &&
         !abandoned.has(lease.runId),
     );
-    // A bot with more slots than its live leases can start this run: only a full bot is blocked.
-    if (held.length < botConcurrency(run.bot?.concurrency)) continue;
-    blockers.set(run.id, held[0]?.runId ?? run.id);
+    // A takeover holds the whole computer, whatever the bot's concurrency.
+    if (held.length > 0) blockers.set(run.id, held[0]?.runId ?? run.id);
   }
   return blockers;
 }

@@ -12,6 +12,7 @@ import {
 import { Search, SlidersHorizontal } from "lucide-react";
 import type { ReactNode, UIEvent } from "react";
 import { useState } from "react";
+import { CreateOrganizationDialog } from "../../components/CreateOrganizationDialog";
 import { InviteDialog } from "../../components/InviteDialog";
 import { PasskeyOffer } from "../../components/PasskeyOffer";
 import { useUsageHint } from "../../components/PlanUsage";
@@ -79,7 +80,7 @@ export function ShellSidebar({
   archived,
   footerLogos,
   user,
-  ticketBoardEnabled,
+  boardEnabled,
   navLinks,
   openSettings,
   openIntegrations,
@@ -109,7 +110,7 @@ export function ShellSidebar({
   archived: ReactNode;
   footerLogos: Array<{ name: string; logo?: string | null }>;
   user: User | undefined;
-  ticketBoardEnabled: boolean;
+  boardEnabled: boolean;
   navLinks: NavLink[];
   openSettings: (section: SettingsSection) => void;
   openIntegrations: () => void;
@@ -310,7 +311,7 @@ export function ShellSidebar({
           mini={mini}
           logos={footerLogos}
           user={user}
-          ticketBoardEnabled={ticketBoardEnabled}
+          boardEnabled={boardEnabled}
           navLinks={navLinks}
           closeMobileSidebar={() => setMobileOpen(false)}
           navigate={navigate}
@@ -328,7 +329,7 @@ function ShellSidebarFooter({
   mini,
   logos,
   user,
-  ticketBoardEnabled,
+  boardEnabled,
   navLinks,
   closeMobileSidebar,
   navigate,
@@ -340,7 +341,7 @@ function ShellSidebarFooter({
   mini: boolean;
   logos: Array<{ name: string; logo?: string | null }>;
   user: User | undefined;
-  ticketBoardEnabled: boolean;
+  boardEnabled: boolean;
   navLinks: NavLink[];
   closeMobileSidebar: () => void;
   navigate: (path: string) => void;
@@ -362,6 +363,7 @@ function ShellSidebarFooter({
   const usage = useUsageHint();
   const [menuOpen, setMenuOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [creatingOrganization, setCreatingOrganization] = useState(false);
   const referral = billing?.referral;
   const [logOutError, setLogOutError] = useState<string | null>(null);
   const { signingOut, logOut } = useSignOut("/sign-in", (message) => {
@@ -406,7 +408,7 @@ function ShellSidebarFooter({
           openSkills();
         }}
         onBoard={
-          ticketBoardEnabled
+          boardEnabled
             ? () => {
                 setMenuOpen(false);
                 closeMobileSidebar();
@@ -455,6 +457,15 @@ function ShellSidebarFooter({
           if (organization.id !== activeOrganizationId)
             void switchOrganization(userId, organization, openSpaceChat);
         }}
+        onCreateOrganization={() => {
+          setMenuOpen(false);
+          setCreatingOrganization(true);
+        }}
+      />
+      <CreateOrganizationDialog
+        open={creatingOrganization}
+        onOpenChange={setCreatingOrganization}
+        openSpaceChat={openSpaceChat}
       />
       {referral ? (
         <InviteDialog referral={referral} open={inviteOpen} onOpenChange={setInviteOpen} />

@@ -17,7 +17,6 @@ import {
   clipboard,
   desktopCapturer,
   dialog,
-  ipcMain,
   nativeImage,
   net,
   powerMonitor,
@@ -26,31 +25,25 @@ import {
   shell,
   systemPreferences,
 } from "electron";
-import { fromAppFrame } from "./app-frame.js";
 import { applicationMenuInstaller, installUpdate } from "./app-menu.js";
 import { createAppOpener } from "./app-opener.js";
 import {
   createWindow,
   developmentIcon,
-  fromMainWindow,
-  handleOnlyFrom,
   installBundledRenderer,
   markOnce,
   PROBE_TIMEOUT_MS,
-  permissionTarget,
   probeDocument,
   remoteServerOrigin,
   resolveSessionForTarget,
   ServerUnavailable,
-  safeOrigin,
-  windowFrom,
 } from "./app-window.js";
 import type { ElectronAutoUpdater } from "./auto-update.js";
 import { DesktopUpdateController } from "./auto-update.js";
 import { createBadgeHandler } from "./badge.js";
 import { openBrowserAuth } from "./browser-auth.js";
 import { createClipboardHandler } from "./clipboard.js";
-import { appWindowTargets, desktop } from "./desktop-state.js";
+import { appWindowTargets, desktop, permissionTarget } from "./desktop-state.js";
 import { launchDockerApp, resolveDockerBinary, runDocker } from "./docker-cli.js";
 import type { StackChoice } from "./docker-move.js";
 import {
@@ -59,6 +52,7 @@ import {
   moveAccepted,
   moveDockerStack,
   readStackChoice,
+  settleStackWhenNeeded,
   stackExists,
   writeStackChoice,
 } from "./docker-move.js";
@@ -69,6 +63,8 @@ import {
   screenDriverRelease,
 } from "./host-screen.js";
 import { createLocaleHandler, errorDetail, startDesktopLocale, t, withDetail } from "./i18n.js";
+import type { IpcCaller } from "./ipc.js";
+import { handleIpc, sentFrom } from "./ipc.js";
 import { verifyDownloadedLinuxUpdate } from "./linux-update-signature.js";
 import { createLocalComputerChoice, saveLocalComputerHost } from "./local-settings.js";
 import {
@@ -80,6 +76,7 @@ import {
   stackDir,
   stackResourceDir,
 } from "./local-stack.js";
+import type { ServerBundle } from "./mac-runtime.js";
 import { nativeStackEligible, readServerBundle } from "./mac-runtime.js";
 import {
   configureDesktopMonitoring,
@@ -107,8 +104,11 @@ import {
 } from "./setup-config.js";
 import { clearSetup, readSetup, readUiLocale, writeSetup, writeUiLocale } from "./setup-store.js";
 import { destroySetupWindow, registerSetupIpc, showSetupWindow } from "./setup-window.js";
+import { StackStopMenuAvailability, stopStackLeftBehind } from "./stop-local-stack.js";
 import { createSystemSpeech } from "./system-speech.js";
 import { createUserDeviceAccess, deviceName } from "./user-device.js";
+import { registerWindowControls } from "./window-controls.js";
+import { isMcpOAuthServerId, mcpOAuthPartition } from "./window-open.js";
 
 process.setSourceMapsEnabled(true);
 installDesktopEarlyErrorReporting();
@@ -121,8 +121,6 @@ let monitoringSession: Session | undefined;
 let monitoringTargetUrl: string | undefined;
 let stopMonitoringSession: (() => void) | undefined;
 const appOpener = createAppOpener(openAppOnce);
-/** Prior app window kept until setup is persisted (or the switch is abandoned). */
-let pendingPreviousWindow: BrowserWindow | null = null;
 const reportsErrors = desktopReportsErrors(app.isPackaged);
 const updaterEnvironment = {
   // A `--dir` build has no update feed to read.
@@ -231,7 +229,6 @@ async function probeServer(
  */
 async function offerDockerMove(userStackDir: string): Promise<StackChoice> {
   if (
-    desktop.currentSetup?.mode !== "new" ||
     !(await dockerRunning({
       stackDir: userStackDir,
       platform: process.platform,
@@ -241,14 +238,20 @@ async function offerDockerMove(userStackDir: string): Promise<StackChoice> {
     }))
   )
     return "docker";
-  const { response } = await dialog.showMessageBox({
+  const options: Electron.MessageBoxOptions = {
     type: "question",
     message: t("Run Rakazo without Docker?"),
     detail: t("Your bots and data move over. Docker is stopped, not removed."),
     buttons: [t("Move"), t("Keep Docker")],
     defaultId: 0,
     cancelId: 1,
-  });
+  };
+  // Asked from setup, the sheet keeps setup from moving on until it is answered.
+  const setup =
+    desktop.setupWindow !== null && !desktop.setupWindow.isDestroyed() ? desktop.setupWindow : null;
+  const { response } = await (setup
+    ? dialog.showMessageBox(setup, options)
+    : dialog.showMessageBox(options));
   const choice = response === 0 ? "native" : "docker";
   try {
     await writeStackChoice(userStackDir, choice);
@@ -356,6 +359,9 @@ async function openAppOnce(targetUrl: string, switching: boolean) {
     );
     const created = createWindow(targetUrl, target.partition);
     win = created.win;
+    // Kept until the caller commits (after setup.json is written) or the switch is abandoned.
+    desktop.replacedAppWindow =
+      previous !== null && !previous.isDestroyed() && previous !== win ? previous : null;
     // On launch the window stays up: the web app shows its own loading, reconnecting or error
     // screen and recovers from it. Switching to a server that is not ready keeps the previous one.
     const state = await created.loaded;
@@ -374,17 +380,15 @@ async function openAppOnce(targetUrl: string, switching: boolean) {
     desktop.currentTargetUrl = targetUrl;
     activateDesktopMonitoring(targetUrl, target.value);
     desktop.setupError = null;
-    // Keep the previous window until the caller commits (after setup.json is written).
-    pendingPreviousWindow =
-      previous !== null && !previous.isDestroyed() && previous !== win ? previous : null;
-    if (pendingPreviousWindow !== null) pendingPreviousWindow.hide();
+    if (desktop.replacedAppWindow !== null && !desktop.replacedAppWindow.isDestroyed())
+      desktop.replacedAppWindow.hide();
     return true;
   } catch (error) {
     const closed = win?.isDestroyed() === true;
     if (!closed && !(error instanceof ServerUnavailable)) {
       reportDesktopError(error, "desktop.startup");
     }
-    pendingPreviousWindow = null;
+    desktop.replacedAppWindow = null;
     // Keep the previous app window so Cancel / close can restore it.
     if (previous !== null && !previous.isDestroyed()) desktop.mainWindow = previous;
     // Closing the window while it loads is the user leaving, not a failure to explain.
@@ -452,8 +456,8 @@ function deviceTokenCipher() {
 /** Drop the previous app window after the new server is opened and persisted. */
 function commitPendingAppSwitch() {
   syncHostComputerAccess();
-  const previous = pendingPreviousWindow;
-  pendingPreviousWindow = null;
+  const previous = desktop.replacedAppWindow;
+  desktop.replacedAppWindow = null;
   if (previous !== null && !previous.isDestroyed() && previous !== desktop.mainWindow)
     previous.destroy();
 }
@@ -465,8 +469,8 @@ function abandonPendingAppSwitch(
   previousSetup: DesktopSetup | null,
   previousUrl: string | null,
 ): "restored" | "kept" {
-  const previous = pendingPreviousWindow;
-  pendingPreviousWindow = null;
+  const previous = desktop.replacedAppWindow;
+  desktop.replacedAppWindow = null;
   if (previous !== null && !previous.isDestroyed()) {
     const failed = desktop.mainWindow;
     if (failed !== null && !failed.isDestroyed() && failed !== previous) failed.destroy();
@@ -642,10 +646,15 @@ app.whenReady().then(async () => {
   const probe = (url: string, signal: AbortSignal, token: string) =>
     probeManagedStack(url, token, signal);
   const randomHex = (bytes: number) => randomBytes(bytes).toString("hex");
+  // Must exist before the stack controller: its lifecycle transitions refresh the stop item.
+  const stopStackMenu = new StackStopMenuAvailability(() => installApplicationMenu());
   const onState = (state: DesktopLocalStackState) => {
     if (desktop.setupWindow !== null && !desktop.setupWindow.isDestroyed()) {
       desktop.setupWindow.webContents.send("desktop.setup.stack.changed", state);
     }
+    // A stack can start or stop without a server switch; its phase transitions refresh
+    // the stop item.
+    stopStackMenu.stackChanged(state.phase);
   };
   const serverBundle = nativeStackEligible({
     platform: process.platform,
@@ -658,21 +667,16 @@ app.whenReady().then(async () => {
         override: process.env.RAKAZO_SERVER_BUNDLE,
       })
     : null;
-  const stacks = stackExists(userStackDir, existsSync);
-  // Installed but not running keeps the Docker path; no Docker at all leaves nothing to keep.
-  const dockerInstalled = resolveDockerBinary(process.platform, process.env, existsSync) !== null;
-  let choice = chooseStack({
-    eligible: serverBundle !== null,
-    ...stacks,
-    dockerInstalled,
+  // Read again when the choice is settled later: Docker or either stack may have changed since.
+  const stackFacts = async () => ({
+    ...stackExists(userStackDir, existsSync),
+    // Installed but not running keeps the Docker path; no Docker at all leaves nothing to keep.
+    dockerInstalled: resolveDockerBinary(process.platform, process.env, existsSync) !== null,
     choice: await readStackChoice(userStackDir),
   });
-  if (choice === "ask") choice = await offerDockerMove(userStackDir);
-  const moving = moveAccepted({
-    ...stacks,
-    dockerInstalled,
-    choice: await readStackChoice(userStackDir),
-  });
+  const decideStack = async () =>
+    chooseStack({ eligible: serverBundle !== null, ...(await stackFacts()) });
+  const choice = await decideStack();
   const moveDeps = {
     stackDir: userStackDir,
     platform: process.platform,
@@ -681,26 +685,30 @@ app.whenReady().then(async () => {
     run: runDocker,
     sleep: defaultSleep,
   };
+  const nativeStack = async (bundle: ServerBundle) => {
+    const moving = moveAccepted(await stackFacts());
+    return new NativeStackController({
+      hostComputer: desktop.hostComputer?.connection,
+      stackDir: userStackDir,
+      resourceDir,
+      localWebUrl,
+      imageTag,
+      serverBundle: bundle,
+      nodeBinary: process.execPath,
+      env: process.env,
+      uid: process.getuid?.() ?? 0,
+      run: runDocker,
+      fetch: (url, init) => net.fetch(url, { ...init, bypassCustomProtocolHandlers: true }),
+      exists: existsSync,
+      probe,
+      randomHex,
+      onState,
+      importFromDocker: moving ? (target) => moveDockerStack(moveDeps, target) : undefined,
+    });
+  };
   desktop.localStack =
     choice === "native" && serverBundle !== null
-      ? new NativeStackController({
-          hostComputer: desktop.hostComputer?.connection,
-          stackDir: userStackDir,
-          resourceDir,
-          localWebUrl,
-          imageTag,
-          serverBundle,
-          nodeBinary: process.execPath,
-          env: process.env,
-          uid: process.getuid?.() ?? 0,
-          run: runDocker,
-          fetch: (url, init) => net.fetch(url, { ...init, bypassCustomProtocolHandlers: true }),
-          exists: existsSync,
-          probe,
-          randomHex,
-          onState,
-          importFromDocker: moving ? (target) => moveDockerStack(moveDeps, target) : undefined,
-        })
+      ? await nativeStack(serverBundle)
       : new LocalStackController({
           hostComputer: desktop.hostComputer?.connection,
           platform: process.platform,
@@ -715,7 +723,21 @@ app.whenReady().then(async () => {
           probe,
           randomHex,
           onState,
+          // A confirmed reuse changes no phase; the menu must hear about it separately.
+          onReuseConfirmed: () => stopStackMenu.reuseConfirmed(),
         });
+  const settleLocalStack = settleStackWhenNeeded(
+    choice,
+    async () => {
+      const settled = await decideStack();
+      return settled === "ask" ? offerDockerMove(userStackDir) : settled;
+    },
+    async (settled) => {
+      if (settled === "native" && serverBundle !== null)
+        desktop.localStack = await nativeStack(serverBundle);
+    },
+  );
+  if (desktop.currentSetup?.mode === "new") await settleLocalStack();
   const target = resolveStartupTarget({
     envUrl: process.env.RAKAZO_WEB_URL,
     saved: desktop.currentSetup,
@@ -741,9 +763,8 @@ app.whenReady().then(async () => {
     browserAuthAttempts.clear();
   };
   app.on("before-quit", cancelBrowserAuth);
-  ipcMain.handle("desktop.oauth.open", async (event, url: unknown) => {
-    if (!fromAppFrame(permissionTarget(), event) || typeof url !== "string" || url.length > 16_384)
-      throw new Error("Invalid sign-in request.");
+  handleIpc("desktop.oauth.open", async (event, url) => {
+    if (typeof url !== "string" || url.length > 16_384) throw new Error("Invalid sign-in request.");
     if (browserAuthAttempts.has(url) || browserAuthAttempts.size >= 8) {
       throw new Error(t("A sign-in attempt is already active. Cancel it and retry."));
     }
@@ -778,17 +799,29 @@ app.whenReady().then(async () => {
       throw new Error(t("Could not open browser sign-in. Close other sign-in attempts and retry."));
     }
   });
-  ipcMain.handle("desktop.oauth.cancel", (event, url: unknown) => {
-    if (!fromAppFrame(permissionTarget(), event) || typeof url !== "string") return;
-    browserAuthAttempts.get(url)?.abort();
+  handleIpc("desktop.oauth.cancel", (_event, url) => {
+    if (typeof url === "string") browserAuthAttempts.get(url)?.abort();
   });
-  const isManagedComputerRequest = (event: Electron.IpcMainInvokeEvent) =>
-    fromMainWindow(event) &&
-    event.senderFrame === event.sender.mainFrame &&
+  // Signing an MCP server in again with another account starts from an empty
+  // browser: no cookies, no cached login pages, no stored site data.
+  handleIpc("desktop.mcpBrowser.clear", async (_event, serverId) => {
+    const target = permissionTarget();
+    if (!target || !isMcpOAuthServerId(serverId))
+      throw new Error("Invalid sign-in browser request.");
+    const browser = session.fromPartition(mcpOAuthPartition(target.url, serverId));
+    await Promise.all([
+      browser.clearStorageData(),
+      browser.clearCache(),
+      browser.clearAuthCache(),
+      browser.clearCodeCaches({}),
+    ]);
+  });
+  /** Asked again after each wait: the window may have moved to another server meanwhile. */
+  const isManagedComputerRequest = (event: IpcCaller) =>
+    sentFrom("app", event) &&
     desktop.currentSetup?.mode === "new" &&
-    appWindowTargets.get(desktop.mainWindow!) === desktop.localStack.webUrl() &&
-    safeOrigin(event.senderFrame.url) === safeOrigin(desktop.localStack.webUrl());
-  ipcMain.handle("desktop.computer.requestAccess", async (event) => {
+    appWindowTargets.get(desktop.mainWindow!) === desktop.localStack.webUrl();
+  handleIpc("desktop.computer.requestAccess", async (event) => {
     if (!isManagedComputerRequest(event) || !desktop.hostComputer)
       throw new Error(t("Local computer access requires an app-managed local instance."));
     if (requestingComputerAccess) return false;
@@ -820,41 +853,30 @@ app.whenReady().then(async () => {
       requestingComputerAccess = false;
     }
   });
-  ipcMain.handle("desktop.computer.revokeAccess", async (event) => {
+  handleIpc("desktop.computer.revokeAccess", async (event) => {
     if (isManagedComputerRequest(event)) await revokeLocalComputerAccess();
   });
-  /** The remote server's own page in the app window, never a frame or another window. */
-  const remoteDeviceOrigin = (event: Electron.IpcMainInvokeEvent) => {
-    const origin = remoteServerOrigin();
-    return fromMainWindow(event) &&
-      event.senderFrame === event.sender.mainFrame &&
-      origin !== null &&
-      safeOrigin(event.senderFrame.url) === origin
-      ? origin
-      : null;
-  };
+  /** The remote server the app window shows; null for the local stack, or once the window moved on. */
+  const remoteDeviceOrigin = (event: IpcCaller) =>
+    sentFrom("app", event) ? remoteServerOrigin() : null;
   const deviceState = async (origin: string | null): Promise<RakazoDesktopDevice | null> => {
     const state = origin === null ? null : desktop.userDevices?.state(origin);
     return state ? { ...state, name: await deviceName() } : null;
   };
-  ipcMain.handle("desktop.device.state", (event) => deviceState(remoteDeviceOrigin(event)));
-  ipcMain.handle("desktop.device.setAllowed", async (event, allowed: unknown) => {
+  handleIpc("desktop.device.state", (event) => deviceState(remoteDeviceOrigin(event)));
+  handleIpc("desktop.device.setAllowed", async (event, allowed) => {
     const origin = remoteDeviceOrigin(event);
     if (origin === null || typeof allowed !== "boolean") return null;
     await desktop.userDevices?.setAllowed(origin, allowed);
     return deviceState(remoteDeviceOrigin(event));
   });
-  ipcMain.handle(
+  handleIpc(
     "desktop.locale.set",
-    createLocaleHandler(
-      permissionTarget,
-      (locale) => writeUiLocale(userDataDir, locale),
-      installApplicationMenu,
-    ),
+    createLocaleHandler((locale) => writeUiLocale(userDataDir, locale), installApplicationMenu),
   );
-  ipcMain.handle(
+  handleIpc(
     "desktop.badge.set",
-    createBadgeHandler(permissionTarget, (count) => app.setBadgeCount(count)),
+    createBadgeHandler((count) => app.setBadgeCount(count)),
   );
   if (process.platform === "darwin") {
     // Installed builds ship the helper as an extra resource; `pnpm build` compiles it for development.
@@ -864,62 +886,27 @@ app.whenReady().then(async () => {
     const speech = createSystemSpeech(permissionTarget, (language) =>
       spawn(helper, [language], { stdio: "pipe" }),
     );
-    ipcMain.handle("desktop.speech.start", (event, language: unknown, session: unknown) =>
+    handleIpc("desktop.speech.start", (event, language, session) =>
       speech.start(event, language, session),
     );
-    ipcMain.handle("desktop.speech.stop", (event, session: unknown) => speech.stop(event, session));
-    ipcMain.handle("desktop.speech.abort", (event, session: unknown) =>
-      speech.abort(event, session),
-    );
+    handleIpc("desktop.speech.stop", (event, session) => speech.stop(event, session));
+    handleIpc("desktop.speech.abort", (event, session) => speech.abort(event, session));
   }
-  ipcMain.handle(
+  handleIpc(
     "desktop.clipboard.write",
     createClipboardHandler(permissionTarget, (text) => clipboard.writeText(text)),
   );
-  ipcMain.handle("desktop.platform", () => process.platform);
-  ipcMain.handle("desktop.passkeys.rpIds", () => passkeyRpIds);
-  ipcMain.handle("desktop.monitoring.enabled", () => reportsErrors);
-  handleOnlyFrom(fromMainWindow, "desktop.server.change", () => {
+  handleIpc("desktop.passkeys.rpIds", () => passkeyRpIds);
+  handleIpc("desktop.monitoring.enabled", () => reportsErrors);
+  handleIpc("desktop.server.change", () => {
     showSetupWindow();
   });
-  ipcMain.handle("desktop.window.close", (event) => {
-    windowFrom(event)?.close();
-  });
-  ipcMain.handle("desktop.window.minimize", (event) => {
-    windowFrom(event)?.minimize();
-  });
-  ipcMain.handle("desktop.window.toggleMaximize", (event) => {
-    const win = windowFrom(event);
-    if (!win) return;
-    if (win.isMaximized() || win.isFullScreen()) {
-      win.setFullScreen(false);
-      if (win.isMaximized()) win.unmaximize();
-    } else {
-      win.maximize();
-    }
-  });
-  ipcMain.handle("desktop.window.state", (event) => {
-    const win = windowFrom(event);
-    return {
-      minimized: win?.isMinimized() ?? false,
-      maximized: win?.isMaximized() ?? false,
-      fullScreen: win?.isFullScreen() ?? false,
-    };
-  });
-  ipcMain.handle("desktop.update.state", () => desktop.desktopUpdater.state());
-  ipcMain.handle("desktop.update.check", (event) =>
-    fromAppFrame(permissionTarget(), event)
-      ? desktop.desktopUpdater.check(true)
-      : desktop.desktopUpdater.state(),
-  );
-  ipcMain.handle("desktop.update.download", (event) =>
-    fromAppFrame(permissionTarget(), event)
-      ? desktop.desktopUpdater.download()
-      : desktop.desktopUpdater.state(),
-  );
-  ipcMain.handle("desktop.update.install", (event) =>
-    fromAppFrame(permissionTarget(), event) ? installUpdate() : desktop.desktopUpdater.state(),
-  );
+  registerWindowControls();
+  const updateState = () => desktop.desktopUpdater.state();
+  handleIpc("desktop.update.state", updateState, updateState);
+  handleIpc("desktop.update.check", () => desktop.desktopUpdater.check(true), updateState);
+  handleIpc("desktop.update.download", () => desktop.desktopUpdater.download(), updateState);
+  handleIpc("desktop.update.install", () => installUpdate(), updateState);
   registerSetupIpc({
     userDataDir,
     appOpener,
@@ -929,6 +916,15 @@ app.whenReady().then(async () => {
     commitPendingAppSwitch,
     abandonPendingAppSwitch,
     recoverFromCrashedSave,
+    stopStackLeftBehind: (previousMode) =>
+      stopStackLeftBehind({
+        mode: desktop.currentSetup?.mode,
+        serverUrl: desktop.currentSetup?.serverUrl,
+        previousMode,
+        stack: desktop.localStack,
+        rebuildMenu: () => installApplicationMenu(),
+      }),
+    settleLocalStack,
   });
 
   // Register before startup awaits so macOS dock clicks during probe/open are handled.

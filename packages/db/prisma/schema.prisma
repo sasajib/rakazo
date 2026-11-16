@@ -36,6 +36,8 @@ model User {
   signupUtmContent             String?
   signupUtmTerm                String?
   signupReferringDomain        String?
+  /// The partner program click this account signed up from; its organizations' plan payments credit that partner.
+  signupPartnerClickId         String?
   image                       String?
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
@@ -47,6 +49,8 @@ model User {
   /// The app language last chosen, such as "es" or "pt-BR". Null until an app reports it;
   /// emails then follow the language of the browser that asked for them.
   locale                      String?
+  /// Labs features this person turned on, by contracts' LabFeature id. Unknown ids are ignored.
+  labs                        String[]                     @default([])
   marketingEmailOptOutAt      DateTime?
   /// When an organization this person owns first subscribed; uses up every trial kind.
   billingTrialUsedAt          DateTime?
@@ -307,8 +311,8 @@ model Passkey {
   @@map("passkey")
 }
 
-// Directory provisioning (SCIM 2.0), owned by the auth library's SCIM plugin. Field names and
-// types must match the plugin's schema; the plugin reads and writes these tables directly.
+// Directory provisioning (SCIM 2.0), owned by the auth library's SCIM plugin, which reads and
+// writes these tables directly; a test in packages/auth compares them with its schema.
 
 model ScimConnectionBinding {
   id                              String    @id
@@ -535,6 +539,23 @@ model Referral {
 
   @@index([referrerOrganizationId])
   @@map("referrals")
+}
+
+/// A plan payment reported to the partner program, so each is reported, and refunded, once.
+/// Kept by billing customer, not organization: a refund after the account is deleted must still
+/// withdraw the commission.
+model PartnerSale {
+  invoiceId  String    @id
+  customerId       String
+  /// When the provider created the invoice, so a later refund check reads back far enough.
+  invoiceCreatedAt DateTime
+  createdAt        DateTime  @default(now())
+  /// When the sale was sent, set just before sending; cleared when the send failed so it is retried.
+  reportedAt       DateTime?
+  refundedAt       DateTime?
+
+  @@index([customerId])
+  @@map("partner_sales")
 }
 
 model AccessGrant {
@@ -782,9 +803,6 @@ model DeploymentSettings {
   id                              String   @id @default("default")
   /// Deprecated: retained for rolling-release compatibility; never authorizes app users.
   ownerUserId                     String?
-  signupsEnabled                  Boolean  @default(true)
-  signupAllowlist                 String   @default("")
-  signupPolicyInitialized         Boolean  @default(false)
   defaultModelProvider            String?
   defaultModelId                  String?
   deploymentModelCredentialCipher String?
@@ -1273,6 +1291,10 @@ model Run {
   leaseOwner           String?
   leaseFence           Int               @default(0)
   leaseExpiresAt       DateTime?
+  // Set when the current worker claims the computer; reset on a new attempt.
+  computerUseStartedAt DateTime?
+  // Original run for delegated work; authorization is recovered from its user message.
+  delegatedFromRunId   String?
   checkpoint           String?
   clientNonce          String?
   sourceMessageId      String?
@@ -1381,6 +1403,7 @@ model CloudAgent {
   generation          Int      @default(0)
   wakeGeneration      Int      @default(-1)
   version             Int      @default(0)
+  /// Kept only for the previous release, which claims the row instead of taking the agent's lease.
   leaseToken          String?
   leaseExpiresAt      DateTime?
   nextPollAt          DateTime? @default(now())
@@ -1677,7 +1700,7 @@ model AgentImport {
   @@map("agent_imports")
 }
 
-/// Claude Agent Skills: SKILL.md recipes shared across assistants (not per-bot).
+/// Skills: reusable how-to recipes shared across bots (not per-bot).
 /// Distinct from TaughtSkill (demo/record playbooks).
 model AgentSkill {
   id          String   @id @default(cuid())
@@ -1859,10 +1882,6 @@ model Computer {
   /// The person holding user control. A Space's members share its computers, never a lease.
   controlUserId           String?
   controlFence            Int                      @default(0)
-  executionRunId          String?
-  executionBotId          String?
-  executionLeaseExpiresAt DateTime?
-  executionFence          Int                      @default(0)
   screenUrl               String?
   /// When the computer last started running; bounds how long it can stay up in one stretch.
   runningSince            DateTime?
@@ -1884,7 +1903,8 @@ model Computer {
 }
 
 /// Hosted billing only: a stopped computer whose saved home is due for deletion after its plan
-/// ended or it went unused. `claimId` leases the row to one process while it emails.
+/// ended or it went unused. `claimId` is kept only for the previous release, which claims the row
+/// while it emails instead of taking the organization's lease.
 model HomeDeletionNotice {
   computerId     String    @id
   computer       Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
@@ -1897,6 +1917,17 @@ model HomeDeletionNotice {
   createdAt      DateTime  @default(now())
 
   @@map("home_deletion_notices")
+}
+
+/// One holder at a time for long work across processes. `withLease` in packages/db/src/leases.ts
+/// is the only writer. A release deletes its row; `fence` comes from `leases_fence_seq`, so a key's
+/// next holder always outranks every earlier one.
+model Lease {
+  key       String   @id
+  fence     BigInt
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@map("leases")
 }
 
 /// One stretch a computer ran at its provider, from `computers.runningSince` until it stopped,
@@ -2581,6 +2612,10 @@ model ModelCreditAccount {
   balanceMicros         BigInt             @default(0)
   pendingCreditCheckout Boolean            @default(false)
   byokFreeUntil         DateTime?
+  /// Numbers each provider read of purchases in the order it started.
+  purchaseReadsStarted  BigInt             @default(0)
+  /// The newest read that applied every purchase it saw; older reads are skipped.
+  purchaseReadApplied   BigInt             @default(0)
   entries               ModelCreditEntry[]
   lots                  ModelCreditLot[]
   createdAt             DateTime           @default(now())
@@ -2596,6 +2631,10 @@ model ModelCreditEntry {
   account                ModelCreditAccount @relation(fields: [organizationId], references: [organizationId], onDelete: Cascade)
   source                 String             @unique
   amountMicros           BigInt
+  /// A purchase's paid credits an open dispute holds back; `amountMicros` excludes them.
+  disputedMicros         BigInt             @default(0)
+  /// The provider read that last changed this purchase; older reads are skipped.
+  purchaseRead           BigInt             @default(0)
   pending                Boolean            @default(false)
   callId                 String?            @unique
   userId                 String?

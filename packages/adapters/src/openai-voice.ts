@@ -9,16 +9,17 @@ import type {
   VoiceTranscribeRequest,
   VoiceVerifyResult,
 } from "@rakazo/adapter-kit";
+import { deadlineSignal } from "@rakazo/core";
 import {
   readVoiceAudio,
   readVoiceJson,
   requireOk,
   speechUploadName,
   verifyVoiceHttpGet,
-  voiceDeadline,
   voiceLanguageHint,
   voiceRequestError,
 } from "./voice-http.js";
+import type { VoiceProviderDefinition } from "./voice-provider-descriptor.js";
 
 const API = "https://api.openai.com/v1";
 const TTS_MODEL = "gpt-4o-mini-tts";
@@ -64,7 +65,7 @@ export class OpenAIVoiceProvider implements VoiceProvider {
   }
 
   async synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip> {
-    const signal = voiceDeadline(request.signal ?? context.signal, 60_000);
+    const signal = deadlineSignal(60_000, request.signal ?? context.signal);
     const res = await fetch(`${API}/audio/speech`, {
       method: "POST",
       headers: {
@@ -100,10 +101,19 @@ export class OpenAIVoiceProvider implements VoiceProvider {
       method: "POST",
       headers: { authorization: `Bearer ${request.apiKey}` },
       body: form,
-      signal: voiceDeadline(request.signal ?? context.signal, 60_000),
+      signal: deadlineSignal(60_000, request.signal ?? context.signal),
     });
     const body = await readVoiceJson(res, { requireValid: res.ok });
     if (!res.ok) throw voiceRequestError(res.status, "OpenAI", "transcribing", body);
     return { text: String((body as { text?: unknown } | null)?.text ?? "").trim() };
   }
 }
+
+export const openaiVoice: VoiceProviderDefinition = {
+  catalog: {
+    name: "OpenAI",
+    description: "Simple TTS plus Whisper-class transcription. Reuse an OpenAI key.",
+    transcribe: true,
+  },
+  create: () => new OpenAIVoiceProvider(),
+};
