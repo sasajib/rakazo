@@ -2,20 +2,20 @@ import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { BACKGROUND_HELPER_TRIGGER, redactSecrets, TALK_RUN_TRIGGER } from "@rakazo/core";
 import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
-import { deferredToolCount } from "./lazy-tool-catalog.js";
 import { backgroundHelpersAllowed } from "./background-helpers.js";
 import { builtinAgentTools } from "./builtin.tool-definition.js";
 import { personSpeaker } from "./history-speakers.js";
+import { deferredToolCount } from "./lazy-tool-catalog.js";
 import { isUnattendedRun } from "./notice-ledger.js";
 import { promptVersion } from "./prompt-version.js";
 import type { AssembledTurn } from "./run-assembly.js";
 import type { RunExecutorServices, RunHold } from "./run-attempt.js";
+import { holdAuditSummary, logPromptAudit, releaseAuditSummary } from "./run-audit-run.js";
 import {
   botEmailInstruction,
   runIdentityInstruction,
   userTurnInstructions,
 } from "./run-instructions.prompt.js";
-import { holdAuditSummary, logPromptAudit, releaseAuditSummary } from "./run-audit-run.js";
 import { GROUP_UNADDRESSED_REPLY_GUIDANCE, runReplyGuidance } from "./run-replies.prompt.js";
 import { followUpsOffered, offeredFleetTools } from "./run-tool-selection.js";
 import { applyTool } from "./run-tools.js";
@@ -26,11 +26,11 @@ import {
   handoffEndedTurn,
   requeueRunAfterDatabaseOutage,
 } from "./run-turn.js";
-import { continueUnfinishedTask } from "./run-unfinished-task.js";
 import { claimRunSteering } from "./run-turn-images.js";
+import { continueUnfinishedTask } from "./run-unfinished-task.js";
 import { isStrategicInitiativeRun } from "./strategic-initiative.js";
-import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { TALK_RUN_INSTRUCTION } from "./talk-run.prompt.js";
+import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
 import { keepToolStepResult } from "./tool-step-calls.js";
 
