@@ -43,6 +43,8 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "update_bot",
   "update_preferences",
   "remember",
+  // Standing orders bind every bot: always listed so a rule change is never lost to a missed find_tool.
+  "standing_set",
   "save_memory",
   "recall_memory",
   "reflect_memory",

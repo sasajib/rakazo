@@ -51,6 +51,7 @@ describe("built-in tool bridge", () => {
       "search_history",
       "shell",
       "skill_read",
+      "standing_set",
       "update_bot",
       "update_preferences",
       "use_tool",
@@ -62,7 +63,7 @@ describe("built-in tool bridge", () => {
     // the history tools point at files from earlier messages; a watch says it takes no other timing;
     // read_file takes a line range; ask_user carries the content being decided about;
     // search_history lists earlier tool work by kind without a keyword.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(37_688);
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(38_600);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );
