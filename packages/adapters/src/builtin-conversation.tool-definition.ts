@@ -292,7 +292,7 @@ export const conversationTools: ConnectorTool[] = [
   {
     name: "standing_set",
     description:
-      "Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.",
+      "Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry; omit text to change only tier or links. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.",
     inputSchema: {
       type: "object",
       properties: {

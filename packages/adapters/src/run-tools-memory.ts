@@ -263,7 +263,7 @@ export const memoryTools: ToolHandlers = {
         {
           kind: String(args.kind ?? "") as "rule" | "decision",
           key: String(args.key ?? ""),
-          text: String(args.text ?? ""),
+          ...(args.text === undefined || args.text === null ? {} : { text: String(args.text) }),
           ...(args.tier !== undefined && args.tier !== null ? { tier: Number(args.tier) } : {}),
           ...(args.links !== undefined && args.links !== null ? { links: String(args.links) } : {}),
         },

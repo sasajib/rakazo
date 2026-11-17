@@ -1,5 +1,5 @@
 # Tool surface: routine-run
-45 tools, 48267 bytes of definitions
+45 tools, 48307 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -158,7 +158,7 @@ Create a full, regular bot — the same kind the user creates from the + button.
 schema 11d3023bc36e (674 bytes)
 
 ## standing_set
-Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.
+Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry; omit text to change only tier or links. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.
 schema 06225f76ef07 (831 bytes)
 
 ## task_catalog

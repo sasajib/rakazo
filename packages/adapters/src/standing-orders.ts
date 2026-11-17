@@ -150,7 +150,8 @@ export function setStandingOrder(
   input: {
     kind: StandingKind;
     key: string;
-    text: string;
+    /** Omitted on an existing entry keeps its text (change only tier or links); "" removes the entry. */
+    text?: string;
     /** 0-3; omitted keeps the entry's current tier (default 2). */
     tier?: number;
     /** Tokens like `>r3 ^r5 +r19 @upwork`; omitted keeps the current links, "" clears them. */
@@ -165,7 +166,11 @@ export function setStandingOrder(
   if (input.kind !== "rule" && input.kind !== "decision") {
     return { error: "kind must be `rule` or `decision`." };
   }
-  const text = input.text.replace(/\s+/g, " ").trim();
+  const current = parseStandingOrders(existing).find((e) => e.key === key);
+  if (input.text === undefined && !current) {
+    return { error: "text is required for a new entry." };
+  }
+  const text = (input.text ?? current?.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length > STANDING_ENTRY_MAX_CHARS) {
     return {
       error: `text is ${text.length} characters; keep an entry under ${STANDING_ENTRY_MAX_CHARS}. Split it into two keys.`,

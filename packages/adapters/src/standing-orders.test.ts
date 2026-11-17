@@ -144,6 +144,18 @@ describe("standing orders", () => {
       expect(c).not.toContain("^r5");
     });
 
+    it("changes only tier or links when text is omitted, and never removes the entry by accident", () => {
+      const a = set("", { kind: "rule", key: "r19", text: "A blocked site never ends the task." });
+      const b = set(a, { kind: "rule", key: "r19", links: "+r5 +r3" });
+      expect(b).toContain("[rule r19 +r5 +r3] 2026-11-17: A blocked site never ends the task.");
+      expect(parseStandingOrders(b)).toHaveLength(1);
+      expect(
+        setStandingOrder("", { kind: "rule", key: "new", links: "+r5" }, "2026-11-17"),
+      ).toHaveProperty("error");
+      const removed = setStandingOrder(b, { kind: "rule", key: "r19", text: "" }, "2026-11-17");
+      expect("content" in removed && parseStandingOrders(removed.content)).toHaveLength(0);
+    });
+
     it("rejects bad tiers, bad tokens and self links", () => {
       expect(
         setStandingOrder("", { kind: "rule", key: "a", text: "x", tier: 7 }, "2026-11-17"),
