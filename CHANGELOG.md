@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - The LiveKit voice example keeps the call's conversation apart from the bot's work: only the run a turn started is spoken, a superseded turn stops at its next chunk, the active topic survives a follow-up and is replaced by a new subject, and background run updates are coalesced into one status sentence the caller has to ask for.
+- Docker computers: `SANDBOX_COMPUTER_BROWSER_PROXY_PAC_URL` gives the bot browser a proxy auto-config script, so selected sites, such as ones that block datacenter addresses, go through an HTTP proxy while the rest connect directly. Unset, nothing changes ([Docker computers](docs/self-host-docker-computers.md#browser-proxy)).
 
 ## [0.12.0] - 2026-11-16
 

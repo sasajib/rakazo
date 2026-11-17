@@ -170,16 +170,16 @@ describe("standing curator", () => {
   describe("reviewed and declared exceptions", () => {
     it("does not flag an exception the user acknowledged, or one another entry declares", () => {
       const base = e("r5", "Solve captchas yourself unless it is a login that needs Shakil.");
-      expect(curateStanding([base]).some((f) => f.kind === "exception")).toBe(true);
+      expect(curateStanding([base], "2026-11-17").some((f) => f.kind === "exception")).toBe(true);
       expect(
-        curateStanding([{ ...base, ack: true }]).some((f) => f.kind === "exception"),
+        curateStanding([{ ...base, ack: true }], "2026-11-17").some((f) => f.kind === "exception"),
       ).toBe(false);
       const declared = {
         ...e("r5b", "On Upwork a block is not final."),
         links: { overrides: [], exceptionOf: ["r5"], dependsOn: [], tags: [] },
       };
       expect(
-        curateStanding([base, declared]).some(
+        curateStanding([base, declared], "2026-11-17").some(
           (f) => f.kind === "exception" && f.keys.includes("r5"),
         ),
       ).toBe(false);
