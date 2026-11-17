@@ -41,8 +41,8 @@ describe("standing curator", () => {
   it("flags a possible conflict when one rule forbids what another asks on the same subject", () => {
     const found = curateStanding(
       [
-        e("a", "Never open a second browser tab for an Indeed search; keep one tab per site."),
-        e("b", "Always use a new browser tab for each Indeed search."),
+        e("a", "Never open a second browser tab for Indeed search results; keep one tab per site."),
+        e("b", "Always use a new browser tab for Indeed search results."),
       ],
       "2026-11-17",
     );
@@ -66,6 +66,27 @@ describe("standing curator", () => {
         (f) => f.kind === "oversize",
       ),
     ).toBe(true);
+  });
+
+  it("does not call ordinary conditions exceptions, nor shared names a conflict", () => {
+    const found = curateStanding(
+      [
+        e(
+          "r1",
+          "Retry a failed tool only if a retry may help, then report the exact error to Shakil.",
+        ),
+        e(
+          "r2",
+          "Never send a message to Shakil twice; use one message per sender and report to Shakil first.",
+        ),
+        e(
+          "r3",
+          "Always use a call for urgent results Shakil must act on; message Shakil otherwise.",
+        ),
+      ],
+      "2026-11-17",
+    );
+    expect(found).toEqual([]);
   });
 
   it("is quiet on clean, unrelated entries and can filter by key", () => {

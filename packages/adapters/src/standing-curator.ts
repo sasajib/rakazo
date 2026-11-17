@@ -13,10 +13,11 @@ export type CuratorFinding = {
   message: string;
 };
 
-const EXCEPTION =
-  /[^.;]*\b(except|exception|unless|but not|needs? (?:shakil|the user)|only (?:when|if|on))\b[^.;]*/i;
-const NEGATIVE = /\b(never|do not|don't|must not|not allowed|no )\b/i;
-const POSITIVE = /\b(always|must|do |use |click|solve)\b/i;
+// Only wording that carves a case OUT of a rule. "only if/when" are ordinary conditions and flag nothing.
+const EXCEPTION = /[^.;]*\b(except|exception|unless|needs? (?:shakil|the user))\b[^.;]*/i;
+const NEGATIVE = /\b(never|do not|don't|must not|not allowed)\b/i;
+const POSITIVE = /\b(always|must|use|click|solve)\b/i;
+// Words every rule shares; they say nothing about a common subject.
 const STOP_WORDS = new Set([
   "that",
   "this",
@@ -35,6 +36,21 @@ const STOP_WORDS = new Set([
   "only",
   "same",
   "other",
+  "shakil",
+  "message",
+  "messages",
+  "first",
+  "report",
+  "reports",
+  "agent",
+  "agents",
+  "never",
+  "always",
+  "rule",
+  "rules",
+  "after",
+  "before",
+  "about",
 ]);
 export const STALE_DECISION_DAYS = 30;
 const OVERLAP_SIMILARITY = 0.55;
@@ -95,7 +111,7 @@ export function curateStanding(entries: readonly StandingEntry[], today: string)
       const clash =
         (NEGATIVE.test(a.text) && !NEGATIVE.test(b.text) && POSITIVE.test(b.text)) ||
         (NEGATIVE.test(b.text) && !NEGATIVE.test(a.text) && POSITIVE.test(a.text));
-      if (shared.length >= 3 && clash) {
+      if (shared.length >= 4 && clash) {
         findings.push({
           kind: "conflict",
           keys: [a.key, b.key],
