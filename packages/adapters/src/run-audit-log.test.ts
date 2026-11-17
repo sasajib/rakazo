@@ -106,7 +106,7 @@ describe("memory.prompt.built fields", () => {
           content: "c".repeat(900),
         },
       ],
-      1_250,
+      1_500,
     );
     const fields = memoryPromptFields(plan);
     const docs = fields["memory.documents"] as Array<Record<string, unknown>>;
@@ -115,7 +115,7 @@ describe("memory.prompt.built fields", () => {
       ["rules.md", true, false],
       ["big.md", true, true],
     ]);
-    expect(fields["memory.limit_bytes"]).toBe(1_250);
+    expect(fields["memory.limit_bytes"]).toBe(1_500);
     expect(fields["memory.over_limit"]).toBe(true);
     expect(JSON.stringify(fields)).not.toContain("aaaa");
   });

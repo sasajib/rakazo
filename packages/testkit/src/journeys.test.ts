@@ -25,11 +25,11 @@ import {
   ACTIVE_RUN_STATUSES,
   answerableAskMessageIds,
   ONCE_ROUTINE_CRON,
-  resolveScreenProxySecret,
   settleRunSubagents,
   stuckWorkStatusMessages,
 } from "@rakazo/core";
 import { openScreenCapability } from "@rakazo/core/node/screen-capability";
+import { resolveScreenProxySecret } from "@rakazo/core/node/secrets-guard";
 import { deferred } from "@rakazo/core/test-async";
 import {
   appendEvent,
@@ -2268,7 +2268,9 @@ describeJourneys("required product journeys", () => {
       data: { computerUseStartedAt: new Date() },
     });
     await prisma.computerExecutionLease.upsert({
-      where: { computerId_botId_slot: { computerId: computer.computerId!, botId: bot.id, slot: 0 } },
+      where: {
+        computerId_botId_slot: { computerId: computer.computerId!, botId: bot.id, slot: 0 },
+      },
       create: {
         computerId: computer.computerId!,
         botId: bot.id,

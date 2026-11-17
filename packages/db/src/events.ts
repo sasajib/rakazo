@@ -70,6 +70,7 @@ import {
   createPendingSteeringRun,
   discardAnsweredSteering,
   hasChannelMessage,
+  releaseUnreadHandovers,
 } from "./thread-steering.js";
 import type {
   AnswerTakeoverRequestInput,
@@ -984,6 +985,8 @@ async function finalizeRunOnce(
         where: { runId: input.runId },
         data: { runId: null },
       });
+    } else {
+      await releaseUnreadHandovers(tx, input.runId);
     }
     const continuationRunId = await createPendingSteeringRun(tx, input);
     await tx.bot.update({ where: { id: input.botId }, data: { updatedAt: now } });

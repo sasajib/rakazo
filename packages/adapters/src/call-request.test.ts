@@ -354,6 +354,7 @@ describe("requestUserCall security", () => {
       jobs: {
         enqueue: vi.fn(async () => undefined),
         enqueueIn: vi.fn(),
+        enqueueManyIn: vi.fn(),
         cancelIn: vi.fn(),
         cancel: vi.fn(),
         close: vi.fn(),
