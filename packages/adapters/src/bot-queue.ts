@@ -18,7 +18,7 @@ const OPEN = ["queued", "leased", "running", "waiting_input", "waiting_takeover"
 const SUMMARY_CHARS = 120;
 
 export async function loadBotQueue(
-  prisma: PrismaClient,
+  prisma: Pick<PrismaClient, "run">,
   input: { botId: string; now: Date; limit?: number },
 ): Promise<QueueItem[]> {
   const rows = await prisma.run.findMany({

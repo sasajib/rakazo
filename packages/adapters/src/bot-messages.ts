@@ -184,24 +184,6 @@ export async function messageBot(
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
 
-  // Look at the recipient's queue first: a request that is already waiting or in progress is not sent twice.
-  if (!input.force) {
-    const queue = await loadBotQueue(deps.prisma, { botId: target.id, now: new Date() }).catch(
-      () => [],
-    );
-    const same = findQueuedDuplicate(message, queue, normalizeLane(input.lane));
-    if (same) {
-      return {
-        ok: true as const,
-        botId: target.id,
-        name: target.name,
-        delivered: message,
-        duplicate: true as const,
-        note: `Not sent: ${target.name} already has this request (${describeQueueItem(same)}). Do not send it again. Look at the queue with bot_queue; add force:true only if it is genuinely new work.`,
-      } as const;
-    }
-  }
-
   const onCall = await threadHasLiveCall(deps.prisma, targetThreadId);
   const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent, onCall });
   const outboundBlock: MessageBlock = {
@@ -227,6 +209,11 @@ export async function messageBot(
     | {
         ok: true;
         replayed: true;
+      }
+    | {
+        ok: true;
+        duplicate: true;
+        of: string;
       };
   try {
     committed = await withTransactionRetry(() =>
@@ -244,6 +231,15 @@ export async function messageBot(
             select: { id: true },
           });
           if (already) return { ok: true as const, replayed: true as const };
+        }
+
+        // The recipient's queue, read under the target thread's lock: concurrent sends of the same
+        // request see each other, so a request that is already open is not queued twice.
+        if (!input.force) {
+          const queue = await loadBotQueue(tx, { botId: target.id, now: new Date() });
+          const same = findQueuedDuplicate(message, queue, normalizeLane(input.lane));
+          if (same)
+            return { ok: true as const, duplicate: true as const, of: describeQueueItem(same) };
         }
 
         const senderStillRunning = await tx.run.findFirst({
@@ -374,6 +370,16 @@ export async function messageBot(
     throw error;
   }
   if ("replayed" in committed) return replayed();
+  if ("duplicate" in committed) {
+    return {
+      ok: true as const,
+      botId: target.id,
+      name: target.name,
+      delivered: message,
+      duplicate: true as const,
+      note: `Not sent: ${target.name} already has this request (${committed.of}). Do not send it again. Look at the queue with bot_queue; add force:true only if it is genuinely new work.`,
+    } as const;
+  }
   if (!committed.ok) return committed;
 
   await deps.events.notify(targetThreadId, committed.targetEventSeq).catch((error) => {
