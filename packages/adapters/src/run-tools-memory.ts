@@ -15,7 +15,13 @@ import { logMemorySave, memoryRefusalReason, memorySaveOp } from "./run-audit-lo
 import type { RunContext } from "./run-context.js";
 import { markReadOutsideContent } from "./run-context.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
-import { STANDING_ORDERS_PATH, setStandingOrder } from "./standing-orders.js";
+import { curateStanding, findingsFor } from "./standing-curator.js";
+import {
+  normalizeStandingKey,
+  parseStandingOrders,
+  STANDING_ORDERS_PATH,
+  setStandingOrder,
+} from "./standing-orders.js";
 import { argsError } from "./tool-args.js";
 import { byteLength } from "./utf8.js";
 
@@ -66,6 +72,25 @@ async function readHistoryTool(ctx: RunContext, call: ToolCall) {
     searchAt: run.createdAt,
   };
   const given = withoutBlankFields(args);
+  let scopeNote: string | undefined;
+  if (name === "search_history") {
+    // A refused my_chats search used to be an error the model retried; the safe answer is the
+    // narrower scope (this chat) with a plain note, so the call still returns something useful.
+    if (given.scope === "my_chats" && !allowMyChats) {
+      given.scope = "this_chat";
+      scopeNote =
+        "my_chats is not available in this run, so only this chat was searched. Other chats are out of reach here; do not retry with my_chats.";
+    }
+    const hasQuery =
+      typeof given.query === "string" || (Array.isArray(given.queries) && given.queries.length > 0);
+    if (!hasQuery && !(Array.isArray(given.kinds) && given.kinds.length > 0)) {
+      return call.finish({
+        untrusted: true,
+        messages: [],
+        note: "Nothing was searched: give `query` (1-500 characters, every word must match one message) or `kinds`. Blank fields count as not given.",
+      });
+    }
+  }
   let response: Awaited<ReturnType<typeof searchHistory | typeof readHistory>>;
   if (name === "search_history") {
     const parsed = HistorySearchInputSchema.safeParse(given);
@@ -97,7 +122,9 @@ async function readHistoryTool(ctx: RunContext, call: ToolCall) {
       })),
     ),
   );
-  return call.finish(redacted);
+  return call.finish(
+    scopeNote ? { ...(redacted as Record<string, unknown>), note: scopeNote } : redacted,
+  );
 }
 
 /** Memory documents, semantic memory and thread history. */
@@ -181,6 +208,23 @@ export const memoryTools: ToolHandlers = {
   async standing_set(ctx, call) {
     const { deps, runId, thread, run, context } = ctx;
     const { args } = call;
+    // Review reads only (the orders are already in every prompt), so any run may ask for it.
+    if (args.review === true) {
+      const snapshot = await deps.memory.read(
+        { scope: "user", path: STANDING_ORDERS_PATH },
+        context,
+      );
+      const entries = parseStandingOrders(snapshot.documents[0]?.content ?? "");
+      const findings = curateStanding(entries, new Date().toISOString().slice(0, 10));
+      return call.finish({
+        ok: true,
+        entries: entries.length,
+        findings: findings.map((f) => ({ kind: f.kind, keys: f.keys, message: f.message })),
+        note: findings.length
+          ? "Tell the user these points in plain words and let him decide; change nothing yourself."
+          : "No problems found.",
+      });
+    }
     // Standing orders bind every bot, so only the user's own words may change them: not a watch
     // event, a webhook, a mail or another bot (the same trust gate as cross-chat history).
     if (!ctx.source.myChatsAllowed || (await ctx.trust.receivedOutsideMessage())) {
@@ -243,10 +287,21 @@ export const memoryTools: ToolHandlers = {
           "standing.run_id": runId,
           ...(edit.previous ? { "standing.replaced_len": edit.previous.length } : {}),
         });
+        const key = normalizeStandingKey(String(args.key ?? ""));
+        const review = findingsFor(
+          curateStanding(parseStandingOrders(edit.content), today),
+          key,
+        ).map((f) => f.message);
         return call.finish({
           ok: true,
           action: edit.action,
           ...(edit.previous ? { replaced: edit.previous } : {}),
+          ...(review.length
+            ? {
+                review: review.slice(0, 3),
+                note: "Saved. Tell the user the review points in one or two plain sentences and ask whether to adjust; do not change anything on your own.",
+              }
+            : {}),
         });
       } catch (error) {
         if (!(error instanceof MemoryRevisionConflictError) || attempt >= 3) throw error;
