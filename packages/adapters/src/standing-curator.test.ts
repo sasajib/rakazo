@@ -100,4 +100,70 @@ describe("standing curator", () => {
     expect(findingsFor(withEx, "d")).toHaveLength(1);
     expect(findingsFor(withEx, "a")).toHaveLength(0);
   });
+
+  describe("links", () => {
+    const L = (o: Partial<NonNullable<StandingEntry["links"]>>) => ({
+      overrides: [],
+      exceptionOf: [],
+      dependsOn: [],
+      tags: [],
+      ...o,
+    });
+    const le = (
+      key: string,
+      text: string,
+      links: NonNullable<StandingEntry["links"]>,
+      tier?: 0 | 1 | 2 | 3,
+    ): StandingEntry => ({
+      kind: "rule",
+      key,
+      date: "2026-11-17",
+      text,
+      links,
+      ...(tier === undefined ? {} : { tier }),
+    });
+
+    it("a declared exception (^) is not reported as a hidden one", () => {
+      const found = curateStanding(
+        [
+          e("r5", "Solve the check."),
+          le("r5b", "Except on Upwork: one click only.", L({ exceptionOf: ["r5"] })),
+        ],
+        "2026-11-17",
+      );
+      expect(found.filter((f) => f.kind === "exception")).toEqual([]);
+    });
+
+    it("reports links to entries that do not exist", () => {
+      const found = curateStanding([le("a", "Do x.", L({ dependsOn: ["ghost"] }))], "2026-11-17");
+      expect(found.find((f) => f.kind === "link")?.message).toContain("no entry ghost");
+    });
+
+    it("reports an override loop and a weaker tier beating a stronger one", () => {
+      const loop = curateStanding(
+        [le("a", "A.", L({ overrides: ["b"] })), le("b", "B.", L({ overrides: ["a"] }))],
+        "2026-11-17",
+      );
+      expect(loop.some((f) => f.kind === "link" && f.message.includes("Override loop"))).toBe(true);
+      const inv = curateStanding(
+        [le("pref", "Short.", L({ overrides: ["safe"] }), 3), le("safe", "Ask first.", L({}), 0)],
+        "2026-11-17",
+      );
+      expect(inv.some((f) => f.message.includes("cannot beat a stronger one"))).toBe(true);
+    });
+
+    it("a rule linked to another is not flagged as a possible conflict with it", () => {
+      const a = e(
+        "a",
+        "Never open a second browser tab for Indeed search results; keep one tab per site.",
+      );
+      const b = le(
+        "b",
+        "Always use a new browser tab for Indeed search results.",
+        L({ overrides: ["a"] }),
+        1,
+      );
+      expect(curateStanding([a, b], "2026-11-17").some((f) => f.kind === "conflict")).toBe(false);
+    });
+  });
 });

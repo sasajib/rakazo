@@ -96,4 +96,75 @@ describe("standing orders", () => {
     expect(block).toContain("<standing_orders>");
     expect(block).toContain("[decision salary] 2026-11-12: 50K USD.");
   });
+
+  describe("tiers and links", () => {
+    const set = (existing: string, input: Parameters<typeof setStandingOrder>[1]) => {
+      const out = setStandingOrder(existing, input, "2026-11-17");
+      if ("error" in out) throw new Error(out.error);
+      return out.content;
+    };
+
+    it("stores a tier and typed links on the line and parses them back", () => {
+      const c = set("", {
+        kind: "rule",
+        key: "r5b",
+        text: "Upwork: one slow click.",
+        tier: 1,
+        links: ">r3 ^r5 +r19 @Upwork",
+      });
+      expect(c).toContain(
+        "- [rule r5b p1 >r3 ^r5 +r19 @upwork] 2026-11-17: Upwork: one slow click.",
+      );
+      const [entry] = parseStandingOrders(c);
+      expect(entry).toMatchObject({
+        tier: 1,
+        links: { overrides: ["r3"], exceptionOf: ["r5"], dependsOn: ["r19"], tags: ["upwork"] },
+      });
+    });
+
+    it("keeps old plain lines exactly as they were", () => {
+      const plain = "# Standing orders\n\n- [rule r1] 2026-11-10: Be brief.\n";
+      expect(set(plain, { kind: "rule", key: "r2", text: "Be kind." })).toContain(
+        "- [rule r1] 2026-11-10: Be brief.",
+      );
+      expect(parseStandingOrders(plain)[0]).toEqual({
+        kind: "rule",
+        key: "r1",
+        date: "2026-11-10",
+        text: "Be brief.",
+      });
+    });
+
+    it("an edit of the text alone keeps the tier and links; links:'' clears them", () => {
+      const a = set("", { kind: "rule", key: "r5b", text: "One click.", tier: 1, links: "^r5" });
+      const b = set(a, { kind: "rule", key: "r5b", text: "One slow click." });
+      expect(b).toContain("[rule r5b p1 ^r5]");
+      const c = set(b, { kind: "rule", key: "r5b", text: "One slow click.", links: "" });
+      expect(c).toContain("[rule r5b p1] ");
+      expect(c).not.toContain("^r5");
+    });
+
+    it("rejects bad tiers, bad tokens and self links", () => {
+      expect(
+        setStandingOrder("", { kind: "rule", key: "a", text: "x", tier: 7 }, "2026-11-17"),
+      ).toHaveProperty("error");
+      expect(
+        setStandingOrder("", { kind: "rule", key: "a", text: "x", links: "%oops" }, "2026-11-17"),
+      ).toHaveProperty("error");
+      expect(
+        setStandingOrder("", { kind: "rule", key: "a", text: "x", links: ">a" }, "2026-11-17"),
+      ).toHaveProperty("error");
+    });
+
+    it("lists the prompt block by tier, highest priority first, and explains the markers", () => {
+      let c = set("", { kind: "rule", key: "pref", text: "Short answers.", tier: 3 });
+      c = set(c, { kind: "rule", key: "proc", text: "Retry thrice." });
+      c = set(c, { kind: "rule", key: "safe", text: "Never delete without asking.", tier: 0 });
+      const block = renderStandingOrdersBlock(c)!;
+      const order = ["safe", "proc", "pref"].map((k) => block.indexOf(`[rule ${k}`));
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+      expect(block).toContain("a lower tier wins");
+      expect(block).toContain("`^key` = this entry is a declared exception");
+    });
+  });
 });

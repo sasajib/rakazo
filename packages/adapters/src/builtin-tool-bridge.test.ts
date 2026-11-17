@@ -65,7 +65,7 @@ describe("built-in tool bridge", () => {
     // read_file takes a line range; ask_user carries the content being decided about;
     // search_history lists earlier tool work by kind without a keyword; message_bot is the
     // most used deferred tool, and a lookup before each message cost a step.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(39_600);
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(40_000);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

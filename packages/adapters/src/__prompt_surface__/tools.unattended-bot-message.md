@@ -1,5 +1,5 @@
 # Tool surface: unattended-bot-message
-46 tools, 50440 bytes of definitions
+46 tools, 50818 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -163,7 +163,7 @@ schema 11d3023bc36e (674 bytes)
 
 ## standing_set
 Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.
-schema 5cdeb80e428e (453 bytes)
+schema 06225f76ef07 (831 bytes)
 
 ## task_catalog
 Read-only inventory and source of truth for this bot's real open tasks, saved routines, taught skills, reusable skills, and currently exposed tools. Call it before claiming a task or skill exists. Use the returned ids and exact names; do not infer capabilities from memory or conversation text.

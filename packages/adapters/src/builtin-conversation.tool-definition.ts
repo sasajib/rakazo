@@ -305,6 +305,16 @@ export const conversationTools: ConnectorTool[] = [
           type: "string",
           description: "The rule or decision, with exact values. Empty removes it.",
         },
+        tier: {
+          type: "integer",
+          description:
+            "Priority 0-3, lower wins: 0 safety and approvals, 1 the user's explicit commands, 2 procedures (default), 3 preferences.",
+        },
+        links: {
+          type: "string",
+          description:
+            "Links to other keys: >key wins over, ^key exception of, +key read together with, @tag applies to. E.g. `>r3 ^r5 @upwork`. Omit to keep the current links; empty clears them.",
+        },
         review: {
           type: "boolean",
           description:

@@ -1,6 +1,6 @@
 import { textSimilarity } from "./notice-ledger.js";
 import type { StandingEntry } from "./standing-orders.js";
-import { STANDING_ENTRY_MAX_CHARS } from "./standing-orders.js";
+import { STANDING_ENTRY_MAX_CHARS, tierOf } from "./standing-orders.js";
 
 /**
  * Curator for the standing orders: points at what a person should look at, never edits.
@@ -8,7 +8,7 @@ import { STANDING_ENTRY_MAX_CHARS } from "./standing-orders.js";
  * needs Shakil" exception, so a bot reported "blocked" where the user expected the procedure.
  */
 export type CuratorFinding = {
-  kind: "exception" | "overlap" | "conflict" | "stale" | "oversize";
+  kind: "exception" | "overlap" | "conflict" | "stale" | "oversize" | "link";
   keys: string[];
   message: string;
 };
@@ -73,7 +73,8 @@ export function curateStanding(entries: readonly StandingEntry[], today: string)
   const findings: CuratorFinding[] = [];
   for (const e of entries) {
     const clause = EXCEPTION.exec(e.text)?.[0]?.trim();
-    if (clause) {
+    // An exception declared with ^key is visible to every bot; only wording-only exceptions are hidden ones.
+    if (clause && !e.links?.exceptionOf.length) {
       findings.push({
         kind: "exception",
         keys: [e.key],
@@ -95,10 +96,22 @@ export function curateStanding(entries: readonly StandingEntry[], today: string)
       });
     }
   }
+  findings.push(...linkFindings(entries));
+  const linked = new Set<string>();
+  for (const e of entries) {
+    for (const k of [
+      ...(e.links?.overrides ?? []),
+      ...(e.links?.exceptionOf ?? []),
+      ...(e.links?.dependsOn ?? []),
+    ]) {
+      linked.add([e.key, k].sort().join("|"));
+    }
+  }
   for (let i = 0; i < entries.length; i += 1) {
     for (let j = i + 1; j < entries.length; j += 1) {
       const a = entries[i]!;
       const b = entries[j]!;
+      const resolved = linked.has([a.key, b.key].sort().join("|"));
       if (textSimilarity(a.text, b.text) >= OVERLAP_SIMILARITY) {
         findings.push({
           kind: "overlap",
@@ -111,7 +124,7 @@ export function curateStanding(entries: readonly StandingEntry[], today: string)
       const clash =
         (NEGATIVE.test(a.text) && !NEGATIVE.test(b.text) && POSITIVE.test(b.text)) ||
         (NEGATIVE.test(b.text) && !NEGATIVE.test(a.text) && POSITIVE.test(a.text));
-      if (shared.length >= 4 && clash) {
+      if (!resolved && shared.length >= 4 && clash) {
         findings.push({
           kind: "conflict",
           keys: [a.key, b.key],
@@ -121,6 +134,55 @@ export function curateStanding(entries: readonly StandingEntry[], today: string)
     }
   }
   return findings;
+}
+
+/** Problems in the typed links: targets that do not exist, override loops, a weaker tier beating a stronger one. */
+function linkFindings(entries: readonly StandingEntry[]): CuratorFinding[] {
+  const out: CuratorFinding[] = [];
+  const byKey = new Map(entries.map((e) => [e.key, e]));
+  for (const e of entries) {
+    const targets: [string, string][] = [
+      ...(e.links?.overrides ?? []).map((k) => [">", k] as [string, string]),
+      ...(e.links?.exceptionOf ?? []).map((k) => ["^", k] as [string, string]),
+      ...(e.links?.dependsOn ?? []).map((k) => ["+", k] as [string, string]),
+    ];
+    for (const [mark, k] of targets) {
+      const target = byKey.get(k);
+      if (!target) {
+        out.push({
+          kind: "link",
+          keys: [e.key],
+          message: `${e.key} links ${mark}${k}, but there is no entry ${k}. Fix the key or remove the link.`,
+        });
+      } else if (mark === ">" && tierOf(e) > tierOf(target)) {
+        out.push({
+          kind: "link",
+          keys: [e.key, k],
+          message: `${e.key} (p${tierOf(e)}) is set to win over ${k} (p${tierOf(target)}), a higher tier. A weaker rule cannot beat a stronger one; raise ${e.key} or drop the link.`,
+        });
+      }
+    }
+  }
+  // override loops: A wins over B wins over ... A
+  const color = new Map<string, number>();
+  const visit = (key: string, path: string[]): void => {
+    if (color.get(key) === 2) return;
+    if (color.get(key) === 1) {
+      const loop = [...path.slice(path.indexOf(key)), key];
+      out.push({
+        kind: "link",
+        keys: [...new Set(loop)],
+        message: `Override loop: ${loop.join(" > ")}. Two rules cannot each win over the other; remove one link.`,
+      });
+      return;
+    }
+    color.set(key, 1);
+    for (const next of byKey.get(key)?.links?.overrides ?? [])
+      if (byKey.has(next)) visit(next, [...path, key]);
+    color.set(key, 2);
+  };
+  for (const e of entries) visit(e.key, []);
+  return out;
 }
 
 /** Findings that involve one key (what a bot shows right after saving it). */
