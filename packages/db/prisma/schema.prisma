@@ -679,6 +679,7 @@ model Space {
   runs                        Run[]
   routines                    Routine[]
   scratchpadItems             ScratchpadItem[]
+  standingEmbeddings          StandingEmbedding[]
   botEmailMessages            BotEmailMessage[]
   taughtSkills                TaughtSkill[]
   agentSkills                 AgentSkill[]
@@ -1340,7 +1341,7 @@ model Run {
   // Partial index runs_bot_outcome_pending_idx (unreturned bot-message outcomes) is created in SQL.
   // Partial index runs_helper_outcome_pending_idx (unreturned background-helper outcomes) is created in SQL.
   @@index([routineId])
-  @@index([botId, status, lane])
+  // runs_open_botId_lane_idx (open runs by bot and lane) is raw SQL: Prisma cannot express partial indexes.
   @@map("runs")
 }
 
@@ -2881,4 +2882,21 @@ model CapabilityInstallSpace {
   @@id([installId, spaceId])
   @@index([spaceId, userId])
   @@map("capability_install_spaces")
+}
+
+/// One embedding per standing order (STANDING.md line), used only to suggest which orders relate. A derived
+/// copy: rebuilt from STANDING.md, never the source of truth, and holds no rule text.
+model StandingEmbedding {
+  id        String   @id @default(cuid())
+  spaceId   String
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  key       String
+  /// sha256 of the embedded text, so an unchanged line is not embedded again.
+  textHash  String
+  /// Written and read with raw SQL (pgvector): Prisma has no vector type.
+  embedding Unsupported("vector(1024)")?
+  updatedAt DateTime @updatedAt
+
+  @@unique([spaceId, key])
+  @@map("standing_embeddings")
 }

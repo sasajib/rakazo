@@ -49,6 +49,8 @@ export const emptyLinks = (): StandingLinks => ({
 });
 export const tierOf = (e: Pick<StandingEntry, "tier">): StandingTier => e.tier ?? DEFAULT_TIER;
 
+import { STANDING_PROMPT_SOFT_BYTES, selectForPrompt } from "./standing-graph.js";
+
 const HEADER = "# Standing orders";
 // [kind key] or [kind key p1 >other ^rule +needs @site]: tokens after the key are the tier and the typed links.
 const LINE = /^- \[(rule|decision) ([^\]\s]+)((?: [^\]\s]+)*)\] (\d{4}-\d{2}-\d{2}): (.*)$/;
@@ -230,6 +232,11 @@ export function setStandingOrder(
   return { content, action: at === -1 ? "added" : "replaced", ...(previous ? { previous } : {}) };
 }
 
+/** One entry as it is stored and shown to the bots. */
+export function renderStandingEntry(e: StandingEntry): string {
+  return renderEntry(e);
+}
+
 function renderEntry(e: StandingEntry): string {
   return `[${e.kind} ${e.key}${renderTokens(e)}] ${e.date}: ${e.text}`;
 }
@@ -254,6 +261,13 @@ export function renderStandingOrdersBlock(content: string | undefined): string |
     .map((e, index) => ({ e, index }))
     .sort((a, b) => tierOf(a.e) - tierOf(b.e) || a.index - b.index)
     .map(({ e }) => e);
-  const body = ordered.map(renderEntry).join("\n");
+  // Within the soft budget nothing is left out; beyond it the binding core stays and lower tiers give way.
+  const { kept, omitted } = selectForPrompt(ordered, STANDING_PROMPT_SOFT_BYTES, (e) =>
+    Buffer.byteLength(renderEntry(e), "utf8"),
+  );
+  const note = omitted.length
+    ? `\n[${omitted.length} lower-priority entries are not shown to keep this list short: ${omitted.join(", ")}. Ask the user, or run standing_set review, before assuming no rule exists for them.]`
+    : "";
+  const body = kept.map(renderEntry).join("\n") + note;
   return `${PREAMBLE}\n\n<standing_orders>\n${body}\n</standing_orders>`;
 }

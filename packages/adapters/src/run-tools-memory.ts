@@ -17,8 +17,15 @@ import { markReadOutsideContent } from "./run-context.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
 import { curateStanding, findingsFor } from "./standing-curator.js";
 import {
+  backfillEmbeddings,
+  relatedPairs,
+  removeEmbedding,
+  suggestRelated,
+} from "./standing-embeddings.js";
+import {
   normalizeStandingKey,
   parseStandingOrders,
+  renderStandingEntry,
   STANDING_ORDERS_PATH,
   setStandingOrder,
 } from "./standing-orders.js";
@@ -216,9 +223,19 @@ export const memoryTools: ToolHandlers = {
       );
       const entries = parseStandingOrders(snapshot.documents[0]?.content ?? "");
       const findings = curateStanding(entries, new Date().toISOString().slice(0, 10));
+      // Meaning-based hints (pgvector): embed what is missing, then list related entries that are not linked yet.
+      await backfillEmbeddings(deps.prisma, { spaceId: run.spaceId, entries });
+      const related = await relatedPairs(deps.prisma, { spaceId: run.spaceId, entries });
       return call.finish({
         ok: true,
         entries: entries.length,
+        ...(related.length
+          ? {
+              relatedNotLinked: related,
+              relatedNote:
+                "Close in meaning but not linked. Ask the user whether one is an exception of, wins over, or needs the other.",
+            }
+          : {}),
         findings: findings.map((f) => ({ kind: f.kind, keys: f.keys, message: f.message })),
         note: findings.length
           ? "Tell the user these points in plain words and let him decide; change nothing yourself."
@@ -290,6 +307,19 @@ export const memoryTools: ToolHandlers = {
           ...(edit.previous ? { "standing.replaced_len": edit.previous.length } : {}),
         });
         const key = normalizeStandingKey(String(args.key ?? ""));
+        const after = parseStandingOrders(edit.content);
+        const saved = after.find((e) => e.key === key);
+        let similar: { key: string; similarity: number }[] = [];
+        if (edit.action === "removed") {
+          await removeEmbedding(deps.prisma, { spaceId: run.spaceId, key }).catch(() => undefined);
+        } else if (saved) {
+          similar = await suggestRelated(deps.prisma, {
+            spaceId: run.spaceId,
+            key,
+            text: saved.text,
+            entries: after,
+          });
+        }
         const review = findingsFor(
           curateStanding(parseStandingOrders(edit.content), today),
           key,
@@ -297,7 +327,15 @@ export const memoryTools: ToolHandlers = {
         return call.finish({
           ok: true,
           action: edit.action,
+          ...(saved ? { now: renderStandingEntry(saved) } : {}),
           ...(edit.previous ? { replaced: edit.previous } : {}),
+          ...(similar.length
+            ? {
+                similarNotLinked: similar,
+                similarNote:
+                  "Related by meaning but not linked. Tell the user in one line and ask whether to link them (exception of, wins over, needs).",
+              }
+            : {}),
           ...(review.length
             ? {
                 review: review.slice(0, 3),

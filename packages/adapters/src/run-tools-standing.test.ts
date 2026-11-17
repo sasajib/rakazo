@@ -1,4 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+
+const suggestRelated = vi.hoisted(() =>
+  vi.fn(async () => [] as { key: string; similarity: number }[]),
+);
+vi.mock("./standing-embeddings.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./standing-embeddings.js")>()),
+  suggestRelated,
+}));
+
 import { memoryTools } from "./run-tools-memory.js";
 
 const doc = (content: string) => ({ documents: [{ revision: 3, content }] });
@@ -6,12 +15,13 @@ const LINE_R5 =
   "- [rule r5-logins-captcha] 2026-11-17: Click the checkbox, wait 20 s. On Upwork/Fiverr a block needs Shakil: report it.";
 
 const harness = (content: string) => {
+  suggestRelated.mockClear();
   const commit = vi.fn(async () => ({}));
   const ctx = {
     runId: "run-1",
     thread: { id: "t1" },
     context: {},
-    run: { userId: "u1", createdAt: new Date("2026-11-17T10:00:00Z") },
+    run: { userId: "u1", spaceId: "space-1", createdAt: new Date("2026-11-17T10:00:00Z") },
     source: { myChatsAllowed: true },
     trust: { receivedOutsideMessage: async () => false },
     deps: {
@@ -79,5 +89,34 @@ describe("standing_set curator", () => {
       } as never,
     )) as { review?: string[] };
     expect(out.review).toBeUndefined();
+  });
+
+  it("echoes the saved line with its tier and links", async () => {
+    const h = harness("# Standing orders\n");
+    const out = (await memoryTools.standing_set!(
+      h.ctx as never,
+      {
+        args: { kind: "rule", key: "r5b", text: "One slow click.", tier: 1, links: "^r5 @upwork" },
+        finish: h.finish,
+      } as never,
+    )) as { now?: string };
+    expect(out.now).toBe("[rule r5b p1 ^r5 @upwork] 2026-11-17: One slow click.");
+  });
+
+  it("passes related-by-meaning suggestions on to the bot", async () => {
+    suggestRelated.mockResolvedValueOnce([{ key: "r5", similarity: 0.74 }]);
+    const h = harness("# Standing orders\n\n- [rule r5] 2026-11-17: Solve the check.\n");
+    const out = (await memoryTools.standing_set!(
+      h.ctx as never,
+      {
+        args: { kind: "rule", key: "r5b", text: "On Upwork click once." },
+        finish: h.finish,
+      } as never,
+    )) as { similarNotLinked?: { key: string }[] };
+    expect(out.similarNotLinked).toEqual([{ key: "r5", similarity: 0.74 }]);
+    expect(suggestRelated).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ spaceId: "space-1", key: "r5b" }),
+    );
   });
 });
