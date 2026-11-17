@@ -54,19 +54,20 @@ test("the updater's default project name is the one production Compose pins", ()
   );
 });
 
-test("Kubernetes computers default to the Compose stack's computer image", () => {
-  const [image, tag] = capture(
+test("Kubernetes computers use the published Compose image repository", () => {
+  const [image] = capture(
     "infra/compose/docker-compose.images.yml",
     /^ {4}image: (\$\{RAKAZO_COMPUTER_IMAGE:-[^}]+\}:\$\{RAKAZO_COMPUTER_IMAGE_TAG:-[^}]+\})$/m,
   )
     .match(/:-([^}]+)\}:\$\{RAKAZO_COMPUTER_IMAGE_TAG:-([^}]+)\}/)
     .slice(1);
   assert.equal(
+    // Source/main deployments retain their development channel; published installs use stable.
     capture(
       "packages/adapters/src/providers/computer/kubernetes/kubernetes-sandbox.ts",
       /DEFAULT_COMPUTER_IMAGE = "([^"]+)";/,
-    ),
-    `${image}:${tag}`,
+    ).split(":")[0],
+    image,
   );
 });
 
@@ -77,5 +78,15 @@ test("table column widths are capped at the cell's own max-width", () => {
       "packages/chat-ui/src/markdown-table.css",
       /^\.rk-table-cell-text \{[^}]*max-width: (\S+);/m,
     ),
+  );
+});
+
+test("Depot's pull request test workflow is the one GitHub runs on main", () => {
+  const [depot, github] = [".depot", ".github"].map((folder) =>
+    readFileSync(path.join(root, folder, "workflows/test-suites.yml"), "utf8"),
+  );
+  assert.ok(
+    depot === github,
+    "copy .github/workflows/test-suites.yml to .depot/workflows/test-suites.yml",
   );
 });

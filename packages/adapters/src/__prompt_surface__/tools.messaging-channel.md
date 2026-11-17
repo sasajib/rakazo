@@ -1,5 +1,5 @@
 # Tool surface: messaging-channel
-38 tools, 45074 bytes of definitions
+38 tools, 44771 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -66,8 +66,8 @@ List saved credentials with their destinations and command variables, cards (bra
 schema 8243f0af367f (33 bytes)
 
 ## message_bot
-Send a useful update, question, or result to another of the user's bots. You must call this tool to actually deliver it — writing the message in your own reply text (e.g. "[to Comms] ...") does not send anything and the recipient never sees it. Delivery is async and does not end your turn. Continue independent work; do not poll or send ack-only messages. Later updates only if they add something new.
-schema 3a19bd115a48 (1226 bytes)
+Send an update, question or result to another of the user's bots. Only this tool delivers it: a message written in your reply, such as "[to Comms] …", never reaches them. Delivery is async, so keep working; send no acknowledgements or repeats.
+schema 38bcce192dcb (1082 bytes)
 
 ## message_user
 Post a short progress update to the user in this chat immediately. Does not end your turn. Use sparingly during long work for high-signal beats (what you are checking, then a result). Do not dump tool logs, thinking, or a play-by-play of every call. HARD LIMIT: cut off silently at 500 characters, so never put your final answer, a report, or any long-form content here — it will arrive mangled and the user will never see the rest. Always write your complete final answer in your normal reply, not here.
