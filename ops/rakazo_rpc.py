@@ -41,9 +41,20 @@ class Rpc:
     def call(self, path, payload):
         code = ("const p = browser.page(%d);\nconst out = await p.evaluate(async (a) => { const r = await fetch('/rpc/'+a.path, "
                 "{method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({json:a.j, meta: []})}); "
-                "return {status:r.status, text:(await r.text()).slice(0,6000)}; }, {path:%s, j:%s});\nreturn JSON.stringify(out);"
+                "return {status:r.status, text:(await r.text()).slice(0,400000)}; }, {path:%s, j:%s});\nreturn JSON.stringify(out);"
                 % (self.page, json.dumps(path), json.dumps(payload)))
         out = self._run(code)
+        if isinstance(out, dict) and out.get("writtenToFile"):
+            # Neo saves a large result to a file instead of returning it
+            raw = open(out["path"]).read()
+            try:
+                out = json.loads(raw)
+                if isinstance(out, str):
+                    out = json.loads(out)
+            except ValueError:
+                out = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+            if "value" in out and "text" not in out:
+                out = out["value"] if isinstance(out["value"], dict) else json.loads(out["value"])
         if isinstance(out, str):
             out = json.loads(out)
         out["json"] = json.loads(out["text"]).get("json") if out["text"].startswith("{") else None

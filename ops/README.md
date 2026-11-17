@@ -17,3 +17,10 @@ Live copy: `/home/sasajib/the-data/rakazo/ops/` — refresh it with `cp ops/*.py
   the new image and verifies; `rollback` puts the old image and volume back. Done 2026-11-17 (backups/pgswap-20261117-1604).
   Known AGE limit: a graph does not survive pg_dump/restore (graph OIDs change). Keep rules and links in ordinary tables and rebuild any AGE
   graph from them; AGE queries need `SET search_path = ag_catalog, public`.
+- `standing-graph.py show|sync|impact|pairs` — the standing orders as a graph, all DERIVED from STANDING.md (read through the web RPC).
+  `show` lists rules by tier with their links; `sync` rebuilds the Apache AGE graph `standing` in Rakazo's Postgres (rule text is never stored
+  in it); `impact <key> [hops]` answers "what does changing this rule touch?"; `pairs` writes rule pairs worth judging for contradictions
+  (linked, same tag, similar wording, close in meaning from pgvector) with both texts; the Monday job judges them. Run `sync` after any
+  database restore, because an AGE graph does not survive pg_dump/restore.
+- Source of truth for rules stays STANDING.md (a space memory document, encrypted at rest). `standing_embeddings` (pgvector) and the AGE graph are
+  rebuildable copies used only for suggestions and queries.
