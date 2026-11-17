@@ -1887,8 +1887,30 @@ export const builtinAgentTools: ConnectorTool[] = [
           enum: ["request", "result", "question", "status", "fyi"],
           description: "What the recipient should do with this message. Defaults to request.",
         },
+        lane: {
+          type: "string",
+          description:
+            "The site or topic this request works on, e.g. indeed or himalayas. The recipient handles one request per lane at a time, oldest first, and different lanes in parallel. Omit for general work (then one at a time per conversation).",
+        },
+        force: {
+          type: "boolean",
+          description:
+            "Send even if the recipient already has the same request open (see bot_queue). Only for genuinely new work.",
+        },
       },
       required: ["message"],
+    },
+  },
+  {
+    name: "bot_queue",
+    description:
+      "Look at a bot's work queue: what it is doing now and what waits (age, lane, who asked, first words). Check it before assigning work so you do not send a duplicate, and to see why a report has not arrived. Defaults to your own queue.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bot_id: { type: "string", description: "Bot id from your teammate list." },
+        confirm_name: { type: "string", description: "Exact bot name when bot_id is omitted." },
+      },
     },
   },
   {

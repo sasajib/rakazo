@@ -28,6 +28,7 @@ describe("built-in tool bridge", () => {
     expect(listed.map((tool) => tool.name).sort()).toEqual([
       "ask_user",
       "attach_file",
+      "bot_queue",
       "connect_app",
       "find_tool",
       "list_files",
@@ -63,7 +64,7 @@ describe("built-in tool bridge", () => {
     // the history tools point at files from earlier messages; a watch says it takes no other timing;
     // read_file takes a line range; ask_user carries the content being decided about;
     // search_history lists earlier tool work by kind without a keyword.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(38_600);
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(39_500);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

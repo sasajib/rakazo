@@ -1277,6 +1277,8 @@ model Run {
   userId               String
   status               String
   trigger              String
+  /// Work queue lane (a site or topic) chosen by the sender; one active bot_message run per lane.
+  lane                 String?
   modelProvider        String?
   modelId              String?
   thinkingLevel        String?
@@ -1336,6 +1338,7 @@ model Run {
   // Partial index runs_bot_outcome_pending_idx (unreturned bot-message outcomes) is created in SQL.
   // Partial index runs_helper_outcome_pending_idx (unreturned background-helper outcomes) is created in SQL.
   @@index([routineId])
+  @@index([botId, status, lane])
   @@map("runs")
 }
 

@@ -10,7 +10,7 @@ import {
   truncatePlainText,
   userRunError,
 } from "@rakazo/core";
-import type { PrismaClient } from "@rakazo/db";
+import type { Prisma, PrismaClient } from "@rakazo/db";
 import { databaseOutage, retryWhileDatabaseUnavailable, spaceTakesWork } from "@rakazo/db";
 import { bestEffort, getLogger } from "@rakazo/logging";
 import { sanitizedError } from "@rakazo/logging/monitoring";
@@ -23,6 +23,7 @@ import { ComputerBusyError, releaseComputerExecutionLease } from "./computer-lif
 import { withComputerScreenAvailability } from "./computer-screens.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import type { RunComputerUseState, RunLeaseState } from "./run-context.js";
+import { admissionBlock } from "./run-gate.js";
 import { notifyRun } from "./run-notifications.js";
 import type { TakeoverResumeCheckpoint } from "./takeover-resume.js";
 import { continueRunClaimFence, TAKEOVER_RESUME_CHECKPOINTS } from "./takeover-resume.js";
@@ -386,33 +387,49 @@ export async function claimRun(
   const now = new Date();
   // A Space being deleted starts nothing; its runs wait for the deletion to end or be called
   // off. Its lock comes before the run row, so a claim committing meanwhile is seen.
-  const leased = await deps.prisma.$transaction(async (tx) =>
-    !(await spaceTakesWork(tx, run.spaceId))
-      ? { count: 0 }
-      : tx.run.updateMany({
-          where: {
-            id: run.id,
-            ...continueRunClaimFence(run),
-            AND: [{ OR: [{ wakeAt: null }, { wakeAt: { lte: now } }] }],
-            OR: [
-              { status: { in: ["queued", "waiting_input", "waiting_takeover"] } },
-              {
-                status: { in: ["leased", "running"] },
-                leaseExpiresAt: { lte: now },
-              },
-            ],
+  let gatedBy: string | undefined;
+  const leased = await deps.prisma.$transaction(async (tx) => {
+    if (!(await spaceTakesWork(tx, run.spaceId))) return { count: 0 };
+    // Per-bot queue admission: a queued unattended run waits for a free slot and its lane. The
+    // advisory lock makes the check and the claim one step per bot, so two workers cannot both pass.
+    if (run.status === "queued") {
+      gatedBy = await admissionHold(tx, run.id, now);
+      if (gatedBy) return { count: 0 };
+    }
+    return tx.run.updateMany({
+      where: {
+        id: run.id,
+        ...continueRunClaimFence(run),
+        AND: [{ OR: [{ wakeAt: null }, { wakeAt: { lte: now } }] }],
+        OR: [
+          { status: { in: ["queued", "waiting_input", "waiting_takeover"] } },
+          {
+            status: { in: ["leased", "running"] },
+            leaseExpiresAt: { lte: now },
           },
-          data: {
-            status: "leased",
-            leaseOwner: workerId,
-            leaseFence: fence,
-            leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
-            error: null,
-            checkpoint: null,
-            wakeAt: null,
-          },
-        }),
-  );
+        ],
+      },
+      data: {
+        status: "leased",
+        leaseOwner: workerId,
+        leaseFence: fence,
+        leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+        error: null,
+        checkpoint: null,
+        wakeAt: null,
+      },
+    });
+  });
+  if (gatedBy) {
+    // Stay queued and look again shortly; a finished run frees the slot or lane.
+    const again = new Date(Date.now() + 4_000);
+    await deps.prisma.run.updateMany({
+      where: { id: run.id, status: "queued" },
+      data: { wakeAt: again },
+    });
+    await wakeRun(deps.jobs, run.id, { at: again });
+    return undefined;
+  }
   if (leased.count !== 1) return undefined;
 
   const current = await deps.prisma.run.findUniqueOrThrow({
@@ -633,4 +650,58 @@ export async function runEndedForThisWorker(
     // Unknown keeps the state; the connector's idle bound still ends it.
     return false;
   }
+}
+
+/** Why a queued run may not start yet (see run-gate.ts), or undefined when it may. */
+async function admissionHold(
+  tx: Prisma.TransactionClient,
+  runId: string,
+  now: Date,
+): Promise<string | undefined> {
+  // Hand-rolled transaction doubles in unit tests carry no raw queries; a real client always does.
+  if (typeof tx.$executeRaw !== "function" || typeof tx.run.findMany !== "function")
+    return undefined;
+  const candidate = await tx.run.findUnique({
+    where: { id: runId },
+    select: {
+      id: true,
+      botId: true,
+      threadId: true,
+      trigger: true,
+      lane: true,
+      createdAt: true,
+      bot: { select: { concurrency: true } },
+    },
+  });
+  if (!candidate) return undefined;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`run-gate:${candidate.botId}`}))`;
+  const select = {
+    id: true,
+    botId: true,
+    threadId: true,
+    trigger: true,
+    lane: true,
+    createdAt: true,
+  } as const;
+  const active = await tx.run.findMany({
+    where: {
+      botId: candidate.botId,
+      status: { in: ["leased", "running"] },
+      OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { gt: now } }],
+    },
+    select,
+  });
+  const queued =
+    candidate.trigger === "bot_message"
+      ? await tx.run.findMany({
+          where: {
+            botId: candidate.botId,
+            status: "queued",
+            trigger: "bot_message",
+            OR: [{ wakeAt: null }, { wakeAt: { lte: now } }],
+          },
+          select,
+        })
+      : [];
+  return admissionBlock(candidate, candidate.bot?.concurrency ?? 1, active, queued);
 }

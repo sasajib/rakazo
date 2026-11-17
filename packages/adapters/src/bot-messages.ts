@@ -23,7 +23,9 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { bestEffort, getLogger } from "@rakazo/logging";
+import { describeQueueItem, findQueuedDuplicate, loadBotQueue } from "./bot-queue.js";
 import type { ExecutorDeps } from "./executor-deps.js";
+import { normalizeLane } from "./run-gate.js";
 import { runLeaseFor } from "./run-messages.js";
 import { wakeRun } from "./wake-run.js";
 
@@ -118,6 +120,10 @@ export async function messageBot(
     confirm_name?: string;
     message: string;
     intent?: BotMessageIntent;
+    /** Work lane (a site or topic): one active request per lane; none = the conversation. */
+    lane?: string | null;
+    /** Send even when the same request is already open in the recipient's queue. */
+    force?: boolean;
     deliveryKey?: string;
     /** Attachments filed under the recipient's chat, shown there and copied to its computer. */
     files?: Array<Extract<MessageBlock, { kind: "image" | "file" }>>;
@@ -177,6 +183,24 @@ export async function messageBot(
       replayed: true as const,
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
+
+  // Look at the recipient's queue first: a request that is already waiting or in progress is not sent twice.
+  if (!input.force) {
+    const queue = await loadBotQueue(deps.prisma, { botId: target.id, now: new Date() }).catch(
+      () => [],
+    );
+    const same = findQueuedDuplicate(message, queue);
+    if (same) {
+      return {
+        ok: true as const,
+        botId: target.id,
+        name: target.name,
+        delivered: message,
+        duplicate: true as const,
+        note: `Not sent: ${target.name} already has this request (${describeQueueItem(same)}). Do not send it again. Look at the queue with bot_queue; add force:true only if it is genuinely new work.`,
+      } as const;
+    }
+  }
 
   const onCall = await threadHasLiveCall(deps.prisma, targetThreadId);
   const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent, onCall });
@@ -305,6 +329,7 @@ export async function messageBot(
             userId: run.userId,
             status: "queued",
             trigger: "bot_message",
+            lane: normalizeLane(input.lane),
             sourceMessageId: inbound.id,
           },
           select: { id: true },

@@ -21,6 +21,7 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
   "launch_app",
   "remember",
   "standing_set",
+  "bot_queue",
   "request_takeover",
   "request_secret",
   "generate_secret",

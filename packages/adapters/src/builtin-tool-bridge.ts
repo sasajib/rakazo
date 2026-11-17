@@ -56,6 +56,7 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "schedule_cancel",
   "schedule_update",
   "message_bot",
+  "bot_queue",
   // The scratchpad is a bot's task list: its standing rules say "load it before every task", and a model that must first
   // find_tool it sometimes never does (fork: always listed, so the first call cannot fail with "tool not found").
   "scratchpad_list",
