@@ -180,3 +180,64 @@ describe("standing orders", () => {
     });
   });
 });
+
+describe("standing links merge", () => {
+  const base = () => {
+    let c = "";
+    for (const [key, text, links] of [
+      ["r1", "Always do the first thing.", ""],
+      ["r2", "Do the second thing, but call Shakil unless it works.", "+r1 @upwork"],
+    ] as const) {
+      const r = setStandingOrder(
+        c,
+        { kind: "rule", key, text, ...(links ? { links } : {}) },
+        "2026-11-17",
+      );
+      if ("error" in r) throw new Error(r.error);
+      c = r.content;
+    }
+    return c;
+  };
+  const line = (c: string, key: string) =>
+    c.split("\n").find((l) => l.includes(`rule ${key} `)) ?? "";
+
+  it("adds tokens to the current links instead of replacing them", () => {
+    const r = setStandingOrder(base(), { kind: "rule", key: "r2", links: ">r1" }, "2026-11-17");
+    if ("error" in r) throw new Error(r.error);
+    expect(line(r.content, "r2")).toContain("+r1");
+    expect(line(r.content, "r2")).toContain(">r1");
+    expect(line(r.content, "r2")).toContain("@upwork");
+  });
+
+  it("-key and -@tag remove one link and keep the rest", () => {
+    const r = setStandingOrder(
+      base(),
+      { kind: "rule", key: "r2", links: "-r1 -@upwork @fiverr" },
+      "2026-11-17",
+    );
+    if ("error" in r) throw new Error(r.error);
+    const l = line(r.content, "r2");
+    expect(l).not.toContain("+r1");
+    expect(l).not.toContain("@upwork");
+    expect(l).toContain("@fiverr");
+  });
+
+  it("an empty string clears all links", () => {
+    const r = setStandingOrder(base(), { kind: "rule", key: "r2", links: "" }, "2026-11-17");
+    if ("error" in r) throw new Error(r.error);
+    expect(line(r.content, "r2")).not.toMatch(/\+r1|@upwork/);
+  });
+
+  it("!ack survives a round trip and is dropped when the text changes", () => {
+    const a = setStandingOrder(base(), { kind: "rule", key: "r2", links: "!ack" }, "2026-11-17");
+    if ("error" in a) throw new Error(a.error);
+    expect(parseStandingOrders(a.content).find((x) => x.key === "r2")?.ack).toBe(true);
+    const b = setStandingOrder(
+      a.content,
+      { kind: "rule", key: "r2", text: "A different wording unless something." },
+      "2026-11-18",
+    );
+    if ("error" in b) throw new Error(b.error);
+    expect(parseStandingOrders(b.content).find((x) => x.key === "r2")?.ack).toBeUndefined();
+  });
+});

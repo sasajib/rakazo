@@ -14,7 +14,7 @@ export type CuratorFinding = {
 };
 
 // Only wording that carves a case OUT of a rule. "only if/when" are ordinary conditions and flag nothing.
-const EXCEPTION = /[^.;]*\b(except|exception|unless|needs? (?:shakil|the user))\b[^.;]*/i;
+const EXCEPTION = /[^.;]*\b(except|unless|needs? (?:shakil|the user))\b[^.;]*/i;
 const NEGATIVE = /\b(never|do not|don't|must not|not allowed)\b/i;
 const POSITIVE = /\b(always|must|use|click|solve)\b/i;
 // Words every rule shares; they say nothing about a common subject.
@@ -73,8 +73,10 @@ export function curateStanding(entries: readonly StandingEntry[], today: string)
   const findings: CuratorFinding[] = [];
   for (const e of entries) {
     const clause = EXCEPTION.exec(e.text)?.[0]?.trim();
-    // An exception declared with ^key is visible to every bot; only wording-only exceptions are hidden ones.
-    if (clause && !e.links?.exceptionOf.length) {
+    // Not hidden when it is declared: this entry is itself a ^ exception, another entry declares ^this-key
+    // (the carve-out lives there), or the user reviewed it (`!ack`).
+    const declaredElsewhere = entries.some((o) => o.links?.exceptionOf.includes(e.key));
+    if (clause && !e.links?.exceptionOf.length && !declaredElsewhere && !e.ack) {
       findings.push({
         kind: "exception",
         keys: [e.key],

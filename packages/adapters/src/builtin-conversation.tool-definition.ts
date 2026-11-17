@@ -313,7 +313,7 @@ export const conversationTools: ConnectorTool[] = [
         links: {
           type: "string",
           description:
-            "Links to other keys: >key wins over, ^key exception of, +key read together with, @tag applies to. E.g. `>r3 ^r5 @upwork`. Omit to keep the current links; empty clears them.",
+            "Tokens ADDED to the current links: >key wins over, ^key exception of, +key read with, @tag applies to; -key or -@tag removes one; !ack = user reviewed the exception wording. Empty string clears all.",
         },
         review: {
           type: "boolean",

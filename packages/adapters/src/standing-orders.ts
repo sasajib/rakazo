@@ -39,6 +39,8 @@ export type StandingEntry = {
   /** Absent = DEFAULT_TIER. */
   tier?: StandingTier;
   links?: StandingLinks;
+  /** `!ack`: the user reviewed this entry's exception wording and it is intended; the curator stops flagging it. Cleared when the text changes. */
+  ack?: boolean;
 };
 
 export const emptyLinks = (): StandingLinks => ({
@@ -68,14 +70,32 @@ export function normalizeStandingKey(raw: string): string {
 /** Tokens such as `p1 >r3 ^r5 +r19 @upwork` into a tier and links; an error names the bad token. */
 export function parseStandingTokens(
   raw: string,
-): { tier?: StandingTier; links: StandingLinks } | { error: string } {
+):
+  | { tier?: StandingTier; links: StandingLinks; ack?: boolean; remove: string[] }
+  | { error: string } {
   const links = emptyLinks();
+  const remove: string[] = [];
   let tier: StandingTier | undefined;
+  let ack: boolean | undefined;
   for (const token of raw.split(/[\s,]+/).filter(Boolean)) {
     const head = token[0]!;
     const rest = token.slice(1);
     if (/^p[0-3]$/.test(token)) {
       tier = Number(token[1]) as StandingTier;
+      continue;
+    }
+    if (token === "!ack") {
+      ack = true;
+      continue;
+    }
+    if (head === "-") {
+      // -key or -@tag removes that link (any type) when merging
+      const gone = rest.startsWith("@")
+        ? `@${rest.slice(1).toLowerCase()}`
+        : normalizeStandingKey(rest);
+      if (!gone || gone === "@")
+        return { error: `bad token \`${token}\`: nothing to remove after -.` };
+      remove.push(gone);
       continue;
     }
     const target =
@@ -99,7 +119,12 @@ export function parseStandingTokens(
     }
     if (!list.includes(target)) list.push(target);
   }
-  return { ...(tier === undefined ? {} : { tier }), links };
+  return {
+    ...(tier === undefined ? {} : { tier }),
+    links,
+    ...(ack ? { ack } : {}),
+    remove,
+  };
 }
 
 function renderTokens(e: StandingEntry): string {
@@ -110,6 +135,7 @@ function renderTokens(e: StandingEntry): string {
     ...(l?.exceptionOf ?? []).map((k) => `^${k}`),
     ...(l?.dependsOn ?? []).map((k) => `+${k}`),
     ...(l?.tags ?? []).map((k) => `@${k}`),
+    ...(e.ack ? ["!ack"] : []),
   ];
   return parts.length ? ` ${parts.join(" ")}` : "";
 }
@@ -119,8 +145,11 @@ export function parseStandingOrders(content: string): StandingEntry[] {
   for (const line of content.replace(/\r\n/g, "\n").split("\n")) {
     const match = LINE.exec(line.trim());
     if (!match) continue;
-    const tokens = match[3]?.trim() ? parseStandingTokens(match[3]) : { links: emptyLinks() };
-    const parsed = "error" in tokens ? { links: emptyLinks() } : tokens;
+    const none: { tier?: StandingTier; links: StandingLinks; ack?: boolean } = {
+      links: emptyLinks(),
+    };
+    const tokens = match[3]?.trim() ? parseStandingTokens(match[3]) : none;
+    const parsed = "error" in tokens ? none : tokens;
     const hasLinks = Object.values(parsed.links).some((v) => v.length > 0);
     entries.push({
       kind: match[1] as StandingKind,
@@ -129,6 +158,7 @@ export function parseStandingOrders(content: string): StandingEntry[] {
       text: match[5]!,
       ...(parsed.tier === undefined ? {} : { tier: parsed.tier }),
       ...(hasLinks ? { links: parsed.links } : {}),
+      ...(parsed.ack ? { ack: true } : {}),
     });
   }
   return entries;
@@ -194,11 +224,33 @@ export function setStandingOrder(
       return { error: "tier must be 0, 1, 2 or 3 (lower wins)." };
     tier = Number(input.tier) as StandingTier;
   }
+  let ack: boolean | undefined = old?.ack;
+  // Changed wording needs a fresh look, so an earlier `!ack` does not carry over to new text.
+  if (old && old.text !== text) ack = undefined;
   if (input.links !== undefined) {
-    const parsed = parseStandingTokens(String(input.links));
-    if ("error" in parsed) return { error: parsed.error };
-    if (parsed.tier !== undefined) tier = parsed.tier;
-    links = Object.values(parsed.links).some((v) => v.length > 0) ? parsed.links : undefined;
+    const raw = String(input.links).trim();
+    if (!raw) {
+      // "" clears every link (the tier stays)
+      links = undefined;
+      ack = undefined;
+    } else {
+      const parsed = parseStandingTokens(raw);
+      if ("error" in parsed) return { error: parsed.error };
+      if (parsed.tier !== undefined) tier = parsed.tier;
+      if (parsed.ack) ack = true;
+      // Tokens are MERGED into the current links; `-key` / `-@tag` removes one first, so a link edit never drops others.
+      const gone = new Set(parsed.remove);
+      const keep = (list: string[] | undefined, prefix = "") =>
+        (list ?? []).filter((k) => !gone.has(`${prefix}${k}`));
+      const base = links ?? emptyLinks();
+      const merged: StandingLinks = {
+        overrides: [...new Set([...keep(base.overrides), ...parsed.links.overrides])],
+        exceptionOf: [...new Set([...keep(base.exceptionOf), ...parsed.links.exceptionOf])],
+        dependsOn: [...new Set([...keep(base.dependsOn), ...parsed.links.dependsOn])],
+        tags: [...new Set([...keep(base.tags, "@"), ...parsed.links.tags])],
+      };
+      links = Object.values(merged).some((v) => v.length > 0) ? merged : undefined;
+    }
     if (links && [...links.overrides, ...links.exceptionOf, ...links.dependsOn].includes(key)) {
       return { error: "an entry cannot link to itself." };
     }
@@ -210,6 +262,7 @@ export function setStandingOrder(
     text,
     ...(tier === undefined || tier === DEFAULT_TIER ? {} : { tier }),
     ...(links ? { links } : {}),
+    ...(ack ? { ack } : {}),
   };
   if (!old) {
     entries.push(next);
