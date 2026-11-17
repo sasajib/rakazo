@@ -1,5 +1,6 @@
 package com.rakazo.notifications
 
+import android.util.Log
 import android.app.*
 import android.content.*
 import android.media.AudioAttributes
@@ -21,6 +22,8 @@ import java.util.concurrent.Executors
 class RakazoMessagingService : ExpoFirebaseMessagingService() {
   override fun onMessageReceived(message: RemoteMessage) {
     val call = runCatching { JSONObject(message.data["body"] ?: "{}") }.getOrNull() ?: JSONObject()
+    // Ids and verdicts only, never message text. Ring problems are otherwise invisible: `adb logcat -s RakazoCalls`.
+    if (call.optString("kind").startsWith("incoming_call")) Log.i(CALLS_TAG, "push ${call.optString("kind")} call=${call.optString("callId")}")
     when (call.optString("kind")) {
       "incoming_call" -> IncomingCalls.report(this, call)
       "incoming_call_ended" -> IncomingCalls.settled(this, call)
@@ -28,6 +31,8 @@ class RakazoMessagingService : ExpoFirebaseMessagingService() {
     }
   }
 }
+
+internal const val CALLS_TAG = "RakazoCalls"
 
 internal object IncomingCalls {
   const val CHANGED = "com.rakazo.notifications.INCOMING_CHANGED"
@@ -46,8 +51,11 @@ internal object IncomingCalls {
   private fun ended(context: Context) = context.getSharedPreferences("rakazo.ended_calls", Context.MODE_PRIVATE)
   /** [fromApp]: the app is leaving the foreground, which the process importance may not show yet. */
   fun report(context: Context, call: JSONObject, fromApp: Boolean = false) {
-    if (!fresh(call) || NotificationStorage(context).token.isBlank()) return
-    if (ended(context).contains(call.optString("callId"))) return
+    val callId = call.optString("callId")
+    if (!fresh(call)) { Log.i(CALLS_TAG, "ring skipped, expired call=$callId"); return }
+    if (NotificationStorage(context).token.isBlank()) { Log.i(CALLS_TAG, "ring skipped, no signed-in session call=$callId"); return }
+    if (ended(context).contains(callId)) { Log.i(CALLS_TAG, "ring skipped, already ended call=$callId"); return }
+    Log.i(CALLS_TAG, "ring call=$callId fromApp=$fromApp")
     val known = prefs(context).contains(call.optString("callId"))
     prefs(context).edit().putString(call.optString("callId"), call.toString()).apply()
     if (!known) context.sendBroadcast(Intent(CHANGED).setPackage(context.packageName))
@@ -98,6 +106,7 @@ internal object IncomingCalls {
     end(context, call.optString("callId"))
   }
   fun end(context: Context, callId: String) {
+    Log.i(CALLS_TAG, "end call=$callId")
     context.getSystemService(NotificationManager::class.java).cancel(callId.hashCode())
     prefs(context).edit().remove(callId).apply()
     context.sendBroadcast(Intent(CHANGED).setPackage(context.packageName))
@@ -107,6 +116,7 @@ internal object IncomingCalls {
     prefs(context).edit().clear().apply()
   }
   fun answer(activity: Activity, call: JSONObject) {
+    Log.i(CALLS_TAG, "answer call=${call.optString("callId")} fresh=${fresh(call)}")
     end(activity, call.optString("callId"))
     if (fresh(call)) {
       call.put("action", "answer")
@@ -128,6 +138,7 @@ internal object IncomingCalls {
     return listOf(call.keys().asSequence().associateWith { call.optString(it) })
   }
   fun decline(context: Context, call: JSONObject, done: () -> Unit) {
+    Log.i(CALLS_TAG, "decline call=${call.optString("callId")}")
     // Remembered like a call settled elsewhere, so a re-report from the app cannot ring it again.
     settled(context, call)
     val storage = NotificationStorage(context)

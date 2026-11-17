@@ -16,4 +16,5 @@
   <string name="rakazo_attention_failed">%1$s bir sorunla karşılaştı</string>
   <string name="rakazo_attention_takeover">%1$s ekranda sana ihtiyaç duyuyor</string>
   <string name="rakazo_attention_input">%1$s yanıtını bekliyor</string>
+  <string name="rakazo_action_done">Tamam</string>
 </resources>

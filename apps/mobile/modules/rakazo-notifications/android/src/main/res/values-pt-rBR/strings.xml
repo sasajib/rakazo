@@ -16,4 +16,5 @@
   <string name="rakazo_attention_failed">%1$s encontrou um problema</string>
   <string name="rakazo_attention_takeover">%1$s precisa de você na tela</string>
   <string name="rakazo_attention_input">%1$s precisa da sua resposta</string>
+  <string name="rakazo_action_done">Concluído</string>
 </resources>

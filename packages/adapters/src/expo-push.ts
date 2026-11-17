@@ -58,6 +58,7 @@ export function expoPushData(
     botId: message.botId,
     threadId: message.threadId,
     ...(message.runId ? { runId: message.runId } : {}),
+    ...(message.messageId ? { messageId: message.messageId } : {}),
     deliveryId,
     ...(spaceId ? { spaceId } : {}),
     ...(message.groupId ? { groupId: message.groupId } : {}),
