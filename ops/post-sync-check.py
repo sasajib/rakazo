@@ -46,6 +46,13 @@ def code_markers():
         check("feature present in source: " + marker, n >= need, f"{n} files (need {need})")
 
 
+def prompt_surface():
+    # the committed prompt/tool snapshots must match the code: a merge that changed a prompt or tool fails here
+    r = subprocess.run(["npx", "vitest", "run", "packages/adapters/src/prompt-surface.test.ts"], cwd=SRC, capture_output=True, text=True, timeout=280)
+    out = r.stdout + r.stderr
+    check("prompt surface matches committed snapshot", r.returncode == 0, "review the diff, then run with -u" if r.returncode else "unchanged")
+
+
 def migrations():
     mdir = SRC + "/packages/db/prisma/migrations"
     # upstream marks drop-after-release migrations "-- deferred": applied by a later step, not by migrate deploy
@@ -99,7 +106,7 @@ def live_queue_test():
 
 
 if __name__ == "__main__":
-    stack(); code_markers(); migrations()
+    stack(); code_markers(); prompt_surface(); migrations()
     if "--quick" not in sys.argv:
         live_queue_test()
     print("\nRESULT:", "ALL PASS" if all(results) else f"{results.count(False)} FAILED")

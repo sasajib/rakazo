@@ -72,6 +72,10 @@ try:
         if rep:
             findings.append(f"repeated ask_user ({names.get(bid, bid[:8])})")
     errs = c.execute("select tool, count(*), sum(outcome='error') from tool_calls where ts>? group by 1 having sum(outcome='error')>=5 order by 3 desc limit 8", (since,)).fetchall()
+    learn = c.execute("select tool, count(*) from tool_calls where tool in ('skill_create','skill_update','standing_set') and ts>? group by 1", (since,)).fetchall()
+    lines.append("\n## Learning: skills and standing orders saved\n")
+    lines.append("- " + (", ".join(f"{t}: {n}" for t, n in learn) if learn else "no skill_create / skill_update / standing_set calls in the window") )
+    lines.append("- If bots keep hitting blocked sites (section above) but save no skills, the lesson-capture nudge is not working.")
     section("Tool error hot spots (5+ errors)", [f"{e[0]}: {e[2]} errors of {e[1]} calls" for e in errs], flag=True)
 except Exception as e:
     lines.append(f"- audit db unreadable: {e}")
