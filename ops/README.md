@@ -11,3 +11,9 @@ Live copy: `/home/sasajib/the-data/rakazo/ops/` — refresh it with `cp ops/*.py
   Scheduled by a Hermes cron job (Mondays 09:00 Asia/Dhaka).
 - `rakazo_rpc.py` — tiny client for Rakazo's web RPC through the signed-in BrowserOS Neo tab (127.0.0.1:9210); finds the open
   agents.mindshare.website tab itself.
+- `pgvector-swap.sh rehearse|swap|rollback` — moved production Postgres from `postgres:16` to `rakazo/postgres-graph:16-pgv-age1.6`
+  (Dockerfile in `ops/postgres-graph/`: pgvector + Apache AGE on the same Debian 13 / PG 16). `rehearse` restores the live dump into a
+  scratch container and compares every table and object; `swap` stops the app, dumps, archives the old volume (rollback copy), restores into
+  the new image and verifies; `rollback` puts the old image and volume back. Done 2026-11-17 (backups/pgswap-20261117-1604).
+  Known AGE limit: a graph does not survive pg_dump/restore (graph OIDs change). Keep rules and links in ordinary tables and rebuild any AGE
+  graph from them; AGE queries need `SET search_path = ag_catalog, public`.
