@@ -18,7 +18,19 @@ describe("bot queue", () => {
   it("finds a request that repeats one already open", () => {
     const again =
       "Check the Indeed salary field and report the saved value in USD per year for the profile please.";
-    expect(findQueuedDuplicate(again, [item({})])?.id).toBe("r1");
+    expect(findQueuedDuplicate(again, [item({})], "indeed")?.id).toBe("r1");
+    expect(findQueuedDuplicate(item({}).text, [item({})])?.id).toBe("r1");
+  });
+
+  it("never calls a one-word variation a duplicate, in any lane", () => {
+    const a = item({
+      text: "Q-A: run the shell command sleep 25 && echo A-done, then reply done",
+      lane: "indeed",
+    });
+    const b = "Q-B: run the shell command sleep 25 && echo B-done, then reply done";
+    expect(findQueuedDuplicate(b, [a], "himalayas")).toBeUndefined();
+    expect(findQueuedDuplicate(b, [a], "indeed")).toBeUndefined();
+    expect(findQueuedDuplicate(b, [a])).toBeUndefined();
   });
 
   it("does not call different work a duplicate, or match people's runs", () => {

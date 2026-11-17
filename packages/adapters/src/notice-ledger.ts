@@ -45,7 +45,7 @@ function tokens(text: string): Set<string> {
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s]/gu, " ")
       .split(/\s+/)
-      .filter((w) => w.length > 1),
+      .filter((w) => w.length > 0),
   );
 }
 
@@ -59,7 +59,8 @@ export function textSimilarity(a: string, b: string): number {
   return both / (x.size + y.size - both);
 }
 
-export const DUPLICATE_THRESHOLD = 0.8;
+/** Word overlap above which a message counts as a repeat. Templated messages differing by one word must not. */
+export const DUPLICATE_THRESHOLD = 0.9;
 
 /** The earlier notice this text repeats, if any (short texts must match exactly). */
 export function findDuplicateNotice(text: string, recent: readonly Notice[]): Notice | undefined {

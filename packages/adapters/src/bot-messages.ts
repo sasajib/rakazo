@@ -189,7 +189,7 @@ export async function messageBot(
     const queue = await loadBotQueue(deps.prisma, { botId: target.id, now: new Date() }).catch(
       () => [],
     );
-    const same = findQueuedDuplicate(message, queue);
+    const same = findQueuedDuplicate(message, queue, normalizeLane(input.lane));
     if (same) {
       return {
         ok: true as const,

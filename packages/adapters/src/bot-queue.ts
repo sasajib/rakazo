@@ -65,19 +65,24 @@ export async function loadBotQueue(
   });
 }
 
-/** An open bot_message request that already says (nearly) the same thing. */
+/** An open bot_message request that already says the same thing. */
 export function findQueuedDuplicate(
   message: string,
   queue: readonly QueueItem[],
+  lane: string | null = null,
 ): QueueItem | undefined {
   const wanted = message.replace(/\s+/g, " ").trim();
   if (!wanted) return undefined;
   return queue.find((item) => {
     if (item.trigger !== "bot_message" || !item.text) return false;
     const have = item.text.replace(/\s+/g, " ").trim();
+    if (have === wanted) return true;
+    // Near-identical text counts only inside the same lane: another lane is other work.
     return (
-      have === wanted ||
-      (wanted.length >= 30 && textSimilarity(wanted, have) >= DUPLICATE_THRESHOLD)
+      lane !== null &&
+      item.lane === lane &&
+      wanted.length >= 30 &&
+      textSimilarity(wanted, have) >= DUPLICATE_THRESHOLD
     );
   });
 }
