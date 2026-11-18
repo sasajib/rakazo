@@ -1054,7 +1054,13 @@ server = AgentServer()
 
 
 def prewarm(proc: JobProcess) -> None:
-    proc.userdata["vad"] = silero.VAD.load()
+    # 0.7 s of silence ends the caller's turn (framework default 0.55): the transcript is ready almost
+    # immediately now, and the extra 0.15 s is what keeps a caller who pauses to think mid-sentence from
+    # being split into two turns by the VAD alone.
+    proc.userdata["vad"] = silero.VAD.load(
+        min_silence_duration=float(os.environ.get("VOICE_VAD_SILENCE_S", "0.7")),
+        min_speech_duration=float(os.environ.get("VOICE_VAD_MIN_SPEECH_S", "0.05")),
+    )
 
 
 server.setup_fnc = prewarm
