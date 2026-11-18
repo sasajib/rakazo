@@ -120,6 +120,38 @@ Set `TTS_PROVIDER=kokoro` and `KOKORO_BASE_URL` (any OpenAI-compatible `/v1/audi
 - Approvals and codes are deliberately not accepted by voice.
 - The web page is a test harness, not a Rakazo UI; embedding this into `apps/web`'s call card would be the next step.
 
+## Fully local speech (no cloud, CPU only)
+
+Both directions can run against a local OpenAI-compatible speech service (see `speech-local/` in the
+deployment repo): Parakeet-unified-en for hearing, Supertonic 3 / Piper for speaking. Set
+`STT_PROVIDER=local`, `TTS_PROVIDER=local`, `LOCAL_SPEECH_URL`, `LOCAL_TTS_VOICE` (Supertonic styles
+`supertonic-f1`..`supertonic-m5`, `m2` is the deep male; or Piper `amy`/`lessac`).
+
+Speech in: `local_streaming_stt.py` keeps **one WebSocket open per call** and pushes audio into it at real
+time, so the service decodes the utterance while the caller is still speaking. Parakeet is an offline model
+(there is no online NeMo transducer in sherpa-onnx), so the service streams by committing what it decoded at
+every silence the VAD finds and only ever decoding the tail: the final transcript comes back
+**0.12-0.31 s** after LiveKit flushes the stream, against **1.7-2.0 s** for one-shot decoding of the same
+utterance, and only about half the audio is decoded at all. Interim transcripts arrive from ~0.5 s, so the
+caller sees words while they speak.
+
+Note the load-bearing detail: the plugin declares `STTCapabilities(streaming=True, interim_results=True,
+manual_flush=True)`. LiveKit only calls `flush()` on a stream that says it can be flushed, and a streaming
+STT that is never flushed never emits a final transcript - the turn then commits on interim text.
+
+Speech out: Supertonic generates per piece and the service streams each piece as it is produced; the first
+piece is cut at 44 characters, so first audio lands 0.4-0.5 s in. Piper stays available (0.06 s first audio)
+as the cheap fallback. Measured on 8 CPU cores, no GPU.
+
+`scripts/check_local_speech.py` is the gate for this path: it runs inside the agent image, pushes real audio
+through the same plugin classes the call uses, and fails on missing words, a final slower than 1.2 s after
+the flush, capabilities without `manual_flush`, or first TTS audio over 1.5 s.
+
+```bash
+docker compose run --rm -v "$PWD/app:/app:ro" -v "$PWD/app/scripts:/scripts:ro" -w /app \
+  -e PYTHONPATH=/app --entrypoint python agent /scripts/check_local_speech.py
+```
+
 ## Conversation gate
 
 `scripts/scenario_assert.py` runs one whole call with a synthetic caller and judges how it feels: the
