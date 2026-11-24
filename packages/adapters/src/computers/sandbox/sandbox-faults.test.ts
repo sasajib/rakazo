@@ -149,8 +149,12 @@ describe.each([
       context,
     );
     if (provider instanceof HostComputerSandbox) {
-      await expect(provider.observe()).rejects.toThrow("Local screen control is unavailable");
-      await expect(provider.act()).rejects.toThrow("Local screen control is unavailable");
+      await expect(provider.observe(computer, context)).rejects.toThrow(
+        "Local screen control is unavailable",
+      );
+      await expect(
+        provider.act(computer, { actions: [{ kind: "wait", ms: 0 }] }, context),
+      ).rejects.toThrow("Local screen control is unavailable");
       return;
     }
     const before = await provider.observe(computer, context);

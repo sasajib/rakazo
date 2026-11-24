@@ -13,7 +13,7 @@ import {
   TeachRecordingChrome,
   TeachStopButton,
 } from "../../../components/teach/TeachRecordingChrome";
-import { runsOnUserMachine } from "../../../lib/computers/computer-sandbox";
+import { screenlessUserMachine } from "../../../lib/computers/computer-sandbox";
 import { screenFrames, screenIframeSandbox } from "../../../lib/computers/computer-screen";
 import {
   DARWIN_WINDOW_CONTROLS_WIDTH_PX,
@@ -77,7 +77,7 @@ export function ComputerOverlay({
 }: ComputerOverlayProps) {
   // The picture is taken on the server from the running computer, so it does not wait for the frame
   // to connect; a user's own machine has no screen here to take.
-  const canSaveScreenshot = !runsOnUserMachine(computer) && computer?.state === "running";
+  const canSaveScreenshot = !screenlessUserMachine(computer) && computer?.state === "running";
   return (
     <div className="fixed inset-0 z-30 bg-background">
       <div
@@ -192,7 +192,7 @@ export function ComputerOverlay({
           </div>
         ) : null}
         <div className="relative min-h-0 flex-1 bg-background">
-          {runsOnUserMachine(computer) ? (
+          {screenlessUserMachine(computer) ? (
             <DesktopKindEmptyState className="grid h-full place-items-center px-8 text-center text-body text-muted-foreground/80" />
           ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
             <>

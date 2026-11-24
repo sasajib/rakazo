@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import type { HostScreen } from "../screens/host-screen.js";
 import { HOST_COMPUTER_MAX_BYTES } from "./host-computer-protocol.js";
 import { createHostComputerRunner } from "./host-computer-runner.js";
+import type { HostDisplay } from "./host-display.js";
 
 /** No renderer receives the credential. Docker reaches this listener through its host gateway. */
 export async function startHostComputerServer(options: {
@@ -13,9 +14,15 @@ export async function startHostComputerServer(options: {
   hostname?: string;
   /** Drives this computer's apps. Owned by the caller, which closes it. */
   screen?: HostScreen;
+  /** This computer's whole display, shown and driven like a Docker computer's. Caller closes it. */
+  display?: HostDisplay;
 }) {
   if (!/^[a-f0-9]{64}$/.test(options.token)) throw new Error("Invalid local computer credential");
-  const runner = createHostComputerRunner({ root: options.root, screen: options.screen });
+  const runner = createHostComputerRunner({
+    root: options.root,
+    screen: options.screen,
+    display: options.display,
+  });
   const secret = Buffer.from(`Bearer ${options.token}`);
   const server = createServer(async (request, response) => {
     const credential = Buffer.from(request.headers.authorization ?? "");

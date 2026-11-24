@@ -3,6 +3,7 @@ import {
   diskUsedPercent,
   holdsUserControl,
   sandboxKindCapabilities,
+  userMachineServesScreen,
 } from "@rakazo/adapters";
 import type { ComputerStatus } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
@@ -133,6 +134,9 @@ export function toComputerStatus(
     canUpdate: capabilities.inPlaceUpdate,
     terminalAvailable: capabilities.terminal,
     ...(capabilities.runsOnUserMachine ? { runsOnUserMachine: true } : {}),
+    ...(capabilities.runsOnUserMachine && userMachineServesScreen(kind)
+      ? { userMachineScreen: true }
+      : {}),
     ...(diskFull ? { diskFullPercent: diskPercent } : {}),
   };
 }

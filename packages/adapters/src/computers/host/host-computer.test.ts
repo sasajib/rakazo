@@ -517,7 +517,9 @@ describe("native host computer transport", () => {
     controller.abort();
     await rejected;
     await expect.poll(() => processExists(pid)).toBe(false);
-    await expect(client.connectScreen()).rejects.toThrow("unavailable");
+    await expect(client.connectScreen(computer, { view: "stream" }, context)).rejects.toThrow(
+      "unavailable",
+    );
     expect(client.describe().capabilities.graphical).toBe(false);
   });
 });

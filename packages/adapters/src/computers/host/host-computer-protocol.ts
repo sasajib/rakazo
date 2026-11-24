@@ -1,6 +1,7 @@
 import { boundedSandboxCommandTimeoutMs } from "@rakazo/core/node/sandbox-command";
 import { z } from "zod";
 import { hostScreenMethods } from "../screens/host-screen.js";
+import { hostDisplayMethods } from "./host-display.js";
 
 export const HOST_COMPUTER_MAX_BYTES = 12 * 1024 * 1024;
 export const HOST_COMPUTER_MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -65,12 +66,20 @@ export const hostComputerRequest = z.discriminatedUnion("method", [
   z.object({ ...base, method: z.literal("writeFile"), file }),
   z.object({ ...base, method: z.literal("screenObserve"), ...hostScreenMethods.screenObserve }),
   z.object({ ...base, method: z.literal("screenAct"), ...hostScreenMethods.screenAct }),
+  // The whole display of a host that serves its screen (Linux desktop), like a Docker computer's.
+  z.object({ ...base, method: z.literal("displayConnect"), ...hostDisplayMethods.displayConnect }),
+  z.object({ ...base, method: z.literal("displayControl"), ...hostDisplayMethods.displayControl }),
+  z.object({ ...base, method: z.literal("displayObserve"), ...hostDisplayMethods.displayObserve }),
+  z.object({ ...base, method: z.literal("displayInput"), ...hostDisplayMethods.displayInput }),
+  z.object({ ...base, method: z.literal("displayAct"), ...hostDisplayMethods.displayAct }),
 ]);
 export type HostComputerRequest = z.infer<typeof hostComputerRequest>;
 export interface HostComputerEnvironment {
   platform: string;
   home: string;
   shell: string;
+  /** Set when this host serves its whole display (see HostDisplay). */
+  display?: boolean;
 }
 export type HostComputerFrame<T> =
   | { value: T }
@@ -95,5 +104,7 @@ export function hostComputerFileTooLargeLimit(message: string): number | undefin
 export function hostComputerDeadlineMs(request: HostComputerRequest) {
   if (request.method === "execute")
     return boundedSandboxCommandTimeoutMs(request.command.timeoutMs) + 30_000;
-  return request.method.startsWith("screen") ? 2 * 60_000 : 10 * 60_000;
+  return request.method.startsWith("screen") || request.method.startsWith("display")
+    ? 2 * 60_000
+    : 10 * 60_000;
 }

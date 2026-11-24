@@ -1,8 +1,11 @@
 import { ComputerStatusSchema } from "@rakazo/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveComputerWork, toComputerStatus } from "./computer-status.js";
 
 describe("toComputerStatus", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
   it("shows a quarantined computer as an error without making its screen available", () => {
     expect(
       toComputerStatus("bot", {
@@ -35,6 +38,21 @@ describe("toComputerStatus", () => {
     expect(toComputerStatus("bot", { ...computer, kind: "desktop" }).runsOnUserMachine).toBe(true);
     expect(toComputerStatus("bot", { ...computer, kind: "docker" })).not.toHaveProperty(
       "runsOnUserMachine",
+    );
+  });
+  it("shows the screen of the person's own machine only when its host serves it", () => {
+    const computer = { state: "running", scope: "team", controlHolder: "none", homeRevision: "r" };
+    expect(toComputerStatus("bot", { ...computer, kind: "desktop" })).not.toHaveProperty(
+      "userMachineScreen",
+    );
+    vi.stubEnv("SANDBOX_HOST_SCREEN", "1");
+    const status = toComputerStatus("bot", { ...computer, kind: "desktop" });
+    expect(ComputerStatusSchema.parse(status)).toMatchObject({
+      runsOnUserMachine: true,
+      userMachineScreen: true,
+    });
+    expect(toComputerStatus("bot", { ...computer, kind: "docker" })).not.toHaveProperty(
+      "userMachineScreen",
     );
   });
   it("warns at 90% full until the user hides it, and again once the disk fills further", () => {

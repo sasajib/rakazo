@@ -14,7 +14,7 @@ import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComputerMaintenanceActions } from "../../../components/computers/ComputerMaintenanceActions";
 import { computersAreUnavailable } from "../../../components/computers/ComputersUnavailableHint";
-import { runsOnUserMachine } from "../../../lib/computers/computer-sandbox";
+import { screenlessUserMachine } from "../../../lib/computers/computer-sandbox";
 import { bootComputerOnce, embeddableScreenUrl } from "../../../lib/computers/computer-screen";
 import type { createSpaceRpc } from "../../../lib/query/rpc";
 import {
@@ -455,7 +455,7 @@ export function useComputerControls({
     Boolean(computerError && !hideScreenReadError && computerErrorFromScreen) ||
     screenMissing({
       state: computer?.state,
-      runsOnUserMachine: runsOnUserMachine(computer),
+      runsOnUserMachine: screenlessUserMachine(computer),
       booting,
       screenUrlLoaded: Boolean(computerBot?.id && screenUrlLoadedBotId === computerBot.id),
       embeddedUrl: embeddedScreenUrl,
@@ -535,13 +535,13 @@ export function useComputerControls({
     ) : null;
   const computerPreviewScreen =
     !computerOpen &&
-    !runsOnUserMachine(computer) &&
+    !screenlessUserMachine(computer) &&
     computer?.state === "running" &&
     Boolean(embeddedScreenUrl) &&
     !computerScreenError;
   const showingRecoveryHint =
     !computerOpen &&
-    !runsOnUserMachine(computer) &&
+    !screenlessUserMachine(computer) &&
     !computerPreviewScreen &&
     !computerScreenError &&
     showComputerRecoveryHint;

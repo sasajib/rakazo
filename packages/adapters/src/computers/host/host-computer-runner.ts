@@ -14,6 +14,7 @@ import {
   hostComputerFileTooLargeMessage,
   hostComputerRequest,
 } from "./host-computer-protocol.js";
+import type { HostDisplay } from "./host-display.js";
 
 /** Where one request's frames go. A write may wait for the transport to drain. */
 export interface HostComputerSink {
@@ -37,7 +38,12 @@ export interface HostComputerCall {
  * Runs host computer requests from any transport: the local HTTP listener and the outbound
  * device socket share validation, limits, cancellation, and error sanitizing.
  */
-export function createHostComputerRunner(options: { root: string; screen?: HostScreen }) {
+export function createHostComputerRunner(options: {
+  root: string;
+  screen?: HostScreen;
+  /** This computer's whole display, when it serves one (Linux desktop). */
+  display?: HostDisplay;
+}) {
   let enabled = false;
   const active = new Map<
     AbortController,
@@ -66,6 +72,12 @@ export function createHostComputerRunner(options: { root: string; screen?: HostS
     return options.screen;
   }
 
+  function display() {
+    if (!options.display)
+      throw new HostScreenError("Screen control is not available on this computer.");
+    return options.display;
+  }
+
   async function* dispatch(
     input: HostComputerRequest,
     context: AdapterContext,
@@ -79,8 +91,28 @@ export function createHostComputerRunner(options: { root: string; screen?: HostS
       case "screenAct":
         yield await screen().act(scope, input.app, input.actions);
         break;
+      case "displayConnect":
+        yield await display().connect(input);
+        break;
+      case "displayControl":
+        await display().setControl(input.interactive, input.controlToken);
+        yield null;
+        break;
+      case "displayObserve":
+        yield await display().observe(context.signal);
+        break;
+      case "displayInput":
+        await display().input(input.input, context.signal);
+        yield null;
+        break;
+      case "displayAct":
+        yield await display().act(input.actions, input.observe, input.settleMs, context.signal);
+        break;
       case "environment":
-        yield await provider.environment();
+        yield {
+          ...(await provider.environment()),
+          ...(options.display ? { display: true } : {}),
+        };
         break;
       case "provision": {
         const result = await provider.provision({ botId: computer.botId, homePath: "" }, context);

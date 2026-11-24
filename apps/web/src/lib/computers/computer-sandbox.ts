@@ -13,6 +13,19 @@ export function runsOnUserMachine(
   return computer?.runsOnUserMachine ?? computer?.kind === "desktop";
 }
 
+/**
+ * Whether the computer is the user's own machine with no screen to show here. A host that serves
+ * its display (`userMachineScreen`) shows it like any computer.
+ */
+export function screenlessUserMachine(
+  computer:
+    | Pick<ComputerStatus, "kind" | "runsOnUserMachine" | "userMachineScreen">
+    | null
+    | undefined,
+): boolean {
+  return runsOnUserMachine(computer) && computer?.userMachineScreen !== true;
+}
+
 export function computersAreUnavailable(sandboxProvider: string | null | undefined): boolean {
   return sandboxProvider === "none" || sandboxProvider === "";
 }

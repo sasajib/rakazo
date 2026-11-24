@@ -27,6 +27,7 @@ import {
 } from "../../computers/computer-lifecycle.js";
 import { resolveComputerRunModel } from "../../computers/computer-model-settings.js";
 import { checkpointRunComputerWorkspace } from "../../computers/computer-workspace.js";
+import { userMachineServesScreen } from "../../computers/host/host-display-setting.js";
 import { sandboxKindCapabilities } from "../../computers/sandbox/sandbox-kind-capabilities.js";
 import { teamWorkspaceInstruction } from "../../computers/screens/computer-support.prompt.js";
 import type { RunMediaSources } from "../../media/media-sources.js";
@@ -370,7 +371,8 @@ export async function prepareRunComputer(
     .filter(Boolean)
     .join("\n\n");
   const graphical =
-    !sandboxKindCapabilities(computerKind).runsOnUserMachine &&
+    (!sandboxKindCapabilities(computerKind).runsOnUserMachine ||
+      userMachineServesScreen(computerKind)) &&
     deps.sandbox.describe().capabilities.graphical;
   // Gate on the pair written to the run row above; re-deriving it would drop the
   // deployment fallback and gate a vision-capable default as text-only.

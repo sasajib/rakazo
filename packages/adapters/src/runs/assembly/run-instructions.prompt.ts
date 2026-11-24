@@ -28,12 +28,15 @@ export const PRIVATE_WORKSPACE_INSTRUCTION =
 /** Where commands run when the computer is a host with its own shell rather than a sandbox. */
 export function hostComputerInstruction(
   computerKind: string | undefined,
-  host: { home: unknown; shell: unknown; platform: string },
+  host: { home: unknown; shell: unknown; platform: string; display?: unknown },
 ): string {
   const shell = `Home: ${JSON.stringify(host.home)}. Shell: ${JSON.stringify(host.shell)}. The shell tool executes commands with that shell. Use its native syntax, paths and installed tools; do not assume Linux or bash.`;
-  return computerKind === "wuying"
-    ? `Commands run on a Windows cloud computer. ${shell} Files outside the bot workspace can be accessed through commands. The screen shows the Windows desktop; use the graphical tools for apps without a command line.`
-    : `Commands run on the user's ${host.platform} computer with their account permissions. ${shell} Local files outside the bot workspace can be accessed through commands. App launching is available through OS commands; graphical screen control is unavailable.`;
+  if (computerKind === "wuying")
+    return `Commands run on a Windows cloud computer. ${shell} Files outside the bot workspace can be accessed through commands. The screen shows the Windows desktop; use the graphical tools for apps without a command line.`;
+  const machine = `Commands run on the user's ${host.platform} computer with their account permissions. ${shell} Local files outside the bot workspace can be accessed through commands.`;
+  return host.display === true
+    ? `${machine} The screen is the user's own desktop, shared with the user and other bots: windows and tabs you did not open are theirs, so never close, type into or rearrange them. Open apps through OS commands.`
+    : `${machine} App launching is available through OS commands; graphical screen control is unavailable.`;
 }
 
 /** Cap the roster so a large Space cannot flood the prompt. */

@@ -4,6 +4,7 @@ import {
   computersAreUnavailable,
   runsOnUserMachine,
   sandboxCheckFailureMessage,
+  screenlessUserMachine,
 } from "./computer-sandbox.js";
 
 describe("runsOnUserMachine", () => {
@@ -13,6 +14,17 @@ describe("runsOnUserMachine", () => {
     expect(runsOnUserMachine({ kind: "desktop" })).toBe(true);
     expect(runsOnUserMachine({ kind: "any-kind" })).toBe(false);
     expect(runsOnUserMachine(null)).toBe(false);
+  });
+});
+
+describe("screenlessUserMachine", () => {
+  it("shows the screen of a user's machine whose host serves it", () => {
+    expect(screenlessUserMachine({ kind: "desktop", runsOnUserMachine: true })).toBe(true);
+    expect(
+      screenlessUserMachine({ kind: "desktop", runsOnUserMachine: true, userMachineScreen: true }),
+    ).toBe(false);
+    expect(screenlessUserMachine({ kind: "docker" })).toBe(false);
+    expect(screenlessUserMachine(null)).toBe(false);
   });
 });
 

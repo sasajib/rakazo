@@ -6,7 +6,7 @@ import { BotAvatar, Button } from "@rakazo/ui-web";
 import { HardDrive, Maximize2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { ComputersUnavailableHint } from "../../../components/computers/ComputersUnavailableHint";
-import { runsOnUserMachine } from "../../../lib/computers/computer-sandbox";
+import { screenlessUserMachine } from "../../../lib/computers/computer-sandbox";
 import { screenFrames, screenIframeSandbox } from "../../../lib/computers/computer-screen";
 import { DesktopKindEmptyState } from "./computer-view";
 
@@ -98,7 +98,7 @@ function ComputerPreview({
     !computerBooting &&
     !computerScreenError &&
     !showComputerRecoveryHint &&
-    !runsOnUserMachine(computer) &&
+    !screenlessUserMachine(computer) &&
     (!computer || computer.state === "stopped" || computer.state === "suspended");
   if (idle) {
     return (
@@ -138,7 +138,7 @@ function ComputerPreview({
       <div
         data-testid="computer-preview"
         data-state={
-          computer?.state === "running" && !runsOnUserMachine(computer) ? "running" : undefined
+          computer?.state === "running" && !screenlessUserMachine(computer) ? "running" : undefined
         }
         className={`group relative rounded-xl bg-muted/50 ${
           showingRecoveryHint ? "" : "aspect-[16/10] overflow-hidden"
@@ -150,7 +150,7 @@ function ComputerPreview({
           >
             <Trans>Open in full window</Trans>
           </div>
-        ) : runsOnUserMachine(computer) ? (
+        ) : screenlessUserMachine(computer) ? (
           <DesktopKindEmptyState
             className={`grid h-full place-items-center px-6 text-center text-body text-muted-foreground/80 ${hideOnHover}`}
           />

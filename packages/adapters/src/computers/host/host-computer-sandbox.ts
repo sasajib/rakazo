@@ -1,17 +1,25 @@
 import type {
   AdapterContext,
   CommandRequest,
+  ComputerActionRequest,
+  ComputerActionResult,
   ComputerFileEntry,
+  ComputerInput,
+  ComputerObservation,
   ComputerRef,
+  ControlLeaseRef,
   PortableFile,
   ProcessEvent,
   SandboxProvider,
+  ScreenRequest,
+  ScreenSession,
   WorkspaceDirectoryRequest,
 } from "@rakazo/adapter-kit";
 import { SandboxFileTooLargeError } from "@rakazo/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@rakazo/core/node/sandbox-command";
 import { describeDesktopSandbox } from "../../providers/computer/desktop/desktop-sandbox.js";
 import { shouldSkipPortableWorkspaceFile } from "../../storage/workspace-save-policy.js";
+import { boundedComputerActions, computerObservation } from "../screens/computer-support.js";
 import type {
   HostComputerEnvironment,
   HostComputerFrame,
@@ -23,6 +31,7 @@ import {
   hostComputerDeadlineMs,
   hostComputerFileTooLargeLimit,
 } from "./host-computer-protocol.js";
+import type { HostDisplayObservation } from "./host-display.js";
 
 /** Authenticated native host transport. Commands are never retried after a lost response. */
 export class HostComputerSandbox implements SandboxProvider {
@@ -235,18 +244,112 @@ export class HostComputerSandbox implements SandboxProvider {
   async destroy(computer: ComputerRef, context: AdapterContext) {
     await this.one({ method: "destroy", botId: computer.botId }, context);
   }
-  async connectScreen(): Promise<never> {
-    throw new Error(
-      "Local screen control is unavailable. Use commands to work with files and apps.",
+  /**
+   * A host that serves its display (Linux desktop, see HostDisplay) shows and takes input like a
+   * Docker computer; any other host refuses, as before.
+   */
+  async connectScreen(
+    computer: ComputerRef,
+    request: ScreenRequest,
+    context: AdapterContext,
+  ): Promise<ScreenSession> {
+    if (request.interactive && !request.controlToken)
+      throw new Error("interactive screen requires a control token");
+    const session = await this.one<{ url: string }>(
+      {
+        method: "displayConnect",
+        botId: computer.botId,
+        interactive: request.interactive === true,
+        controlToken: request.interactive ? request.controlToken : undefined,
+      },
+      context,
+    ).catch((error: unknown) => {
+      throw screenUnavailable(error);
+    });
+    return { url: session.url, mimeType: "text/html", close: async () => undefined };
+  }
+  async setScreenControl(
+    computer: ComputerRef,
+    interactive: boolean,
+    context: AdapterContext,
+    controlToken?: string,
+  ) {
+    try {
+      await this.one(
+        { method: "displayControl", botId: computer.botId, interactive, controlToken },
+        context,
+      );
+    } catch (error) {
+      // Nothing to release on a host without a screen.
+      if (interactive || !isNoScreen(error)) throw screenUnavailable(error);
+    }
+  }
+  async sendInput(
+    computer: ComputerRef,
+    input: ComputerInput,
+    _lease: ControlLeaseRef,
+    context: AdapterContext,
+  ) {
+    await this.one({ method: "displayInput", botId: computer.botId, input }, context).catch(
+      (error: unknown) => {
+        throw screenUnavailable(error);
+      },
     );
   }
-  async sendInput(): Promise<never> {
-    throw new Error("Local screen control is unavailable");
+  async observe(computer: ComputerRef, context: AdapterContext): Promise<ComputerObservation> {
+    const observed = await this.one<HostDisplayObservation>(
+      { method: "displayObserve", botId: computer.botId },
+      context,
+    ).catch((error: unknown) => {
+      throw screenUnavailable(error);
+    });
+    return hostObservation(observed);
   }
-  async observe(): Promise<never> {
-    throw new Error("Local screen control is unavailable");
+  async act(
+    computer: ComputerRef,
+    request: ComputerActionRequest,
+    context: AdapterContext,
+  ): Promise<ComputerActionResult> {
+    const result = await this.one<{ completed: number; observation?: HostDisplayObservation }>(
+      {
+        method: "displayAct",
+        botId: computer.botId,
+        actions: boundedComputerActions(request.actions),
+        observe: request.observe,
+        settleMs:
+          request.settleMs === undefined
+            ? undefined
+            : Math.min(Math.max(Math.round(request.settleMs), 0), 5_000),
+      },
+      context,
+    ).catch((error: unknown) => {
+      throw screenUnavailable(error);
+    });
+    return {
+      completed: result.completed,
+      ...(result.observation ? { observation: hostObservation(result.observation) } : {}),
+    };
   }
-  async act(): Promise<never> {
-    throw new Error("Local screen control is unavailable");
-  }
+}
+
+const NO_SCREEN = "Screen control is not available on this computer.";
+
+function isNoScreen(error: unknown) {
+  return error instanceof Error && error.message === NO_SCREEN;
+}
+
+/** A host without a display (macOS/Windows desktop app) keeps the message it always gave. */
+function screenUnavailable(error: unknown) {
+  return isNoScreen(error)
+    ? new Error("Local screen control is unavailable. Use commands to work with files and apps.")
+    : error;
+}
+
+function hostObservation(observed: HostDisplayObservation): ComputerObservation {
+  return computerObservation(new Uint8Array(Buffer.from(observed.image, "base64")), {
+    mimeType: observed.mimeType,
+    width: observed.width,
+    height: observed.height,
+    ...(observed.cursor ? { cursor: observed.cursor } : {}),
+  });
 }

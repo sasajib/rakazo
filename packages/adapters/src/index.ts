@@ -54,6 +54,7 @@ export * from "./computers/computer-update.js";
 export * from "./computers/computer-wake.js";
 export * from "./computers/computer-workspace.js";
 export * from "./computers/host/host-computer-device.js";
+export * from "./computers/host/host-display-setting.js";
 export * from "./computers/host/user-device-emulator.js";
 export * from "./computers/host/user-device-gateway.js";
 export * from "./computers/host/user-device-protocol.js";
