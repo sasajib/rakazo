@@ -12,6 +12,7 @@ import { clearSessionToken, currentSessionGeneration, saveSessionToken } from ".
 import type { CallState } from "../calls/call-session";
 import { getSnapshot as getCallSnapshot, startCall } from "../calls/call-session";
 import { loadCallGreetingEnabled } from "../calls/call-sounds";
+import { resolveCallTransport } from "../calls/voice-agent";
 import { takeShortcutVoiceChat } from "../calls/voice-chat-intent";
 import { loadDeviceVoiceEnabled } from "../voice/device-voice";
 import { speakQueue, speakText } from "../voice/voice";
@@ -62,6 +63,12 @@ vi.mock("../voice/dictation", () => ({ available: async () => true }));
 vi.mock("../voice/voice", () => ({
   speakQueue: vi.fn(async () => true),
   speakText: vi.fn(async () => true),
+}));
+// This server has no voice agent: calls run the built-in loop. The lookup itself is tested in
+// voice-agent.test.ts.
+vi.mock("../calls/voice-agent", () => ({
+  fetchVoiceAgentConfig: vi.fn(async () => ({ mode: "builtin" })),
+  resolveCallTransport: vi.fn(async () => "builtin"),
 }));
 vi.mock("../calls/voice-chat-intent", () => ({
   onShortcutVoiceChat: () => () => undefined,
@@ -195,6 +202,29 @@ describe("useThreadVoiceCall hand-over", () => {
       ["riley", undefined],
       ["max", undefined],
     ]);
+  });
+
+  it("joins the voice agent's room when the server has one, with no greeting or provider check", async () => {
+    vi.mocked(resolveCallTransport).mockResolvedValueOnce("livekit");
+    render("riley");
+    await act(async () => {
+      await startVoiceCall?.();
+    });
+    expect(startCall).toHaveBeenCalledOnce();
+    expect(startCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botId: "riley",
+        botName: "Riley",
+        transport: "livekit",
+        requestContext: expect.objectContaining({
+          headers: expect.objectContaining({ "x-rakazo-space-id": "space-riley" }),
+        }),
+      }),
+    );
+    const [call] = vi.mocked(startCall).mock.calls[0] ?? [];
+    expect(call).not.toHaveProperty("greeting");
+    expect(call).not.toHaveProperty("switchBot");
+    expect(loadCallGreetingEnabled).not.toHaveBeenCalled();
   });
 
   it("keeps the greeting when the setting cannot be read", async () => {

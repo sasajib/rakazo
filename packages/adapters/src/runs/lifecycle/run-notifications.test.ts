@@ -120,6 +120,48 @@ describe("notifyRun chat alerts", () => {
 });
 
 // Ada (user-1) and Bea (user-2) share space-1; nobody else is in it.
+describe("notifyRun: the message a notification's Done button ticks", () => {
+  function withReply(reply: { id: string } | null | "throws") {
+    const d = deps();
+    const findFirst = vi.fn(async () => {
+      if (reply === "throws") throw new Error("db down");
+      return reply;
+    });
+    (d.value.prisma as unknown as Record<string, unknown>).message = { findFirst };
+    return { ...d, findFirst };
+  }
+
+  it("carries the id of the bot's last reply in the run", async () => {
+    const d = withReply({ id: "msg-9" });
+    await notifyRun(d.value, run, message);
+    expect(d.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { runId: "run-1", threadId: "thread-1", role: "bot" },
+        orderBy: { seq: "desc" },
+      }),
+    );
+    expect(d.send).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: "msg-9" }),
+      expect.anything(),
+    );
+  });
+
+  it("still pushes, without the id, when there is no reply or the lookup fails", async () => {
+    for (const reply of [null, "throws"] as const) {
+      const d = withReply(reply);
+      await notifyRun(d.value, run, message);
+      expect(d.send).toHaveBeenCalledTimes(1);
+      expect((d.send.mock.calls as unknown as unknown[][])[0]?.[0]).not.toHaveProperty("messageId");
+    }
+  });
+
+  it("does not look one up for failures and questions", async () => {
+    const d = withReply({ id: "msg-9" });
+    await notifyRun(d.value, run, { ...message, kind: "failure" });
+    expect(d.findFirst).not.toHaveBeenCalled();
+  });
+});
+
 describe("notifications in a shared Space", () => {
   const shared = ["user-1", "user-2"];
   const recipients = (send: ReturnType<typeof deps>["send"]) =>

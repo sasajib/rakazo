@@ -16,4 +16,5 @@
   <string name="rakazo_attention_failed">%1$s is een probleem tegengekomen</string>
   <string name="rakazo_attention_takeover">%1$s heeft je op het scherm nodig</string>
   <string name="rakazo_attention_input">%1$s heeft je invoer nodig</string>
+  <string name="rakazo_action_done">Klaar</string>
 </resources>

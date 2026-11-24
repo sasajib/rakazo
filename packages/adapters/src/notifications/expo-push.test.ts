@@ -1073,3 +1073,19 @@ describe("oversized Expo push answers", () => {
     await expect(failure).rejects.not.toBeInstanceOf(ResponseTooLargeError);
   });
 });
+
+describe("expoPushData messageId", () => {
+  it("passes the message to tick done, only when there is one", () => {
+    const base = {
+      kind: "completion",
+      title: "t",
+      body: "b",
+      botId: "b1",
+      threadId: "t1",
+    } as const;
+    expect(expoPushData({ ...base, messageId: "m1" }, "s1", "d1")).toMatchObject({
+      messageId: "m1",
+    });
+    expect(expoPushData(base, "s1", "d1")).not.toHaveProperty("messageId");
+  });
+});

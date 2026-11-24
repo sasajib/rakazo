@@ -87,6 +87,19 @@ export async function notifyRun(
     run = { ...run, threadId: card.threadId };
     message = { ...message, threadId: card.threadId };
   }
+  if (message.kind === "completion" && message.runId && !message.messageId) {
+    // The notification's Done button ticks the reply this run wrote; a failed lookup only drops the button.
+    const reply = await Promise.resolve()
+      .then(() =>
+        deps.prisma.message.findFirst({
+          where: { runId: message.runId, threadId: message.threadId, role: "bot" },
+          orderBy: { seq: "desc" },
+          select: { id: true },
+        }),
+      )
+      .catch(() => null);
+    if (reply) message = { ...message, messageId: reply.id };
+  }
   const routineId = message.kind === "failure" ? run.routineId : null;
   const notice = await runNotice(deps.prisma, run, routineId).catch((error) => {
     if (options.retryOnFailure) throw error;

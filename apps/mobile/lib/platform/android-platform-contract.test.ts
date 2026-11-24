@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -197,5 +197,30 @@ describe("Android mobile platform contract", () => {
     // Zero-width space is not in Unicode White_Space and must remain content.
     expect(nonSpaceAtEnd.test("text\u200B")).toBe(true);
     expect(nonSpaceAtStart.test("\u200Btext")).toBe(true);
+  });
+
+  it("offers Done on finished-work pushes and records the app's own tick", () => {
+    const nativeRoot = resolve(mobileRoot, "modules/rakazo-notifications/android/src/main");
+    const read = (path: string) => readFileSync(resolve(nativeRoot, path), "utf8");
+    const done = read("java/com/rakazo/notifications/DoneNotification.kt");
+    const push = read("java/com/rakazo/notifications/SenderPush.kt");
+    const manifest = read("AndroidManifest.xml");
+    // the same call and reaction the in-app Done button sends (thread-send.ts `react`)
+    expect(done).toContain('"threads/react"');
+    expect(done).toContain('put("reaction", "\\u2705")');
+    expect(done).toContain("cancel(notificationId)");
+    expect(push).toContain("addDone(context, builder, data, notificationId(threadId))");
+    expect(push).toContain("addAction(");
+    expect(manifest).toContain(
+      '<receiver android:name=".DoneNotificationReceiver" android:exported="false" />',
+    );
+    // every shipped locale has the button label (a missing translation fails the release lint)
+    for (const dir of readdirSync(resolve(nativeRoot, "res")).filter((d) =>
+      d.startsWith("values"),
+    )) {
+      const file = resolve(nativeRoot, "res", dir, "strings.xml");
+      if (!existsSync(file)) continue;
+      expect(readFileSync(file, "utf8"), dir).toContain("rakazo_action_done");
+    }
   });
 });

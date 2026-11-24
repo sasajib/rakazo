@@ -38,6 +38,14 @@
       ],
       "expo-localization",
       [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          }
+        }
+      ],
+      [
         "expo-media-library",
         {
           "savePhotosPermission": "Rakazo saves photos and videos you download from Artifacts to your photo library.",
@@ -106,6 +114,7 @@
       "./plugins/with-worklets-headers",
       "./plugins/with-lan-cleartext",
       "./plugins/with-android-no-gwp-asan",
+      "./plugins/with-livekit-proguard",
       "./plugins/with-agent-notifications",
       "./plugins/with-app-intents",
       "./plugins/with-apple-watch",

@@ -1,5 +1,6 @@
 package com.rakazo.notifications
 
+import android.util.Log
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -23,6 +24,7 @@ class RakazoCallService : Service() {
   private var wakeLock: PowerManager.WakeLock? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    Log.i(CALLS_TAG, "call service start")
     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
       report(started = false)
       stopSelf()
@@ -50,6 +52,7 @@ class RakazoCallService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onDestroy() {
+    Log.i(CALLS_TAG, "call service stop")
     wakeLock?.let { if (it.isHeld) it.release() }
     wakeLock = null
     stopForeground(STOP_FOREGROUND_REMOVE)

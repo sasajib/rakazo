@@ -16,4 +16,5 @@
   <string name="rakazo_attention_failed">%1$s 遇到問題</string>
   <string name="rakazo_attention_takeover">%1$s 需要你查看螢幕</string>
   <string name="rakazo_attention_input">%1$s 需要你的輸入</string>
+  <string name="rakazo_action_done">完成</string>
 </resources>

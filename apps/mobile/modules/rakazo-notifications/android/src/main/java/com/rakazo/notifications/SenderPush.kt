@@ -115,9 +115,32 @@ internal object SenderPush {
         data.optString("runId").takeIf(String::isNotBlank)?.let { putString(RakazoNotificationService.EXTRA_RUN_ID, it) }
         data.optString("groupId").takeIf(String::isNotBlank)?.let { putString("rakazo.groupId", it) }
       })
+    runCatching { addDone(context, builder, data, notificationId(threadId)) }
+      .onFailure { Log.w("RakazoSenderPush", "Posting without the Done button", it) }
     runCatching { addSender(context, builder, data, title, body) }
       .onFailure { Log.w("RakazoSenderPush", "Posting without the sender", it) }
     context.getSystemService(NotificationManager::class.java).notify(notificationId(threadId), builder.build())
+  }
+
+  /** A Done button on finished work, when the push names the message to tick. */
+  private fun addDone(context: Context, builder: Notification.Builder, push: JSONObject, notificationId: Int) {
+    val input = DoneNotification.reactionInput(push, DoneNotification.newNonce()) ?: return
+    val intent = Intent(context, DoneNotificationReceiver::class.java).apply {
+      action = DoneNotification.ACTION
+      // Unique per notification, so two chats' buttons never share a PendingIntent.
+      data = Uri.parse("rakazo-done://${Uri.encode(input.optString("messageId"))}")
+      putExtra(DoneNotification.EXTRA_INPUT, input.toString())
+      putExtra(DoneNotification.EXTRA_SPACE, push.optString("spaceId"))
+      putExtra(DoneNotification.EXTRA_NOTIFICATION, notificationId)
+    }
+    val tap = PendingIntent.getBroadcast(
+      context,
+      notificationId,
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    val label = localizedContext(context, NotificationStorage(context).locale).getString(R.string.rakazo_action_done)
+    builder.addAction(Notification.Action.Builder(null, label, tap).build())
   }
 
   private fun addSender(context: Context, builder: Notification.Builder, data: JSONObject, title: String, body: String) {

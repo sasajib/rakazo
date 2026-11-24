@@ -20,6 +20,7 @@
       <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
     </service>
     <receiver android:name=".DeclineIncomingCallReceiver" android:exported="false" />
+    <receiver android:name=".DoneNotificationReceiver" android:exported="false" />
     <activity android:name=".IncomingCallActivity" android:exported="false" android:excludeFromRecents="true" android:showWhenLocked="true" android:turnScreenOn="true" android:theme="@style/RakazoIncomingCallTheme" />
     <service
       android:name=".RakazoNotificationService"
