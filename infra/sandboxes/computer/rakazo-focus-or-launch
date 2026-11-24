@@ -14,8 +14,25 @@ import subprocess
 import sys
 
 
-def browser_wm_class(which=shutil.which):
+BROWSER_CLASSES = {
+    "browserclaw": "chromium-browser",
+    "chromium": "chromium",
+    "chromium-browser": "chromium",
+    "google-chrome": "google-chrome",
+    "google-chrome-stable": "google-chrome",
+    "brave-browser": "brave-browser",
+}
+
+
+def browser_wm_class(which=shutil.which, env=os.environ):
     """WM_CLASS of the browser rakazo-browser starts, checked in its search order."""
+    # rakazo-browser tries RAKAZO_BROWSER_BINARY first.
+    chosen = env.get("RAKAZO_BROWSER_BINARY", "").rsplit("/", 1)[-1]
+    if chosen in BROWSER_CLASSES and which(chosen):
+        return BROWSER_CLASSES[chosen]
+    # BrowserOS neo (fork default) draws its windows as class Chromium-browser.
+    if which("browserclaw"):
+        return "chromium-browser"
     if which("chromium") or which("chromium-browser"):
         return "chromium"
     if which("google-chrome") or which("google-chrome-stable"):

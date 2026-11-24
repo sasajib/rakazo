@@ -62,6 +62,10 @@ import {
   xdotoolCommand,
 } from "./computer-spec.js";
 
+// The fork's rakazo-browser prefers BrowserOS neo, which a dev host may have installed; these
+// tests drive a stand-in Chromium.
+process.env.RAKAZO_BROWSER_BINARY ??= "chromium";
+
 describe("graphical computer spec", () => {
   it("binds the embed WebSocket path to the current screen capability", () => {
     const url = new URL(screenUrlWithToken("http://screen.test:6080/embed.html", "current-token"));

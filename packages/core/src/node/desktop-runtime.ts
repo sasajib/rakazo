@@ -116,6 +116,18 @@ export function browserProfilePathForScreen(screenId: string, env = DEFAULT_DESK
   return `${env.browserProfilesDir}/chromium-bot-${browserKeyForScreen(screenId)}`;
 }
 
+/**
+ * The one screen every bot of a Team Computer shares (fork): one display, one browser and one
+ * profile, so a site signed in once is signed in for every bot. Each bot works in its own tab.
+ * No bot id can equal it (bot ids are cuids), so no bot's cleanup can name its profile.
+ */
+export const TEAM_SHARED_SCREEN_KEY = "team-shared";
+
+/** The shared screen's profile folder name, `chromium-bot-<hash>` like every managed profile. */
+export function teamSharedBrowserProfileName() {
+  return path.posix.basename(browserProfilePathForScreen(TEAM_SHARED_SCREEN_KEY));
+}
+
 function browserPidPathForScreen(screenId: string) {
   return `/tmp/rakazo/browser-pid-${browserKeyForScreen(screenId)}`;
 }

@@ -154,6 +154,26 @@ RUN set -eux; \
       *) echo "unsupported BROWSER: $BROWSER (use chromium, chrome or brave)" >&2; exit 1 ;; \
     esac
 RUN ln -s "$(dpkg -L libnss-wrapper | grep '/libnss_wrapper.so$')" /usr/local/lib/libnss_wrapper.so
+# Fork: BrowserOS neo (Debian package browserclaw, Chromium 155) is the bots' default browser;
+# rakazo-browser prefers it over Chromium, which stays installed as the fallback
+# (RAKAZO_BROWSER_BINARY=chromium). Pinned release, checked by sha256, amd64 only; other
+# platforms or BROWSEROS=none keep Chromium. BrowserOS's own MCP server needs glibc 2.38 and
+# does not start on bookworm; bots drive the browser over CDP like Chromium.
+ARG BROWSEROS=neo
+ARG BROWSEROS_RELEASE=browserclaw/v0.51.2.3
+ARG BROWSEROS_DEB=BrowserOS_neo_v0.51.2.3_amd64.deb
+ARG BROWSEROS_SHA256=e1985dd0c0499cae37463bb339d1aa37a429b4f105945909cbb3024e69dd2656
+RUN set -eux; \
+  [ "$BROWSEROS" = neo ] || exit 0; \
+  [ "$(dpkg --print-architecture)" = amd64 ] || { echo "BrowserOS neo: amd64 only, keeping Chromium" >&2; exit 0; }; \
+  package="$(mktemp --suffix=.deb)"; \
+  curl -fsSL "https://github.com/browseros-ai/BrowserOS/releases/download/$(printf %s "$BROWSEROS_RELEASE" | sed 's|/|%2F|g')/${BROWSEROS_DEB}" -o "$package"; \
+  echo "$BROWSEROS_SHA256  $package" | sha256sum -c -; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends "$package"; \
+  rm -rf /var/lib/apt/lists/* "$package"; \
+  test -x /usr/lib/browserclaw/browserclaw; \
+  command -v browserclaw
 ARG TARGETARCH
 ARG UV_VERSION=0.12.19
 RUN set -eux; \

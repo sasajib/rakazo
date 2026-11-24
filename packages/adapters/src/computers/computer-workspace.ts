@@ -13,7 +13,10 @@ import type {
 } from "@rakazo/adapter-kit";
 import { WorkspaceTooLargeError } from "@rakazo/adapter-kit";
 import type { ComputerMode } from "@rakazo/contracts";
-import { browserProfilePathForScreen } from "@rakazo/core/node/desktop-runtime";
+import {
+  browserProfilePathForScreen,
+  teamSharedBrowserProfileName,
+} from "@rakazo/core/node/desktop-runtime";
 import { parseScreenLeaseId } from "@rakazo/core/node/screen-lease";
 import type { PrismaClient } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -179,6 +182,8 @@ export function isTeamBotFolderName(botId: string) {
 export function teamBrowserProfileName(botId: string) {
   const name = path.posix.basename(browserProfilePathForScreen(botId));
   if (!/^chromium-bot-[0-9a-f]{32}$/.test(name)) return null;
+  // The Team Computer's shared browser profile belongs to every bot: no bot's removal deletes it.
+  if (name === teamSharedBrowserProfileName()) return null;
   return name;
 }
 

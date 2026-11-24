@@ -53,6 +53,10 @@ class WmClassTest(unittest.TestCase):
         self.assertEqual(helper.browser_wm_class(only("google-chrome", "google-chrome-stable")), "google-chrome")
         self.assertEqual(helper.browser_wm_class(only("brave-browser")), "brave-browser")
         self.assertEqual(helper.browser_wm_class(only()), "chromium")
+        self.assertEqual(helper.browser_wm_class(only("browserclaw", "chromium"), {}), "chromium-browser")
+        self.assertEqual(
+            helper.browser_wm_class(only("browserclaw", "chromium"), {"RAKAZO_BROWSER_BINARY": "chromium"}),
+            "chromium")
 
     def test_other_launchers_match_their_binary_basename(self):
         self.assertEqual(helper.wm_class("/usr/bin/xterm"), "xterm")
@@ -948,6 +952,8 @@ class ScriptTest(unittest.TestCase):
                     **os.environ,
                     "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
                     "RAKAZO_BROWSER_PROFILE": "/profiles/mine",
+                    # The listed windows are Chromium's even on a host with BrowserOS neo installed.
+                    "RAKAZO_BROWSER_BINARY": "chromium",
                     "RAKAZO_TEST_WINDOWS": str(windows),
                     "RAKAZO_TEST_ARGS": str(args_log),
                 }

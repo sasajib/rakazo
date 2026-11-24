@@ -874,3 +874,16 @@ describe("PortableFileBatcher", () => {
     expect(batcher.take()).toEqual([PORTABLE_TRANSFER_BATCH_BYTES + 1]);
   });
 });
+
+describe("team shared browser profile", () => {
+  it("is never named as a bot's profile, so no bot's removal deletes it", async () => {
+    const { TEAM_SHARED_SCREEN_KEY, teamSharedBrowserProfileName } = await import(
+      "@rakazo/core/node/desktop-runtime"
+    );
+    expect(teamSharedBrowserProfileName()).toMatch(/^chromium-bot-[0-9a-f]{32}$/);
+    expect(teamBrowserProfileName(TEAM_SHARED_SCREEN_KEY)).toBeNull();
+    expect(teamBrowserProfileName("cmwuevujdeuie7pw8o6tj0ptt")).toBe(
+      "chromium-bot-ef98acb3bc48374d3c44cc95a61811ba",
+    );
+  });
+});

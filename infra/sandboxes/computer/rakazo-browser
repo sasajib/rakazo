@@ -38,7 +38,13 @@ is_snap_browser() {
 }
 BIN=""
 SNAP_BIN=""
-for candidate in chromium chromium-browser google-chrome google-chrome-stable /opt/google/chrome/chrome brave-browser /opt/brave.com/brave/brave; do
+# BrowserOS neo (package browserclaw) is the bots' browser when the image has it (fork).
+# RAKAZO_BROWSER_BINARY=chromium (or any name on PATH) picks another one.
+CANDIDATES="browserclaw chromium chromium-browser google-chrome google-chrome-stable /opt/google/chrome/chrome brave-browser /opt/brave.com/brave/brave"
+if [ -n "${RAKAZO_BROWSER_BINARY:-}" ]; then
+  CANDIDATES="$RAKAZO_BROWSER_BINARY $CANDIDATES"
+fi
+for candidate in $CANDIDATES; do
   found="$(command -v "$candidate" || true)"
   [ -n "$found" ] && [ -x "$found" ] || continue
   if is_snap_browser "$found"; then
@@ -118,7 +124,7 @@ is_wrapper_pid() {
   pid=$1
   exe=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
   case "${exe##*/}" in
-    chromium|chromium-browser|chrome|google-chrome|google-chrome-stable|brave|brave-browser) return 1 ;;
+    chromium|chromium-browser|chrome|google-chrome|google-chrome-stable|brave|brave-browser|browserclaw) return 1 ;;
   esac
   cmdline_text "$pid" | grep -qE '^([^=]*/)?rakazo-browser$'
 }

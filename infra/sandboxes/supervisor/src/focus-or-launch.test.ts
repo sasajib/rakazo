@@ -5,6 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
+// The fork's rakazo-browser prefers BrowserOS neo, which a dev host may have installed; these
+// tests drive a stand-in Chromium.
+process.env.RAKAZO_BROWSER_BINARY ??= "chromium";
+
 const computerDir = path.resolve(import.meta.dirname, "../../computer");
 
 describe("focus-or-launch desktop helper", () => {

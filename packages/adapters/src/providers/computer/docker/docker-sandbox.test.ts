@@ -79,6 +79,28 @@ describe("Docker sandbox", () => {
     });
   });
 
+  it("tells a bot which bot holds a Team Computer's shared screen", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            error:
+              "The team browser screen is in use by bot botA. Your page tools still work in your own tab; retry the screen in a moment.",
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+    await expect(
+      provider.observe(
+        { id: "computer", botId: "team-home", kind: "docker", providerRef: "computer" },
+        context,
+      ),
+    ).rejects.toThrow(/^The team browser screen is in use by bot botA\. Your page tools/);
+  });
+
   it("reports a full Team Computer when observing, not only when connecting", async () => {
     vi.stubGlobal(
       "fetch",

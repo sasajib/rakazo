@@ -187,6 +187,93 @@ def front_tab(port: int) -> tuple[str, str]:
     raise RuntimeError(NO_TAB)
 
 
+# Fork: on a Team Computer every bot shares one browser (one profile, one screen), and each bot works
+# in a tab of its own. The supervisor names the bot in RAKAZO_TAB_OWNER; which tab is whose is kept in
+# the page browser's own folder, so a call never reads or drives another bot's tab.
+def tab_owner() -> str | None:
+    owner = os.environ.get("RAKAZO_TAB_OWNER") or ""
+    return owner if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner) else None
+
+
+class OwnerTabs:
+    """Each bot's own tab on the shared browser, by bot id."""
+
+    def __init__(self, home: str, port: int, owner: str) -> None:
+        self.path = os.path.join(home, f"owners-{port}.json")
+        self.port, self.owner = port, owner
+
+    @contextlib.contextmanager
+    def _locked(self):  # type: ignore[no-untyped-def]
+        import fcntl
+
+        with open(f"{self.path}.lock", "a+", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def _load(self) -> dict[str, str]:
+        try:
+            with open(self.path, encoding="utf-8") as file:
+                owners = json.load(file)
+            return {str(k): str(v) for k, v in owners.items()} if isinstance(owners, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save(self, owners: dict[str, str]) -> None:
+        temporary = f"{self.path}.{os.getpid()}"
+        with open(temporary, "w", encoding="utf-8") as file:
+            json.dump(owners, file)
+        os.replace(temporary, self.path)
+
+    def others(self) -> set[str]:
+        """Tabs other bots work in."""
+        return {tab for owner, tab in self._load().items() if owner != self.owner}
+
+    def tab(self, create: bool = True) -> tuple[str, str]:
+        """This bot's tab and its address, opened behind the others when it has none yet."""
+        with self._locked():
+            owners = self._load()
+            tabs = {str(tab.get("id")): tab for tab in page_tabs(self.port)}
+            # Tabs that closed are nobody's any more.
+            owners = {owner: tab for owner, tab in owners.items() if tab in tabs}
+            mine = owners.get(self.owner)
+            if mine:
+                self._save(owners)
+                return mine, str(tabs[mine].get("url") or "")
+            if not create:
+                self._save(owners)
+                raise RuntimeError(NO_TAB)
+            # In the background: the screen may be showing another bot's tab, or the person's.
+            client = page_secrets.connect(self.port)
+            try:
+                mine = str(client.call("Target.createTarget", {"url": "about:blank", "background": True})["targetId"])
+            finally:
+                client.close()
+            owners[self.owner] = mine
+            self._save(owners)
+            return mine, "about:blank"
+
+    def adopt(self, target: str) -> None:
+        """This bot now works in `target`, a tab it opened. Never one another bot works in."""
+        with self._locked():
+            owners = self._load()
+            if any(tab == target for owner, tab in owners.items() if owner != self.owner):
+                return
+            owners[self.owner] = target
+            self._save(owners)
+
+    def front(self) -> bool:
+        """Show this bot's tab on the shared screen."""
+        try:
+            target, _ = self.tab(create=False)
+        except RuntimeError:
+            return False
+        urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/activate/{target}", timeout=5.0).close()
+        return True
+
+
 # A page may open tabs: a pop-up, a link to a new tab, or a report it opens once it has made it.
 # agent-browser follows a tab that opens in front, so the bot is told. More than MAX_NEW_TABS at once
 # is a flood, not a report: they are closed, and the bot's own tab is in front again. Of the tabs pages
@@ -366,7 +453,9 @@ class AgentBrowser:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(staged)
             raise
-        self.session = f"display-{port}"
+        # One agent-browser session per bot on the shared browser: a session follows the tab it reads.
+        owner = tab_owner()
+        self.session = f"display-{port}-{owner}" if owner else f"display-{port}"
         # When set, every command answers by then or is given up.
         self.deadline: float | None = None
         self.env = {key: value for key, value in os.environ.items()
@@ -2664,7 +2753,7 @@ def run(argv: list[str]) -> int:
                           "fallback": "computer_act"}))
         return 2
     command = argv[1]
-    if command not in ("navigate", "snapshot", "act", "finish", "purchase_check"):
+    if command not in ("navigate", "snapshot", "act", "finish", "purchase_check", "front"):
         print(json.dumps({"ok": False, "error": f"unknown command: {command}", "fallback": "computer_act"}))
         return 2
     raw_args = stdin_args if stdin_args is not None else (argv[2] if len(argv) >= 3 else "")
@@ -2677,6 +2766,20 @@ def run(argv: list[str]) -> int:
             return 1
         return 0
     port = cdp_port()
+    owner = tab_owner()
+    if command == "front":
+        # The supervisor shows a bot's own tab before that bot's screen work on the shared screen.
+        if not owner:
+            print(json.dumps({"ok": False, "error": "no tab owner"}))
+            return 2
+        try:
+            wait_for_cdp(port)
+            shown = OwnerTabs(AgentBrowser(port).home, port, owner).front()
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"ok": False, "error": str(exc)}))
+            return 1
+        print(json.dumps({"ok": True, "front": shown}))
+        return 0
     downloads: Downloads | None = None
     client: CdpClient | None = None
     saved: list[dict[str, Any]] = []
@@ -2694,7 +2797,8 @@ def run(argv: list[str]) -> int:
                 address = ""
                 if not browser_closed(port):
                     wait_for_cdp(port)
-                    address = front_tab(port)[1]
+                    address = (OwnerTabs(AgentBrowser(port).home, port, owner).tab(create=False)[1] if owner
+                               else front_tab(port)[1])
             except RuntimeError as error:
                 if str(error) != NO_TAB:
                     raise
@@ -2708,7 +2812,9 @@ def run(argv: list[str]) -> int:
         tabs: Tabs | None = None
         # Best effort here and below: a tab list that fails leaves the call as it was. A purchase check
         # presses nothing, so it leaves the tabs and what they have opened to the next call.
-        if command != "purchase_check":
+        owned = OwnerTabs(browser.home, port, owner) if owner else None
+        # On the shared browser the flood and trim rules would count other bots' tabs as this page's.
+        if command != "purchase_check" and not owned:
             with contextlib.suppress(Exception):
                 started = Tabs(browser.home, port, (version or {}).get("webSocketDebuggerUrl"), browser.use_tab)
                 browser.deadline = started.deadline = tab_deadline()
@@ -2718,7 +2824,7 @@ def run(argv: list[str]) -> int:
                     browser.deadline = None
                 # Only once it knows the tabs the call began with: without them, every tab would look new.
                 tabs = started
-        target, address = front_tab(port)
+        target, address = owned.tab(create=command != "purchase_check") if owned else front_tab(port)
         if args.get("downloads") is not None:
             client = CdpClient(discover_ws_url(port))
             client.connect()
@@ -2735,6 +2841,8 @@ def run(argv: list[str]) -> int:
                 urllib.request.urlopen(f"http://127.0.0.1:{port}/json/close/{target}", timeout=5.0).close()
             # The tab it opened, by its id: a pop-up the site opens as it loads may already be in front.
             target = str(tab.get("targetId") or "") or front_tab(port)[0]
+            if owned:
+                owned.adopt(target)
             # The new tab is already on the site: navigating it again would go unseen by the request log
             # it has only just started.
             opened = True
@@ -2763,6 +2871,12 @@ def run(argv: list[str]) -> int:
                 raise RuntimeError("actions must be an array")
             result = page.act(actions)
         note = None
+        if owned and command != "purchase_check":
+            # A tab the page opened, which agent-browser followed, becomes this bot's tab.
+            followed = browser.session_tab()
+            if followed and followed != target and followed not in owned.others():
+                owned.adopt(followed)
+                note = "A new tab opened, and page tools now read it; the tab before it is still open."
         if tabs is not None:
             closed = tabs.closed
             now: list[dict[str, Any]] = []
@@ -2790,7 +2904,8 @@ def run(argv: list[str]) -> int:
         if downloads:
             front: dict[str, Any] = {}
             with contextlib.suppress(Exception):
-                front = page_tabs(port)[0]
+                front = (next(tab for tab in page_tabs(port) if str(tab.get("id")) == target) if owned
+                         else page_tabs(port)[0])
             page.save_pdf(front)
             client.listen(0.01)
             saved = downloads.finish()

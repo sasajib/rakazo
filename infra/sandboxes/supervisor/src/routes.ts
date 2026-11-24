@@ -86,6 +86,8 @@ import {
   managedScreen,
   setInteractiveScreen,
 } from "./screens.js";
+import type { ScreenIdentity } from "./shared-screen.js";
+import { SharedScreenBusyError, screenIdentity, sharedScreenHolds } from "./shared-screen.js";
 import {
   assertRequestIdentity,
   attemptComputerControl,
@@ -113,6 +115,69 @@ import {
   toSandboxInput,
   workspaceTarget,
 } from "./supervisor-logic.js";
+
+/** Hold the shared team screen for the asking bot; true when its tab must come to the front. */
+async function claimSharedScreen(
+  id: string,
+  identity: ScreenIdentity,
+  signal?: AbortSignal,
+  controlled?: boolean,
+): Promise<boolean> {
+  if (!identity.shared || !identity.tabOwner) return false;
+  const { fresh } = await sharedScreenHolds.hold(id, identity.tabOwner, { controlled, signal });
+  return fresh;
+}
+
+/** Show the bot's own tab on the shared screen. Best effort: an older image has no `front`. */
+async function bringTabToFront(
+  container: Docker.Container,
+  layout: ReturnType<typeof screenPorts>,
+  identity: ScreenIdentity,
+) {
+  if (!identity.shared || !identity.tabOwner) return;
+  await runContainerCommand(container, ["/usr/local/bin/rakazo-page-browser", "front"], {
+    env: [
+      `DISPLAY=${layout.display}`,
+      `RAKAZO_CDP_PORT=${layout.debugPort}`,
+      "HOME=/home/rakazo",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      `RAKAZO_TAB_OWNER=${identity.tabOwner}`,
+    ],
+    timeoutMs: 8_000,
+  }).catch(() => undefined);
+}
+
+/** A bot's run ended on the shared screen: hand back a takeover it held; the browser stays. */
+async function releaseSharedScreen(
+  id: string,
+  container: Docker.Container,
+  identity: ScreenIdentity,
+) {
+  if (!identity.tabOwner) return;
+  const { wasControlled } = sharedScreenHolds.release(id, identity.tabOwner);
+  if (!wasControlled) return;
+  await withComputerScreenLock(id, async () => {
+    const info = await container.inspect();
+    const assigned = currentComputerScreens(
+      computerScreens,
+      computerScreenBoots,
+      id,
+      info.State?.StartedAt,
+    );
+    const slot = assigned?.get(identity.screenKey);
+    if (!slot) return;
+    const released = await setInteractiveScreen(
+      container,
+      false,
+      slot.controlToken,
+      screenPorts(slot.index),
+    );
+    if (released) {
+      delete slot.controlled;
+      delete slot.controlToken;
+    }
+  });
+}
 
 const app = new Hono();
 
@@ -422,7 +487,8 @@ app.post("/computers/:id/exec", async (c) => {
     // Docker would fail the exec inside the stream; answer up front so the caller can boot it.
     if (!managed.info.State.Running) return c.json({ error: "computer is not running" }, 409);
     container = managed.container;
-    const screenId = headers.screenId || headers.botId || id;
+    // A Team Computer's bots share one screen (fork): their shells use its display too.
+    const screenId = screenIdentity(headers, id).screenKey;
     const screenIndex = computerScreens.get(id)?.get(screenId)?.index ?? 0;
     layout = screenPorts(screenIndex);
   } catch (error) {
@@ -632,13 +698,14 @@ app.post("/computers/:id/browser", async (c) => {
   const body = parsed.data;
   const carriesSavedLogin =
     body.command === "act" && body.actions.some((step) => "origin" in step && step.origin);
+  const identity = screenIdentity(headers, c.req.param("id"));
   const screen = (reuseRecent: boolean) =>
     managedScreen(
       c.req.param("id"),
       headers.botId,
       headers.spaceId,
-      headers.screenId,
-      headers.screenLeaseId,
+      identity.screenKey,
+      identity.screenLeaseId,
       true,
       reuseRecent,
     );
@@ -662,6 +729,8 @@ app.post("/computers/:id/browser", async (c) => {
           "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           "RAKAZO_BROWSER_WATCH_STDIN=1",
           "RAKAZO_BROWSER_ARGS_STDIN=1",
+          // On the shared team screen each bot works in a tab of its own (fork).
+          ...(identity.tabOwner ? [`RAKAZO_TAB_OWNER=${identity.tabOwner}`] : []),
           ...(process.env.RAKAZO_BROWSER_UPLOAD_MAX_BYTES !== undefined
             ? [`RAKAZO_BROWSER_UPLOAD_MAX_BYTES=${process.env.RAKAZO_BROWSER_UPLOAD_MAX_BYTES}`]
             : []),
@@ -715,13 +784,16 @@ app.post("/computers/:id/browser", async (c) => {
 app.post("/computers/:id/observe", async (c) => {
   const headers = identityHeaders(c);
   try {
+    const identity = screenIdentity(headers, c.req.param("id"));
+    const fresh = await claimSharedScreen(c.req.param("id"), identity, c.req.raw.signal);
     const { container, info, layout, browserProfile } = await managedScreen(
       c.req.param("id"),
       headers.botId,
       headers.spaceId,
-      headers.screenId,
-      headers.screenLeaseId,
+      identity.screenKey,
+      identity.screenLeaseId,
     );
+    if (fresh) await bringTabToFront(container, layout, identity);
     const control = computerControlEndpoint(info);
     const observation = await preferComputerControl(
       control
@@ -742,6 +814,7 @@ app.post("/computers/:id/observe", async (c) => {
     );
     return c.json(observation);
   } catch (error) {
+    if (error instanceof SharedScreenBusyError) return c.json({ error: error.message }, 409);
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ error: message }, 500);
   }
@@ -757,13 +830,16 @@ app.post("/computers/:id/actions", async (c) => {
     })
     .parse(await c.req.json());
   try {
+    const identity = screenIdentity(headers, c.req.param("id"));
+    const fresh = await claimSharedScreen(c.req.param("id"), identity, c.req.raw.signal);
     const { container, info, layout, browserProfile } = await managedScreen(
       c.req.param("id"),
       headers.botId,
       headers.spaceId,
-      headers.screenId,
-      headers.screenLeaseId,
+      identity.screenKey,
+      identity.screenLeaseId,
     );
+    if (fresh) await bringTabToFront(container, layout, identity);
     const endpoint = computerControlEndpoint(info);
     const control =
       endpoint && controlHandlesActions(info.Config.Labels, body.actions) ? endpoint : undefined;
@@ -796,6 +872,7 @@ app.post("/computers/:id/actions", async (c) => {
           }),
     });
   } catch (error) {
+    if (error instanceof SharedScreenBusyError) return c.json({ error: error.message }, 409);
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ error: message }, 500);
   }
@@ -883,12 +960,13 @@ app.get("/computers/:id/screen", async (c) => {
   const headers = identityHeaders(c);
   const id = c.req.param("id");
   try {
+    const identity = screenIdentity(headers, id);
     const { container, info, layout, viewToken } = await managedScreen(
       id,
       headers.botId,
       headers.spaceId,
-      headers.screenId,
-      headers.screenLeaseId,
+      identity.screenKey,
+      identity.screenLeaseId,
       false,
     );
     const screenUrl = await publishedScreenUrl(container, info, layout.viewPort);
@@ -914,8 +992,17 @@ app.post("/computers/:id/screen-mode", async (c) => {
     .parse(await c.req.json());
   try {
     const id = c.req.param("id");
-    const { botId, spaceId, screenId, screenLeaseId } = identityHeaders(c);
+    const headers = identityHeaders(c);
+    const { botId, spaceId } = headers;
+    const identity = screenIdentity(headers, id);
+    const { screenKey: screenId, screenLeaseId } = identity;
     const { container, info } = await managedContainer(id, botId, spaceId);
+    // A person taking over from a bot's chat holds the shared screen until they hand it back.
+    const fresh = body.interactive
+      ? await claimSharedScreen(id, identity, c.req.raw.signal, true)
+      : false;
+    if (!body.interactive && body.revokeControl !== false && identity.tabOwner)
+      sharedScreenHolds.endControl(id, identity.tabOwner);
     const { layout, viewToken } = await withComputerScreenLock(id, async () => {
       const screen = await ensureManagedScreen(
         id,
@@ -925,6 +1012,7 @@ app.post("/computers/:id/screen-mode", async (c) => {
         screenLeaseId,
         !body.interactive && body.revokeControl === false,
       );
+      if (fresh) await bringTabToFront(container, screen.layout, identity);
       if (body.interactive || body.revokeControl !== false) {
         const changed = await setInteractiveScreen(
           container,
@@ -954,6 +1042,7 @@ app.post("/computers/:id/screen-mode", async (c) => {
       screenUrl: screenUrlWithToken(screenUrl, body.interactive ? body.controlToken! : viewToken),
     });
   } catch (error) {
+    if (error instanceof SharedScreenBusyError) return c.json({ error: error.message }, 409);
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ error: message }, 400);
   }
@@ -968,7 +1057,9 @@ app.post("/computers/:id/terminal", async (c) => {
     .parse(await c.req.json());
   try {
     const id = c.req.param("id");
-    const { botId, spaceId, screenId, screenLeaseId } = identityHeaders(c);
+    const headers = identityHeaders(c);
+    const { botId, spaceId } = headers;
+    const { screenKey: screenId, screenLeaseId } = screenIdentity(headers, id);
     const { container, info } = await managedContainer(id, botId, spaceId);
     const cwd = workspaceTarget(normalizeWorkspaceRelative(body.cwd));
     const terminalToken = randomUUID();
@@ -1027,13 +1118,16 @@ app.post("/computers/:id/input", async (c) => {
     .parse(await c.req.json());
   const input = toSandboxInput(body.input);
   try {
+    const identity = screenIdentity(headers, id);
+    const fresh = await claimSharedScreen(id, identity, c.req.raw.signal);
     const { container, layout } = await managedScreen(
       id,
       headers.botId,
       headers.spaceId,
-      headers.screenId,
-      headers.screenLeaseId,
+      identity.screenKey,
+      identity.screenLeaseId,
     );
+    if (fresh) await bringTabToFront(container, layout, identity);
     const result = await runContainerCommand(container, [
       "env",
       `DISPLAY=${layout.display}`,
@@ -1044,6 +1138,8 @@ app.post("/computers/:id/input", async (c) => {
     }
     return c.json({ ok: true, leaseId: body.leaseId ?? null });
   } catch (error) {
+    if (error instanceof SharedScreenBusyError)
+      return c.json({ ok: false, error: error.message }, 409);
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ ok: false, error: message }, 500);
   }
@@ -1057,7 +1153,14 @@ app.delete("/computers/:id/screen", async (c) => {
     const id = c.req.param("id");
     const { container } = await managedContainer(id, headers.botId, headers.spaceId);
     containerFound = true;
-    const screenId = headers.screenId || headers.botId || id;
+    const identity = screenIdentity(headers, id);
+    if (identity.shared) {
+      // The shared team screen outlives every run: a run's end never stops its display or the
+      // browser other bots are using. Only what this bot held is given back.
+      await releaseSharedScreen(id, container, identity);
+      return c.json({ ok: true });
+    }
+    const screenId = identity.screenKey;
     const cancelRunWork = c.req.header("x-rakazo-cancel-run-work") === "1";
     const keepScreenWarm = c.req.header("x-rakazo-preserve-screen") === "1" && !cancelRunWork;
     const screenLeaseId = headers.screenLeaseId;
@@ -1166,6 +1269,7 @@ app.post("/computers/:id/stop", async (c) => {
       // does not wait for it. Stopping the container ends that command and frees the lock.
       if ((await container.inspect()).State.Running) await stopOrKill(container);
       clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
+      sharedScreenHolds.forget(id);
     } else
       await withComputerScreenLock(id, async () => {
         const info = await container.inspect();
@@ -1187,6 +1291,7 @@ app.post("/computers/:id/stop", async (c) => {
         }
         clearComputerScreenRegistry(computerScreens, computerScreenBoots, id);
       });
+    sharedScreenHolds.forget(id);
     if (botId && screenNetworkMode !== "internal") {
       await reclaimComputerNetwork(container, botId).catch((error) => {
         getLogger().error("computer network reclaim failed", error);

@@ -838,6 +838,10 @@ function parseProcessLine(line: string): ProcessEvent | undefined {
 
 /** The supervisor refuses a screen with this text when a Team Computer has reached its screen cap. */
 function throwIfScreensFull(detail: string): void {
+  // Fork: another bot holds the Team Computer's shared screen. Its text names that bot and says
+  // what still works, so the bot reads it as is rather than as a provider failure.
+  const busy = /"error":"(The team browser screen is in use[^"]*)/.exec(detail)?.[1];
+  if (busy) throw new Error(busy);
   if (!/cannot allocate another screen/i.test(detail)) return;
   const limit = /\(limit (\d+)\)/i.exec(detail)?.[1];
   throw new ComputerScreenUnavailableError(limit ? Number(limit) : null);
