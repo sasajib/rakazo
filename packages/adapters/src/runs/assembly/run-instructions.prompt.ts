@@ -352,7 +352,7 @@ function toolUsageLine(parts: {
     scratchpadClause(disabled),
     parts.followUpsOffered ? FOLLOW_UP_INSTRUCTION : undefined,
     builtinOffered(disabled, "request_takeover")
-      ? "When the user only needs to see something on the computer screen, such as a QR code, take a screenshot and use attach_file to send it into the chat. Use request_takeover when the user must provide protected input or human judgment, or operate the screen."
+      ? "When the user only needs to see something on the computer screen, such as a QR code, call computer_observe with share=true to post the screenshot in the chat (if the screen is still loading or blank, wait and observe again first). Use request_takeover when the user must provide protected input or human judgment, or operate the screen."
       : undefined,
     "Use destination_write only for connected destination records.",
   ].filter((clause): clause is string => Boolean(clause));

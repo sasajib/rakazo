@@ -220,7 +220,6 @@ export const fileTools: ToolHandlers = {
     return renderPlotFromTool(deps, run, args, executionId, workspace, call.finish);
   },
   async attach_file(ctx, call) {
-    const { deps, run, bot } = ctx;
     const filePath = String(call.args.path ?? "");
     const fail = async (error: string) => {
       await recordComputerAction(ctx, call, "attach_file", filePath, { error });
@@ -229,42 +228,10 @@ export const fileTools: ToolHandlers = {
     const read = await readWorkspaceFile(ctx, call, filePath);
     if ("error" in read) return fail(read.error);
     try {
-      // Background runs post no message (publishMessage drops attachment blocks).
-      const background = isBackgroundRunTrigger(run.trigger);
-      const lease = runLeaseFor(deps, run.id);
-      let committed: Awaited<ReturnType<typeof persistMessageInTransaction>> | undefined;
-      const saved = await saveWorkspaceFile(
-        ctx,
-        call,
-        filePath,
-        read.bytes,
-        { botId: bot.id, groupId: await artifactGroupId(ctx) },
-        {
-          name: typeof call.args.name === "string" ? call.args.name : undefined,
-          description:
-            typeof call.args.description === "string" ? call.args.description : undefined,
-        },
-        // The message commits with the artifact row, so a post that fails leaves no artifact
-        // the user was never shown.
-        background
-          ? undefined
-          : async (tx, artifact) => {
-              committed = await persistMessageInTransaction(
-                tx,
-                run,
-                "bot",
-                [messageBlockForArtifact(artifact)],
-                run.trigger === "bot_message" ? false : undefined,
-                undefined,
-                false,
-                lease,
-              );
-            },
-      );
-      if (committed)
-        await deps.events
-          .notify(run.threadId, committed.eventSeq, committed.firstResponseRunId)
-          .catch((error) => getLogger().error("thread message realtime notification", error));
+      const saved = await postBytesToChat(ctx, call, filePath, read.bytes, {
+        name: typeof call.args.name === "string" ? call.args.name : undefined,
+        description: typeof call.args.description === "string" ? call.args.description : undefined,
+      });
       await recordComputerAction(ctx, call, "attach_file", filePath);
       return call.finish({ ok: true, artifactId: saved.artifactId, path: filePath });
     } catch (error) {
@@ -272,6 +239,51 @@ export const fileTools: ToolHandlers = {
     }
   },
 };
+
+/**
+ * Save bytes as an artifact and post it in the chat (attach_file, and a screenshot shared from
+ * computer_observe). The message commits with the artifact row, so a post that fails leaves no
+ * artifact the user was never shown. Background runs post no message.
+ */
+export async function postBytesToChat(
+  ctx: RunContext,
+  call: ToolCall,
+  filePath: string,
+  bytes: Uint8Array,
+  meta: { name?: string; description?: string } = {},
+): Promise<{ artifactId: string }> {
+  const { deps, run, bot } = ctx;
+  const background = isBackgroundRunTrigger(run.trigger);
+  const lease = runLeaseFor(deps, run.id);
+  let committed: Awaited<ReturnType<typeof persistMessageInTransaction>> | undefined;
+  const saved = await saveWorkspaceFile(
+    ctx,
+    call,
+    filePath,
+    bytes,
+    { botId: bot.id, groupId: await artifactGroupId(ctx) },
+    meta,
+    background
+      ? undefined
+      : async (tx, artifact) => {
+          committed = await persistMessageInTransaction(
+            tx,
+            run,
+            "bot",
+            [messageBlockForArtifact(artifact)],
+            run.trigger === "bot_message" ? false : undefined,
+            undefined,
+            false,
+            lease,
+          );
+        },
+  );
+  if (committed)
+    await deps.events
+      .notify(run.threadId, committed.eventSeq, committed.firstResponseRunId)
+      .catch((error) => getLogger().error("thread message realtime notification", error));
+  return { artifactId: saved.artifactId };
+}
 
 /** Read a file from this bot's computer that can become an attachment, without saving it. */
 export async function readWorkspaceFile(

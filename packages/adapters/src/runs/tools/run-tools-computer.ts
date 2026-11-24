@@ -74,6 +74,7 @@ import { DESKTOP_HELD_FOR_TAKEOVER_MESSAGE } from "../turn/takeover-resume.promp
 import { settleMsArg } from "../turn/tool-text.js";
 import { auditToolCall } from "./run-tool-audit.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
+import { postBytesToChat } from "./run-tools-files.js";
 
 function appendComputerCommand(ctx: RunContext, payload: ComputerCommand) {
   const { deps, run, runId, bot, thread } = ctx;
@@ -486,15 +487,33 @@ export async function pageBrowserTool(ctx: RunContext, call: ToolCall) {
 export const computerTools: ToolHandlers = {
   async computer_observe(ctx, call) {
     const { deps, context } = ctx;
-    const { name } = call;
+    const { name, args } = call;
     const blocked = await screenBlocked(ctx, true);
     if (blocked) return { error: blocked };
-    return computerScreenToolResult(async () =>
-      formatObservation(
-        ctx,
-        await deps.sandbox.observe(await ctx.computer.get("tool", name), context),
-      ),
-    );
+    return computerScreenToolResult(async () => {
+      const observation = await deps.sandbox.observe(await ctx.computer.get("tool", name), context);
+      const result = formatObservation(ctx, observation);
+      // Fork: share=true also posts this exact frame in the chat. Bots used to hand-roll a
+      // screenshot through shell + attach_file, which came out empty right after the computer
+      // resumed, and the person asking for a screenshot got nothing.
+      if (args?.share !== true) return result;
+      const extension = observation.mimeType === "image/jpeg" ? "jpg" : "png";
+      try {
+        const shared = await postBytesToChat(
+          ctx,
+          call,
+          `screenshots/screen-${observation.frameId}.${extension}`,
+          observation.image,
+        );
+        return { ...result, sharedToChat: true, artifactId: shared.artifactId };
+      } catch (error) {
+        return {
+          ...result,
+          sharedToChat: false,
+          shareError: error instanceof Error ? error.message : "could not post the screenshot",
+        };
+      }
+    });
   },
   async computer_act(ctx, call) {
     const { deps, context } = ctx;

@@ -34,8 +34,13 @@ export const computerTools: ConnectorTool[] = [
   {
     name: "computer_observe",
     description:
-      "Capture the current screen of this bot's computer. Returns frame metadata and an image. Observe before coordinate-based actions and whenever another actor may have changed the desktop.",
-    inputSchema: { type: "object", properties: {} },
+      "Capture the current screen of this bot's computer. Returns frame metadata and an image. Observe before coordinate-based actions and whenever another actor may have changed the desktop. share=true also posts this screenshot in the chat: use it when the person asks to see the screen (look first: if the page is still loading or blank, wait and observe again before sharing).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        share: { type: "boolean", description: "Also post this screenshot in the chat." },
+      },
+    },
   },
   {
     name: "computer_act",
