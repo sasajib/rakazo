@@ -63,6 +63,24 @@ x-app-environment: &app-environment # Runtime
   VOICE_AGENT_URL:
   # Optional embeddings endpoint for related standing-order suggestions (pgvector); unset turns them off.
   STANDING_EMBEDDINGS_URL:
+  # Optional shared memory ledger (fork); off unless MEMORY_LEDGER=1. Api and worker both learn and read it.
+  MEMORY_LEDGER:
+  MEMORY_LEDGER_MODEL_URL:
+  MEMORY_LEDGER_MODEL_API_KEY:
+  MEMORY_LEDGER_MODEL_API_KEY_FILE:
+  MEMORY_LEDGER_MODEL:
+  MEMORY_LEDGER_MODEL_CONNECTION:
+  MEMORY_LEDGER_MODEL_TIMEOUT_MS:
+  MEMORY_EMBEDDINGS_URL:
+  MEMORY_EMBEDDINGS_MODEL:
+  MEMORY_EMBEDDINGS_API_KEY:
+  MEMORY_EMBEDDINGS_API_KEY_FILE:
+  MEMORY_EMBEDDINGS_TIMEOUT_MS:
+  MEMORY_LEDGER_PACK_BUDGET_MS:
+  MEMORY_LEDGER_CORE_MAX_BYTES:
+  MEMORY_LEDGER_PACK_MAX_BYTES:
+  MEMORY_LEDGER_PACK_LIMIT:
+  MEMORY_LEDGER_FAST_PACK_LIMIT:
   # The worker names each bot's address to it and sends its email; the API receives the mail.
   INBOUND_EMAIL_DOMAIN:
   BOT_EMAIL_SMTP_URL:

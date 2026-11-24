@@ -8,7 +8,7 @@ import {
   normalizeSubject,
   parseExtraction,
 } from "./model.js";
-import { isFastRun, learnsFrom, withLedgerMemory } from "./seams.js";
+import { isFastRun, learnsFrom, placeLedgerBlock, withLedgerMemory } from "./seams.js";
 import type { Fact } from "./types.js";
 
 const known = {
@@ -153,6 +153,22 @@ describe("seams", () => {
       {},
     );
     expect(text).toBe("<durable_memory>x</durable_memory>");
+  });
+
+  it("place the ledger after the standing orders and before durable memory", () => {
+    const standing = "Standing orders.\n\n<standing_orders>\n- r1\n</standing_orders>";
+    const durable = "Durable memory follows.\n\n<durable_memory>\nx\n</durable_memory>";
+    const ledger = "Memory ledger.\n\n<memory_facts>\nf\n</memory_facts>";
+    const text = placeLedgerBlock(`${standing}\n\n${durable}`, ledger) ?? "";
+    expect(text).toBe(`${standing}\n\n${ledger}\n\n${durable}`);
+    expect(placeLedgerBlock(durable, ledger)).toBe(`${ledger}\n\n${durable}`);
+    expect(placeLedgerBlock(standing, ledger)).toBe(`${standing}\n\n${ledger}`);
+    expect(placeLedgerBlock(undefined, ledger)).toBe(ledger);
+    expect(placeLedgerBlock(durable, undefined)).toBe(durable);
+  });
+
+  it("default the work-start pack budget to 400 ms", () => {
+    expect(ledgerConfig({ MEMORY_LEDGER: "1" }).packBudgetMs).toBe(400);
   });
 
   it("append nothing when the ledger database cannot be read", async () => {

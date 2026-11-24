@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Every run lists `standing_set`, `bot_queue`, `call_user` (where it may ring), `schedule_cancel`, `schedule_update` and the five `scratchpad_*` tools directly instead of behind `find_tool`, so a bot no longer says it cannot use a tool it never looked up.
 - Structured audit log events for diagnosing runs without reading sealed content: `agent.tool.completed` gains an error class, a redacted 200-character error message and retry counters; new `memory.save`, `memory.prompt.built`, `run.prompt_manifest`, `run.audit_summary` and `honcho.request.failed` events carry sizes, hashes, counts and timings, never prompt, memory or tool-argument text. Logging only.
 - `end_call` is refused during a live call unless the caller asked to hang up, and a refused `my_chats` history search falls back to this chat with a note instead of failing.
+- A shared memory ledger per Space (off unless `MEMORY_LEDGER=1`): facts the owner states in a direct chat are kept only when quoted verbatim from the owner's own message, scored tentative/confirmed, contradictions asked once in a non-blocking card, and every run gets a core block after the standing orders plus a hybrid-search work-start pack (`MEMORY_LEDGER_*`, `MEMORY_EMBEDDINGS_*`; needs pgvector). While it is on, deleting a bot no longer re-files its `MEMORY.md` as shared memory.
+- The mobile app can hold calls through the LiveKit voice agent, offers **Done** on finished-work notifications, and logs incoming-call rings.
 
 ## [0.15.0] - 2026-11-23
 

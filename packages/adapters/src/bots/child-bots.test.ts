@@ -447,7 +447,15 @@ describe("destroyBot", () => {
     expect(order).toEqual(["commit", "store delete"]);
   });
 
-  it("moves bot memories into shared memory before the cascading delete", async () => {
+  it.each([
+    { ledger: false, name: "moves bot memories into shared memory before the cascading delete" },
+    {
+      ledger: true,
+      name: "with the memory ledger on, lets a bot's working notes go with it instead of re-filing them",
+    },
+  ])("$name", async ({ ledger }) => {
+    // The ledger holds the owner's facts; a deleted bot's MEMORY.md is only its working notes.
+    vi.stubEnv("MEMORY_LEDGER", ledger ? "1" : "");
     const createDeletion = vi.fn().mockResolvedValue({});
     const deleteBot = vi.fn().mockResolvedValue({});
     const executeRaw = vi.fn().mockResolvedValue(1);
@@ -518,11 +526,16 @@ describe("destroyBot", () => {
         controlBotId: null,
       }),
     });
-    expect(executeRaw).toHaveBeenCalledOnce();
-    expect(executeRaw.mock.calls[0]?.slice(1)).toEqual([
-      "Archived bots/Researcher (bot-1)",
-      "bot-1",
-    ]);
+    if (ledger) {
+      expect(executeRaw).not.toHaveBeenCalled();
+    } else {
+      expect(executeRaw).toHaveBeenCalledOnce();
+      expect(executeRaw.mock.calls[0]?.slice(1)).toEqual([
+        "Archived bots/Researcher (bot-1)",
+        "bot-1",
+      ]);
+    }
+    vi.unstubAllEnvs();
     expect(createDeletion).toHaveBeenCalledWith({
       data: {
         id: "bot-1",

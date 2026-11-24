@@ -74,8 +74,9 @@ export function isFastRun(trigger: string, sourceClientNonce?: string | null): b
 }
 
 /**
- * The durable memory block followed by the ledger's block. Off, empty or slow, the ledger adds
- * nothing and the durable memory is returned unchanged.
+ * The memory prompt with the ledger's block placed after the standing orders and before durable
+ * memory: binding rules first, then the owner's facts, then the bots' own notes. Off, empty or
+ * slow, the ledger adds nothing and the memory prompt is returned unchanged.
  */
 export async function withLedgerMemory(
   deps: Pick<Deps, "prisma">,
@@ -86,7 +87,23 @@ export async function withLedgerMemory(
   const config = ledgerConfig(env);
   if (!config.enabled) return durable;
   const [memory, ledger] = await Promise.all([durable, ledgerPromptBlock(deps, input, config)]);
-  return [memory, ledger].filter(Boolean).join("\n\n") || memory;
+  return placeLedgerBlock(memory, ledger);
+}
+
+const STANDING_CLOSE = "</standing_orders>";
+
+/** Standing orders (when present) stay first; the ledger block goes right after them. */
+export function placeLedgerBlock(
+  memory: string | undefined,
+  ledger: string | undefined,
+): string | undefined {
+  if (!ledger) return memory;
+  if (!memory) return ledger;
+  const end = memory.indexOf(STANDING_CLOSE);
+  if (end < 0) return `${ledger}\n\n${memory}`;
+  const cut = end + STANDING_CLOSE.length;
+  const rest = memory.slice(cut).replace(/^\s+/, "");
+  return [memory.slice(0, cut), ledger, rest].filter(Boolean).join("\n\n");
 }
 
 export async function ledgerPromptBlock(

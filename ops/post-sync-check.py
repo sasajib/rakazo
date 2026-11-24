@@ -14,7 +14,12 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("findQueuedDuplicate", 2), ("notice-ledger", 1), ("threadHasLiveCall", 1),
            ("CALL_RELAY_GUIDANCE", 1), ("talkLaneDue", 2), ("TALK_RUN_TRIGGER", 4),
            ("planLeaseSlot", 2), ("VOICE_AGENT_URL", 3), ("callNote", 2), ("leaveCards", 2),
-           ("scratchpad_list", 2)]
+           ("scratchpad_list", 2),
+           # memory ledger seams (fork): prompt block, run-finished writer, remember/recall, RLS table list,
+           # and the deleted-bot path that no longer re-files MEMORY.md while the ledger is on
+           ("withLedgerMemory(", 2), ("placeLedgerBlock(", 2), ("learnAfterRun(ctx)", 1),
+           ("rememberToolViaLedger(", 2), ("recallToolViaLedger(", 2), ('"memory_facts",', 1),
+           ("!deleteMemories && !ledgerEnabled()", 1)]
 results = []
 
 
@@ -64,6 +69,8 @@ def migrations():
     applied = set(psql("select migration_name from _prisma_migrations where finished_at is not null and rolled_back_at is null").splitlines())
     check("all repo migrations applied", not (on_disk - applied), sorted(on_disk - applied)[:3] or f"{len(applied)} applied")
     check("runs.lane column exists", psql("select 1 from information_schema.columns where table_name='runs' and column_name='lane'") == "1")
+    check("memory ledger migration on disk", os.path.isdir(mdir + "/20261231235500_memory_ledger"))
+    check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
 
 
 def live_queue_test():

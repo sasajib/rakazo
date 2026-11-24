@@ -45,10 +45,12 @@ const int = (value: string | undefined, fallback: number, min: number, max: numb
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 };
 
-function keyFrom(env: Env, name: string): string | undefined {
-  const direct = text(env[name]);
+/** A key from its variable, else from the file its `_FILE` twin names. Literal names keep the
+ * compose allowlist test able to see which settings are read. */
+function keyFrom(value: string | undefined, fileValue: string | undefined): string | undefined {
+  const direct = text(value);
   if (direct) return direct;
-  const file = text(env[`${name}_FILE`]);
+  const file = text(fileValue);
   if (!file) return undefined;
   try {
     return readFileSync(file, "utf8").trim() || undefined;
@@ -62,7 +64,7 @@ export function ledgerConfig(env: Env = process.env): LedgerConfig {
     enabled: on(env.MEMORY_LEDGER),
     model: {
       url: text(env.MEMORY_LEDGER_MODEL_URL),
-      apiKey: keyFrom(env, "MEMORY_LEDGER_MODEL_API_KEY"),
+      apiKey: keyFrom(env.MEMORY_LEDGER_MODEL_API_KEY, env.MEMORY_LEDGER_MODEL_API_KEY_FILE),
       model: text(env.MEMORY_LEDGER_MODEL) ?? DEFAULT_MEMORY_MODEL,
       connection: text(env.MEMORY_LEDGER_MODEL_CONNECTION),
       timeoutMs: int(env.MEMORY_LEDGER_MODEL_TIMEOUT_MS, 30_000, 1_000, 120_000),
@@ -71,10 +73,10 @@ export function ledgerConfig(env: Env = process.env): LedgerConfig {
     embeddings: {
       url: text(env.MEMORY_EMBEDDINGS_URL) ?? text(env.STANDING_EMBEDDINGS_URL),
       model: text(env.MEMORY_EMBEDDINGS_MODEL) ?? DEFAULT_EMBEDDINGS_MODEL,
-      apiKey: keyFrom(env, "MEMORY_EMBEDDINGS_API_KEY"),
+      apiKey: keyFrom(env.MEMORY_EMBEDDINGS_API_KEY, env.MEMORY_EMBEDDINGS_API_KEY_FILE),
       timeoutMs: int(env.MEMORY_EMBEDDINGS_TIMEOUT_MS, 5_000, 100, 60_000),
     },
-    packBudgetMs: int(env.MEMORY_LEDGER_PACK_BUDGET_MS, 250, 20, 5_000),
+    packBudgetMs: int(env.MEMORY_LEDGER_PACK_BUDGET_MS, 400, 20, 5_000),
     coreMaxBytes: int(env.MEMORY_LEDGER_CORE_MAX_BYTES, 6 * 1024, 512, 32 * 1024),
     packMaxBytes: int(env.MEMORY_LEDGER_PACK_MAX_BYTES, 4 * 1024, 512, 32 * 1024),
     packLimit: int(env.MEMORY_LEDGER_PACK_LIMIT, 12, 1, 50),

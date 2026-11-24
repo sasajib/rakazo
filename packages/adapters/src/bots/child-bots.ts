@@ -46,6 +46,7 @@ import { toComputerRef } from "../computers/screens/computer-support.js";
 import type { MeetingService } from "../meetings/meeting-service.js";
 import { purgeClearedConversationMemory } from "../memory/conversation-memory-cleanup.js";
 import type { MemoryProviderResolver } from "../memory/memory-provider-factory.js";
+import { ledgerEnabled } from "../memory-ledger/config.js";
 import { wakeRun } from "../runs/wakeups/wake-run.js";
 import { removePiBotSessions } from "../runtime/pi/pi-session.js";
 import { forgetPageShareSecrets } from "../secrets/vault/page-share-secrets.js";
@@ -496,7 +497,10 @@ export async function destroyBot(
         },
         data: releasedComputerLease(),
       });
-      if (!deleteMemories) {
+      // Memory ledger (fork): the owner's facts live in the Space ledger, so a bot's own
+      // MEMORY.md is disposable working notes; re-filing it as shared memory would let every
+      // other bot keep reading a deleted bot's notes.
+      if (!deleteMemories && !ledgerEnabled()) {
         const directory = archivedMemoryDirectory(bot.name, bot.id);
         await tx.$executeRaw`
           UPDATE "memory_documents"

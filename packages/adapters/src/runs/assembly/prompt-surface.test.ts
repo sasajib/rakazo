@@ -2,14 +2,17 @@ import { createHash } from "node:crypto";
 import { formatSkillsCatalogInstruction } from "@rakazo/core";
 import { describe, expect, it } from "vitest";
 import { buildAgentMemoryPrompt } from "../../memory/memory-context.prompt.js";
+import { renderStandingOrdersBlock } from "../../memory/standing-orders.js";
+import { renderPack } from "../../memory-ledger/pack.js";
+import { placeLedgerBlock } from "../../memory-ledger/seams.js";
+import type { Fact } from "../../memory-ledger/types.js";
+import { selectBuiltinToolsForRun } from "../tools/run-tool-selection.js";
 import {
   COMPUTER_USE_INSTRUCTION,
   PRIVATE_WORKSPACE_INSTRUCTION,
   RAKAZO_PLATFORM_INSTRUCTION,
   VOICE_CALL_INSTRUCTION,
 } from "./run-instructions.prompt.js";
-import { selectBuiltinToolsForRun } from "../tools/run-tool-selection.js";
-import { renderStandingOrdersBlock } from "../../memory/standing-orders.js";
 import {
   EVIDENCE_INSTRUCTION,
   PLAN_FIRST_INSTRUCTION,
@@ -90,6 +93,16 @@ describe("prompt surface", () => {
         content: "Likes short answers.",
       },
     ]).text;
+    // Memory ledger on (fork): standing orders, then the ledger block, then durable memory.
+    const fact = (area: Fact["area"], status: Fact["status"], text: string) =>
+      ({ area, status, text, validFrom: new Date("2026-11-20T00:00:00Z") }) as Fact;
+    const ledger = renderPack(
+      {
+        core: [fact("about", "confirmed", "The owner lives in Dhaka")],
+        relevant: [fact("work", "tentative", "Acme invoices are due on the 5th")],
+      },
+      { coreMaxBytes: 6144, packMaxBytes: 4096 },
+    );
     const text = [
       ["VOICE_CALL_INSTRUCTION", VOICE_CALL_INSTRUCTION],
       ["COMPUTER_USE_INSTRUCTION", COMPUTER_USE_INSTRUCTION],
@@ -106,6 +119,7 @@ describe("prompt surface", () => {
       ],
       ["standing orders block (sample)", renderStandingOrdersBlock(standing)],
       ["memory prompt (sample)", memory],
+      ["memory prompt with the memory ledger on (sample)", placeLedgerBlock(memory, ledger)],
     ]
       .map(([title, body]) => `## ${title}\n\n${String(body)}`)
       .join("\n\n");
