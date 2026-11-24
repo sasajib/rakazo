@@ -31,6 +31,7 @@ describe("built-in tool bridge", () => {
     expect(listed.map((tool) => tool.name).sort()).toEqual([
       "ask_user",
       "attach_file",
+      "bot_queue",
       "connect_app",
       "find_tool",
       "list_files",
@@ -42,11 +43,19 @@ describe("built-in tool bridge", () => {
       "request_secret",
       "request_takeover",
       "run_subagent",
+      "schedule_cancel",
       "schedule_create",
       "schedule_list",
+      "schedule_update",
+      "scratchpad_add",
+      "scratchpad_complete",
+      "scratchpad_list",
+      "scratchpad_remove",
+      "scratchpad_update",
       "search_history",
       "shell",
       "skill_read",
+      "standing_set",
       "update_bot",
       "update_preferences",
       "use_tool",
@@ -64,12 +73,26 @@ describe("built-in tool bridge", () => {
     // managed bot's routines; update_bot carries the settings its owner can change;
     // update_preferences includes the chat model picker and reply streaming; remember takes a
     // list of operations so one call can make room and add, each with an optional end.
-    // Fork: the deferred catalog also names standing_set and bot_queue, and message_bot takes
-    // lane and force (measured 37_330).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(37_350);
+    // Fork: standing_set, bot_queue, call_user, schedule_cancel, schedule_update and the five
+    // scratchpad tools are listed on every run, and message_bot takes lane and force
+    // (measured 44_052).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(44_090);
     expect(deferred.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["render_plot", "create_space", "generate_secret", "scratchpad_add"]),
+      expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );
+  });
+
+  it("keeps the tools a bot needs without searching for them in the core set", () => {
+    // call_user is offered per run (one-to-one chats that may ring) but must never be hidden behind find_tool when it is
+    for (const name of [
+      "call_user",
+      "schedule_cancel",
+      "schedule_update",
+      "message_bot",
+      "scratchpad_list",
+    ]) {
+      expect(CORE_BUILTIN_TOOL_NAMES.has(name)).toBe(true);
+    }
   });
 
   it("names only real built-ins as core", () => {
@@ -103,8 +126,8 @@ describe("built-in tool bridge", () => {
     expect(names("chart")).toContain("render_plot");
     expect(names("new space")[0]).toBe("create_space");
     expect(names("generate password")[0]).toBe("generate_secret");
-    expect(names("scratchpad add")[0]).toBe("scratchpad_add");
-    expect(names("scratchpad").length).toBe(3);
+    // the scratchpad is always listed (fork), so find_tool no longer has to be asked for it
+    expect(names("scratchpad")).toEqual([]);
     expect(findTools(deferred, { query: "zzzz" })).toMatchObject({
       tools: [],
       hint: expect.any(String),

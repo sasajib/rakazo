@@ -46,11 +46,27 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "update_bot",
   "update_preferences",
   "remember",
+  // Standing orders bind every bot: always listed so a rule change is never lost to a missed find_tool.
+  "standing_set",
   "save_memory",
   "recall_memory",
   "reflect_memory",
   "schedule_create",
   "schedule_list",
+  // call_user was reachable only through find_tool, so a bot that did not ask for it said "I cannot call" (it is offered only in
+  // one-to-one chats of runs that may ring). schedule_cancel/update finish the check-back flow; bot_queue is read before
+  // handing work to another bot (message_bot is core upstream too).
+  "call_user",
+  "schedule_cancel",
+  "schedule_update",
+  "bot_queue",
+  // The scratchpad is a bot's task list: its standing rules say "load it before every task", and a model that must first
+  // find_tool it sometimes never does (fork: always listed, so the first call cannot fail with "tool not found").
+  "scratchpad_list",
+  "scratchpad_add",
+  "scratchpad_update",
+  "scratchpad_complete",
+  "scratchpad_remove",
   "search_history",
   "read_history",
   READ_MEETING_TRANSCRIPT,

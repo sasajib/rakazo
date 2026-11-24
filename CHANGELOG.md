@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Standing orders: one `STANDING.md` per Space, written only by the `standing_set` tool from the user's own direct chat or call (same key replaces, tiers and typed links, a read-only `review`), shown first in every prompt as binding. Optional related-order suggestions use pgvector through `STANDING_EMBEDDINGS_URL`.
 - Unattended runs see what the bot already told the user in the last 24 hours and do not send a near-identical `message_user` again; a ✅ reaction marks a bot message done without starting a run, and the web chat shows a Done button on notifications.
 - Bot-to-bot work has lanes: `message_bot` takes `lane` (a site or topic) and `force`; a per-bot admission gate starts one unattended request per lane at a time within the bot's slots and leaves a slot for people. The read-only `bot_queue` tool lists what a bot is doing and what waits, and `message_bot` does not queue a request that is already open there. A result relayed while the user is on a live call with the recipient is asked to be spoken briefly.
+- Every run lists `standing_set`, `bot_queue`, `call_user` (where it may ring), `schedule_cancel`, `schedule_update` and the five `scratchpad_*` tools directly instead of behind `find_tool`, so a bot no longer says it cannot use a tool it never looked up.
 - `end_call` is refused during a live call unless the caller asked to hang up, and a refused `my_chats` history search falls back to this chat with a note instead of failing.
 
 ## [0.15.0] - 2026-11-23
