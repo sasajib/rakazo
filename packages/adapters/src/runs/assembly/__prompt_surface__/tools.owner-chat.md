@@ -1,5 +1,5 @@
 # Tool surface: owner-chat
-63 tools, 79726 bytes of definitions
+67 tools, 81307 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -68,6 +68,22 @@ schema f97c39c39da1 (732 bytes)
 ## handoff_to_bot
 Transfer a genuinely distinct next stage to another current group member, or return a completed stage to the member that handed it to you when that member is coordinating the work. In a group, stay in that group. Outside a group, supply group_id from your groups list to coordinate there. Appends a visible handoff and starts that bot asynchronously. Never hand back unfinished work; otherwise post results in the shared thread.
 schema 5d64ac874870 (786 bytes)
+
+## job_list
+List this bot's background shell jobs: running ones and those that ended in the last day.
+schema 8243f0af367f (33 bytes)
+
+## job_output
+Read the end of a background job's stdout and stderr from the computer.
+schema 1ce5097f7557 (207 bytes)
+
+## job_status
+One background job's status and the end of its output. Results come back by themselves; use this only when the user asks.
+schema 009899fef3d3 (116 bytes)
+
+## job_stop
+Stop a background job that no longer matters. A stopped job reports nothing.
+schema 9ed91ce92b84 (159 bytes)
 
 ## list_calendar_events
 List upcoming calendar occurrences in a date/time window of up to 31 days. Use an exact calendar reference returned by list_calendars.
@@ -198,8 +214,8 @@ Replace the instructions of a bot in this space. Identify it by bot_id or bot_na
 schema 2f00a09c8463 (402 bytes)
 
 ## shell
-Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. A command is stopped after a few minutes, so on Linux or macOS start longer work, such as a coding agent CLI, as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.
-schema ca29938592aa (107 bytes)
+Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. On a Linux computer a command still running after about 8 seconds keeps running as a background job and you get its job_id: its result comes back to this chat by itself when it finishes, so do not poll, sleep or wait for it; tell the user in one line that it is running, then end your turn unless other independent work remains. Pass background:true to start long work (builds, installs, coding agent CLIs, downloads) as a job at once. Where no job_id comes back, a command is stopped after a few minutes: start longer work as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.
+schema f74e87b7981a (190 bytes)
 
 ## skill_create
 Create a skill: a reusable, generic how-to recipe. Use when a multi-step task is worth repeating or the user asks to save a skill. Do not include account names, channels, or inboxes — those belong in a routine.

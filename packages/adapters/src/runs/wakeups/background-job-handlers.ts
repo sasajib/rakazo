@@ -61,6 +61,7 @@ import { pollPurchase } from "../../payments/purchase-poll.js";
 import { compactHistory } from "../../runtime/context/history-compaction.js";
 import { expireRunSecrets } from "../../secrets/run-secrets-expiry.js";
 import { retrySecretCleanup } from "../../secrets/secret-cleanup.js";
+import { pollShellJob } from "../../shell-jobs/shell-job-poll.js";
 import type { createRunExecutor } from "../executor/executor.js";
 
 type Tenant = { spaceId: string; userId: string };
@@ -140,6 +141,8 @@ export function createBackgroundJobHandlers(deps: {
     deps.prisma.taughtSkill.findUnique({ where: { id: skillId }, select: OWNER });
   const cloudAgent = ({ agentId }: { agentId: string }) =>
     deps.prisma.cloudAgent.findUnique({ where: { id: agentId }, select: OWNER });
+  const shellJob = ({ jobId }: { jobId: string }) =>
+    deps.prisma.shellJob.findUnique({ where: { id: jobId }, select: OWNER });
   const purchase = ({ purchaseId }: { purchaseId: string }) =>
     deps.prisma.purchase.findUnique({ where: { id: purchaseId }, select: OWNER });
   const messagingIdentity = ({ identityId }: { identityId: string }) =>
@@ -293,6 +296,18 @@ export function createBackgroundJobHandlers(deps: {
           events: deps.events,
           cloudAgent: deps.cloudAgent,
           userCloudAgents: deps.userCloudAgents,
+        },
+        payload,
+      );
+    }),
+    "shell_job.poll": asOwner(shellJob, async (payload) => {
+      await pollShellJob(
+        {
+          prisma: deps.prisma,
+          sandbox: deps.sandbox,
+          jobs: deps.jobs,
+          events: deps.events,
+          secretStore: deps.secretStore,
         },
         payload,
       );

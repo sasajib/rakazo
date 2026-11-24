@@ -13,7 +13,9 @@ import { selectCloudAgentTools } from "../../cloud-agents/cloud-agent-tools-sele
 import { READ_MEETING_TRANSCRIPT } from "../../meetings/meeting-chat.tool-definition.js";
 import { selectMemoryTools } from "../../memory/memory-tools.js";
 import { filterImageReturningComputerTools } from "../../models/model-vision.js";
+import { runMayStartShellJobs } from "../../shell-jobs/shell-job-rules.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
+import { JOB_TOOL_NAME_SET } from "../../tools/builtin-jobs.tool-definition.js";
 import { searchHistoryThisChat } from "../../tools/builtin-memory.tool-definition.js";
 import {
   filterBuiltinToolsForRun,
@@ -58,6 +60,9 @@ export const READ_ONLY_AGENT_TOOLS = new Set([
   "list_secrets",
   "cloud_agent_status",
   "purchase_status",
+  "job_list",
+  "job_status",
+  "job_output",
 ]);
 
 /**
@@ -202,7 +207,7 @@ export function selectBuiltinToolsForRun(options: {
     : builtinAgentTools.map((tool) =>
         tool.name === "search_history" ? searchHistoryThisChat : tool,
       );
-  return selectCloudAgentTools(
+  const selected = selectCloudAgentTools(
     selectMemoryTools(
       filterBuiltinToolsForRun(
         filterBuiltinToolsForThread(
@@ -278,6 +283,10 @@ export function selectBuiltinToolsForRun(options: {
           !tool.name.startsWith("scratchpad_") &&
           !tool.name.startsWith("ticket_"))),
   );
+  // Fork: the job tools follow jobs that shell started, so they come with shell, in runs that start jobs.
+  const jobsOffered =
+    runMayStartShellJobs(options.trigger) && selected.some((tool) => tool.name === "shell");
+  return jobsOffered ? selected : selected.filter((tool) => !JOB_TOOL_NAME_SET.has(tool.name));
 }
 
 /**

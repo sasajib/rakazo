@@ -145,6 +145,7 @@ const MID_TASK_SOURCES = {
   messaging: "a connected chat",
   webhook: "a webhook",
   routine: "your scheduled task",
+  job: "a background job you started",
 } as const;
 
 /** A message from anyone else arrives labelled with where it came from, with no call to reply. */

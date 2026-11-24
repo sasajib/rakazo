@@ -244,6 +244,7 @@ describe("tool step outcomes", () => {
       helper: false,
       helper_result: false,
       talk: false,
+      job_result: false,
     };
     expect(Object.keys(expected).sort()).toEqual([...RUN_TRIGGERS].sort());
     for (const trigger of RUN_TRIGGERS)

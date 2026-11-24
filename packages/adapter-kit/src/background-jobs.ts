@@ -124,6 +124,7 @@ const payloadSchemas = {
   "team_chat.engage": z.object({ externalMessageId: z.string().min(1) }),
   "team_chat.ambient": z.object({ conversationId: z.string().min(1) }),
   "cloud_agent.poll": z.object({ agentId: z.string().min(1) }),
+  "shell_job.poll": z.object({ jobId: z.string().min(1) }),
   "meeting.calendar-sync": z.object({ connectionId: z.string().min(1) }),
   "meeting.work": z.object({
     sessionId: z.string().min(1),
@@ -537,6 +538,20 @@ export function cloudAgentPollJob(
     name: "cloud_agent.poll",
     payload,
     replaceKey: cloudAgentPollJobKey(payload.agentId),
+    ...(availableAt ? { availableAt } : {}),
+  };
+}
+
+export function shellJobPollJobKey(jobId: string): string {
+  return `shell_job.poll:${jobId}`;
+}
+
+/** One check of a background shell job on its computer (fork: background shell jobs). */
+export function shellJobPollJob(jobId: string, availableAt?: Date): BackgroundJob {
+  return {
+    name: "shell_job.poll",
+    payload: { jobId },
+    replaceKey: shellJobPollJobKey(jobId),
     ...(availableAt ? { availableAt } : {}),
   };
 }

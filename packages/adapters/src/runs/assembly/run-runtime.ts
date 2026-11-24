@@ -25,6 +25,7 @@ import {
   createChatHistoryPruner,
   createRetentionPruner,
   createSecurityEventPruner,
+  runAsSystem,
   securityEventRetentionDays,
 } from "@rakazo/db";
 import { cliModelRuntime } from "../../cli-models/runtime.js";
@@ -68,6 +69,7 @@ import { createStrategicInitiativeReconciler } from "../../routines/strategic-in
 import { localModelsApiKey } from "../../runtime/pi/models/pi-local-provider-id.js";
 import type { SecretCleanupDeps } from "../../secrets/secret-cleanup.js";
 import { webOriginFromEnv } from "../../server/server-foundation.js";
+import { reconcileShellJobs } from "../../shell-jobs/shell-job-poll.js";
 import { workspaceSaveLimits } from "../../storage/workspace-save-policy.js";
 import { createWebProvider } from "../../web/web-provider-factory.js";
 import { auditLogConfig, createAuditLogReconciler } from "../../webhooks/audit-forwarding.js";
@@ -431,8 +433,18 @@ export function createRunReconciler(
       jobs,
       billingEnabled: deps.billingEnabled,
     }),
-    reconcileCloudAgents: () =>
-      reconcileCloudAgents({ prisma, jobs, cloudAgent, userCloudAgents: deps.userCloudAgents }),
+    reconcileCloudAgents: async () => {
+      await reconcileCloudAgents({
+        prisma,
+        jobs,
+        cloudAgent,
+        userCloudAgents: deps.userCloudAgents,
+      });
+      // Fork: background shell jobs whose poll was lost ride the same sweep.
+      await runAsSystem("re-enqueue lost shell job polls", () =>
+        reconcileShellJobs({ prisma, jobs }),
+      );
+    },
     reconcilePurchases: () => reconcilePurchases({ prisma, jobs, paymentWallet }),
     reconcileMediaVideos: () => reconcileMediaVideos({ prisma, jobs, mediaGeneration }),
     reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs, events: deps.events }),
