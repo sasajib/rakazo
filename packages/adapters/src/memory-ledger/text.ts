@@ -183,3 +183,22 @@ export function sentenceAround(text: string, quote: string): string {
   const sentences = text.split(/(?<=[.!?\n])\s+/);
   return sentences.find((sentence) => foldQuote(sentence).includes(needle)) ?? text;
 }
+
+/** Shared stemmed content words over the smaller side: "you prefer meetings after 3pm" vs
+ * "Owner prefers meetings after 3pm" is 1. */
+export function stemCover(a: string, b: string): number {
+  const left = new Set(
+    contentWords(a)
+      .map(stem)
+      .filter((w) => w !== "owner"),
+  );
+  const right = new Set(
+    contentWords(b)
+      .map(stem)
+      .filter((w) => w !== "owner"),
+  );
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const word of left) if (right.has(word)) shared += 1;
+  return shared / Math.min(left.size, right.size);
+}

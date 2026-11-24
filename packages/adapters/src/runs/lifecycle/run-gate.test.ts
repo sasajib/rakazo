@@ -30,6 +30,11 @@ describe("run admission gate", () => {
     expect(admissionBlock(run("b"), 4, [run("a")], [])).toBe("lane busy");
   });
 
+  it("a person's run in the chat does not hold a bot's lane (the chat wait does that)", () => {
+    const owner = run("a", { trigger: "user" });
+    expect(admissionBlock(run("b"), 4, [owner], [])).toBeUndefined();
+  });
+
   it("oldest request in a lane starts first", () => {
     const older = run("a", { lane: "indeed", createdAt: t(1) });
     const newer = run("b", { lane: "indeed", createdAt: t(5) });

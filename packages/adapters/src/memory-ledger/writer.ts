@@ -11,7 +11,7 @@ import type { MemoryModel } from "./model.js";
 import type { Decision, Rejection } from "./scoring.js";
 import { decide, decisionKey } from "./scoring.js";
 import type { LedgerStore } from "./store.js";
-import { overlap } from "./text.js";
+import { overlap, stemCover } from "./text.js";
 import type { Fact, FactCandidate, FactLink, OwnerMessage } from "./types.js";
 
 /** Cosine similarity at which two facts get a `related` link. */
@@ -48,6 +48,22 @@ export interface LearnInput {
   explicit?: boolean | undefined;
   /** Post a card for questions (false for the remember tool: the run's own reply covers it). */
   ask?: boolean | undefined;
+  /**
+   * The Space's standing rules (STANDING.md entry texts). A preference or lesson a standing rule
+   * already states is not stored a second time as a fact: the rule is what bots obey, and two
+   * copies drift apart when only one is changed.
+   */
+  standingRules?: readonly string[] | undefined;
+}
+
+/** A standing rule already says this preference or lesson. */
+function coveredByStandingRule(
+  candidate: { area: string; text: string },
+  rules: readonly string[] | undefined,
+): boolean {
+  if (!rules?.length || (candidate.area !== "preferences" && candidate.area !== "lessons"))
+    return false;
+  return rules.some((rule) => stemCover(rule, candidate.text) >= 0.8);
 }
 
 export interface LearnResult {
@@ -120,6 +136,10 @@ export async function learnFromMessages(
     const existing = [...seen.values()].filter((fact) =>
       ["tentative", "confirmed", "disputed"].includes(fact.status),
     );
+    if (coveredByStandingRule(candidate, input.standingRules)) {
+      result.rejected.standing_rule = (result.rejected.standing_rule ?? 0) + 1;
+      continue;
+    }
     const decidedAgainst = await losingStatements(store, input.spaceId, existing);
     const decision = decide({
       candidate,

@@ -37,6 +37,10 @@ describePostgres("queued turns share a chat one at a time (PostgreSQL)", () => {
     );
     const { userId, spaceId, botId, threadId } = provisioned;
     identity = { userId, spaceId, botId, threadId };
+    // Fork: claimRun also applies the per-bot admission gate (run-gate.ts), where a concurrency-1
+    // bot runs one unattended run at a time beside the owner's. These tests cover how a chat is
+    // shared, so the bot gets slots to spare; the gate has its own tests (run-gate.test.ts).
+    await system.bot.update({ where: { id: botId }, data: { concurrency: 4 } });
   });
   beforeEach(async () => {
     await system.run.deleteMany({ where: { threadId: identity.threadId } });
@@ -107,6 +111,21 @@ describePostgres("queued turns share a chat one at a time (PostgreSQL)", () => {
       expect(await claimRun(deps, waiting, "worker-2")).toBeDefined();
     },
   );
+
+  it("on a one-slot bot, a routine waits for the owner's run (fork admission gate)", async () => {
+    await system.bot.update({ where: { id: identity.botId }, data: { concurrency: 1 } });
+    try {
+      await createRun({ trigger: "user", status: "running", startedAt: new Date() });
+      const scheduled = await createRun({
+        trigger: "routine",
+        status: "queued",
+        routineId: (await routine(undefined, false)).id,
+      });
+      expect(await claimRun(deps, scheduled, "worker-2")).toBeUndefined();
+    } finally {
+      await system.bot.update({ where: { id: identity.botId }, data: { concurrency: 4 } });
+    }
+  });
 
   it("starts a routine that runs alongside its chat while the chat is busy", async () => {
     await createRun({ trigger: "user", status: "running", startedAt: new Date() });

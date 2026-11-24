@@ -96,6 +96,30 @@ describe("writer", () => {
     expect(store.facts.size).toBe(1);
   });
 
+  it("does not store a preference a standing rule already states (one place to change it)", async () => {
+    const pref = city(
+      "Owner prefers meetings after 3pm",
+      "remember that I prefer meetings after 3pm",
+      {
+        area: "preferences",
+        subject: "pref.meeting-time",
+      },
+    );
+    const { model } = scriptedModel([[pref], [pref]]);
+    const { store, services: svc } = services({ model });
+    const said = [owner("m1", "Also, remember that I prefer meetings after 3pm.")];
+    const ruled = await learnFromMessages(
+      svc,
+      input(said, { standingRules: ["You prefer meetings after 3pm."] }),
+    );
+    expect(ruled.saved).toHaveLength(0);
+    expect(ruled.rejected).toEqual({ standing_rule: 1 });
+    // Without that rule it is a fact like any other.
+    const plain = await learnFromMessages(svc, input(said, { standingRules: [] }));
+    expect(plain.saved).toHaveLength(1);
+    expect(store.facts.size).toBe(1);
+  });
+
   it("never saves what is not in the owner's own words (web page, bot reply, email)", async () => {
     // The model was tricked by text the owner pasted from a page into proposing a "fact" the
     // owner never said; the bot's tool output never reaches the writer at all.

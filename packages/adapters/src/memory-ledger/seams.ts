@@ -11,6 +11,7 @@ import { isCallClientNonce } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { createThreadMessage, runAsTenant, storedMessageBlocks } from "@rakazo/db";
 import { bestEffort, getLogger } from "@rakazo/logging";
+import { parseStandingOrders, STANDING_ORDERS_PATH } from "../memory/standing-orders.js";
 import type { LedgerConfig } from "./config.js";
 import { ledgerConfig } from "./config.js";
 import { resolveModelEndpoint } from "./connection.js";
@@ -259,6 +260,24 @@ export function scheduleLedgerLearning(
   }).catch((error) => getLogger().error("memory.ledger.schedule_failed", error));
 }
 
+/** The Space owner's standing rule texts (STANDING.md), for the writer's duplicate check. */
+async function loadStandingRules(
+  prisma: PrismaClient,
+  spaceId: string,
+  userId: string,
+): Promise<string[]> {
+  const doc = await prisma.memoryDocument
+    .findFirst({
+      where: { spaceId, userId, scope: "user", path: STANDING_ORDERS_PATH },
+      select: { content: true },
+    })
+    .catch(() => null);
+  if (!doc?.content || doc.content.startsWith("rkz1:")) return [];
+  return parseStandingOrders(doc.content)
+    .filter((entry) => entry.kind === "rule")
+    .map((entry) => entry.text);
+}
+
 async function runLedgerJob(
   deps: Deps,
   store: LedgerStore,
@@ -292,6 +311,7 @@ async function runLedgerJob(
         botId: job.botId,
         botName,
         messages,
+        standingRules: await loadStandingRules(deps.prisma, job.spaceId, job.userId),
       },
     );
     // A configured model that gave no usable answer is retried by the catch-up pass (up to 3
@@ -592,6 +612,7 @@ export async function rememberViaLedger(
               botId: run.botId,
               botName: run.botName,
               messages,
+              standingRules: await loadStandingRules(deps.prisma, run.spaceId, run.userId),
               hint: hints.join("\n"),
               ask: true,
             },

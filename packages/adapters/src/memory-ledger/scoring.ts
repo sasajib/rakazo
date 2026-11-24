@@ -31,7 +31,14 @@ export const DUPLICATE_OVERLAP = 0.8;
 
 const SUBJECT_WORDS = new Set(["owner", "owner's", "user", "user's"]);
 
-export type Rejection = "invalid" | "quote" | "secret" | "low_confidence" | "already_decided";
+export type Rejection =
+  | "invalid"
+  | "quote"
+  | "secret"
+  | "low_confidence"
+  | "already_decided"
+  | "earlier_message"
+  | "standing_rule";
 
 export type Decision =
   | { kind: "reject"; reason: Rejection }
@@ -156,6 +163,12 @@ export function decide(input: DecisionInput): Decision {
       confidence: Math.max(duplicate.confidence, confidence),
     };
   }
+
+  // A new fact must come from what the owner said now. Earlier messages are context (their own
+  // runs already learned from them); re-reading them saved side facts such as "Nadia is the
+  // owner's sister" on an unrelated "remember". Exception: the latest message corrects it by name.
+  if (!source.current && !currentCorrectionNames(messages, candidate))
+    return { kind: "reject", reason: "earlier_message" };
 
   const replaced = new Set(candidate.replaces ?? []);
   const targets = existing.filter(

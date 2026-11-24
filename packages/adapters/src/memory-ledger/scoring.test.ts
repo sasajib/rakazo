@@ -61,6 +61,24 @@ describe("decide: quote gate and filters", () => {
     ).toEqual({ kind: "reject", reason: "quote" });
   });
 
+  it("does not save a new fact from an earlier message (they were learned in their own run)", () => {
+    const decision = decide({
+      candidate: candidate({
+        area: "people",
+        subject: "person.nadia.relation",
+        text: "Nadia is the owner's sister",
+        quote: "My sister Nadia lives in Chittagong",
+        entities: ["Nadia"],
+      }),
+      messages: [
+        { id: "m0", text: "My sister Nadia lives in Chittagong.", at, current: false },
+        { id: "m1", text: "Remember that my accountant is Rahim.", at, current: true },
+      ],
+      existing: [],
+    });
+    expect(decision).toEqual({ kind: "reject", reason: "earlier_message" });
+  });
+
   it("rejects secrets even when quoted", () => {
     expect(
       decide({

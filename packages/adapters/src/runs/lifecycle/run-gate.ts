@@ -49,7 +49,10 @@ export function admissionBlock(
   if (others.length >= limit) return "no free slot";
   if (candidate.trigger !== "bot_message") return undefined;
   const key = laneKey(candidate);
-  if (others.some((r) => laneKey(r) === key)) return "lane busy";
+  // Only other bots' requests hold a lane. A person's run in the same chat is the chat wait's
+  // job (chat-wait.ts): holding it here too pushed the run's wake time back and queued a second
+  // wake, so a reply waiting on the owner's run started late and out of order.
+  if (others.some((r) => r.trigger === "bot_message" && laneKey(r) === key)) return "lane busy";
   const older = queued.find(
     (q) =>
       q.id !== candidate.id &&
