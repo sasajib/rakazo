@@ -327,7 +327,7 @@ export async function priorToolCalls(
 /** Standing orders and saved lesson/preference facts: what already binds the bot. */
 async function knownRules(
   prisma: PrismaClient,
-  input: { spaceId: string; userId: string; runId: string },
+  input: { spaceId: string; userId: string; runId: string; threadId: string; since: Date },
 ): Promise<string[]> {
   const rules: string[] = [];
   const doc = await prisma.memoryDocument
@@ -344,14 +344,20 @@ async function knownRules(
   if (doc?.content && !doc.content.startsWith("rkz1:"))
     for (const entry of parseStandingOrders(doc.content))
       if (entry.kind === "rule") rules.push(entry.text);
-  // The ledger's facts from earlier runs (this run's are being written beside us).
+  // The ledger's facts from before this stretch of the chat. Facts the ledger wrote from the very
+  // messages being read here are the same words, not an earlier rule: counting them made the
+  // curator answer "already a rule" for every correction.
   const facts = await prisma
     .$queryRawUnsafe<Array<{ text: string }>>(
       `SELECT "text" FROM "memory_facts" WHERE "spaceId" = $1 AND "status" IN ('confirmed', 'tentative')
          AND "area" IN ('lessons', 'preferences') AND "sourceRunId" IS DISTINCT FROM $2
+         AND NOT ("sourceThreadId" IS NOT DISTINCT FROM $3 AND "createdAt" >= $4::timestamp)
        ORDER BY "updatedAt" DESC LIMIT 30`,
       input.spaceId,
       input.runId,
+      input.threadId,
+      // Columns hold UTC without a zone.
+      input.since.toISOString().replace("Z", ""),
     )
     .catch(() => [] as Array<{ text: string }>);
   for (const fact of facts) rules.push(fact.text);
@@ -497,8 +503,38 @@ async function updateCard(deps: CuratorDeps, row: ProposalRow, block: LearnedSki
  */
 async function retractDuplicateFacts(
   prisma: PrismaClient,
-  input: { spaceId: string; runId: string | null; quote: string | null },
+  input: {
+    spaceId: string;
+    runId: string | null;
+    quote: string | null;
+    reason?: string;
+    threadId?: string;
+    botId?: string;
+  },
 ): Promise<number> {
+  // A lesson's steps are the skill: what the ledger saved from the lesson's own messages goes.
+  if (input.reason === "teach_done" && input.threadId && input.botId) {
+    const rows = await prisma
+      .$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT f."id" FROM "memory_facts" f
+         JOIN LATERAL (
+           SELECT "createdAt" FROM "skill_teaching_sessions"
+           WHERE "spaceId" = $1 AND "threadId" = $2 AND "botId" = $3 AND "status" IN ('active', 'saved')
+           ORDER BY "createdAt" DESC LIMIT 1
+         ) s ON true
+         WHERE f."spaceId" = $1 AND f."sourceThreadId" = $2 AND f."createdAt" >= s."createdAt"
+           AND f."area" IN ('lessons', 'preferences') AND f."status" IN ('confirmed', 'tentative')`,
+        input.spaceId,
+        input.threadId,
+        input.botId,
+      )
+      .catch(() => [] as Array<{ id: string }>);
+    return retract(
+      prisma,
+      input.spaceId,
+      rows.map((row) => row.id),
+    );
+  }
   if (!input.runId || !input.quote || input.quote.length < 8) return 0;
   const facts = await prisma
     .$queryRawUnsafe<Array<{ id: string; text: string; quote: string }>>(
@@ -516,11 +552,15 @@ async function retractDuplicateFacts(
         fact.quote.toLowerCase().includes(input.quote!.toLowerCase()),
     )
     .map((fact) => fact.id);
+  return retract(prisma, input.spaceId, ids);
+}
+
+async function retract(prisma: PrismaClient, spaceId: string, ids: string[]): Promise<number> {
   if (!ids.length) return 0;
   await prisma.$executeRawUnsafe(
     `UPDATE "memory_facts" SET "status" = 'retracted', "validTo" = now(), "updatedAt" = now()
      WHERE "spaceId" = $1 AND "id" = ANY($2::text[])`,
-    input.spaceId,
+    spaceId,
     ids,
   );
   getLogger().info("skill.curator.ledger_dedup", { "skill.curator.retracted": ids.length });
@@ -561,7 +601,15 @@ export async function curate(
     return { outcome: "skipped", why: "off", usedModel: false };
   const owner = { spaceId: job.spaceId, userId: job.userId, botId: job.botId };
   const skills = await visibleSkills(deps.prisma, store, owner);
-  const rules = await knownRules(deps.prisma, { ...owner, runId: job.runId });
+  const since = new Date(
+    Math.min(Date.now(), ...input.messages.map((message) => message.at.getTime())),
+  );
+  const rules = await knownRules(deps.prisma, {
+    ...owner,
+    runId: job.runId,
+    threadId: job.threadId,
+    since,
+  });
   const curatorModel =
     model ??
     (await resolveModelEndpoint(deps, job.userId, config.model).then((endpoint) =>
@@ -672,6 +720,9 @@ export async function curate(
     spaceId: job.spaceId,
     runId: job.runId,
     quote: base.quote,
+    reason,
+    threadId: job.threadId,
+    botId: job.botId,
   });
   return {
     outcome: "saved",
@@ -822,6 +873,9 @@ export async function decideProposal(
       spaceId: row.spaceId,
       runId: row.runId,
       quote: row.quote,
+      reason: row.reason,
+      threadId: row.threadId,
+      botId: row.botId,
     });
     return finish("kept", { skillId: applied.skillId, content });
   }

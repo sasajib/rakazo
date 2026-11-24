@@ -51,7 +51,8 @@ export function TeachingBar({ botId, threadId }: { botId?: string; threadId?: st
   return (
     <div
       data-testid="teaching-bar"
-      className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 px-4 pb-1 text-body-sm text-muted-foreground"
+      /* The composer below pulls itself up 1.75rem (-mt-7) over what sits above it; keep clear. */
+      className="relative z-40 mx-auto mb-7 flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 px-4 text-body-sm text-muted-foreground"
     >
       <span className="min-w-0 truncate" dir="auto">
         <Trans>Teaching: {task}</Trans>

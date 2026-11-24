@@ -255,6 +255,71 @@ describePostgres("skill curator under PostgreSQL row-level security (fork)", () 
         await store.setMode(space.id, bot.id, "auto");
         await store.setMode(space.id, null, "off");
         expect(await store.modes(space.id, bot.id)).toEqual({ space: "off", bot: "auto" });
+
+        // Ledger facts from the very stretch of chat being read are not "earlier rules"; facts
+        // from elsewhere are. A lesson saved as a skill takes the ledger's copies of its steps.
+        const fact = async (id: string, threadId: string | null, createdAt: Date) =>
+          db.prisma.$executeRawUnsafe(
+            `INSERT INTO "memory_facts" ("id","spaceId","area","text","quote","origin","status","sourceThreadId","createdAt")
+             VALUES ($1,$2,'preferences',$3,$3,'stated','tentative',$4,$5::timestamp)`,
+            id,
+            space.id,
+            `fact ${id}`,
+            threadId,
+            createdAt.toISOString().replace("Z", ""),
+          );
+        const lessonStart = new Date(Date.now() - 60_000);
+        await fact("f-old", null, new Date(Date.now() - 3_600_000));
+        const session = await store.startTeaching({
+          spaceId: space.id,
+          threadId: thread.id,
+          botId: bot.id,
+          userId,
+          task: "file receipts",
+          startSeq: 0,
+        });
+        await db.prisma.$executeRawUnsafe(
+          `UPDATE "skill_teaching_sessions" SET "createdAt" = $2::timestamp WHERE "id" = $1`,
+          session.id,
+          lessonStart.toISOString().replace("Z", ""),
+        );
+        await fact("f-lesson", thread.id, new Date());
+        let seenRules: readonly string[] = [];
+        const lesson = await curate(
+          deps,
+          store,
+          config,
+          {
+            job: { ...job("teach-1"), reason: "teach_done" },
+            botName: "Learner",
+            mode: "auto",
+            messages: [
+              {
+                text: "Step 1: open receipts. Done, save as skill.",
+                at: lessonStart,
+                current: true,
+              },
+            ],
+            replies: [],
+          },
+          {
+            propose: async (input) => {
+              seenRules = input.rules;
+              return { ...create, name: "File Receipts", quote: "open receipts" };
+            },
+          },
+        );
+        expect(lesson.outcome).toBe("saved");
+        expect(seenRules).toContain("fact f-old");
+        expect(seenRules).not.toContain("fact f-lesson");
+        const statuses = await db.prisma.$queryRawUnsafe<Array<{ id: string; status: string }>>(
+          `SELECT "id", "status" FROM "memory_facts" WHERE "spaceId" = $1 ORDER BY "id"`,
+          space.id,
+        );
+        expect(statuses).toEqual([
+          { id: "f-lesson", status: "retracted" },
+          { id: "f-old", status: "tentative" },
+        ]);
       });
 
       // Row security: another Space sees none of it.
