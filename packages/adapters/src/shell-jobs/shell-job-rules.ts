@@ -43,14 +43,9 @@ export const DEFAULT_SHELL_JOB_CONFIG: ShellJobConfig = {
   maxWakesInARow: 6,
 };
 
-function intEnv(
-  env: Record<string, string | undefined>,
-  name: string,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const raw = env[name]?.trim();
+// Values are read by literal name at the call site so the compose-env test can see each key.
+function intEnv(setting: string | undefined, fallback: number, min: number, max: number): number {
+  const raw = setting?.trim();
   if (!raw) return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value)) return fallback;
@@ -63,11 +58,11 @@ export function shellJobConfig(
   const flag = env.SHELL_BACKGROUND_JOBS?.trim().toLowerCase();
   return {
     enabled: !(flag === "0" || flag === "false" || flag === "off"),
-    backgroundAfterMs: intEnv(env, "SHELL_BACKGROUND_AFTER_MS", 8_000, 0, 600_000),
-    maxMs: intEnv(env, "SHELL_JOB_MAX_MS", DEFAULT_SHELL_JOB_CONFIG.maxMs, 10_000, 24 * 3_600_000),
-    perBot: intEnv(env, "SHELL_JOBS_PER_BOT", 4, 1, 32),
-    perSpace: intEnv(env, "SHELL_JOBS_PER_SPACE", 12, 1, 256),
-    maxWakesInARow: intEnv(env, "SHELL_JOB_MAX_WAKES", 6, 1, 100),
+    backgroundAfterMs: intEnv(env.SHELL_BACKGROUND_AFTER_MS, 8_000, 0, 600_000),
+    maxMs: intEnv(env.SHELL_JOB_MAX_MS, DEFAULT_SHELL_JOB_CONFIG.maxMs, 10_000, 24 * 3_600_000),
+    perBot: intEnv(env.SHELL_JOBS_PER_BOT, 4, 1, 32),
+    perSpace: intEnv(env.SHELL_JOBS_PER_SPACE, 12, 1, 256),
+    maxWakesInARow: intEnv(env.SHELL_JOB_MAX_WAKES, 6, 1, 100),
   };
 }
 
