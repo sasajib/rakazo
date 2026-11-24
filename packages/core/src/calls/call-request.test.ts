@@ -79,6 +79,7 @@ describe("phone call server settings", () => {
       phoneCallsEnabled: false,
       phoneCallCooldownMinutes: 2,
       phoneCallRingSeconds: 45,
+      voiceAgentCalls: false,
     });
   });
 
@@ -89,10 +90,17 @@ describe("phone call server settings", () => {
         PHONE_CALL_COOLDOWN_MINUTES: "1",
         PHONE_CALL_RING_SECONDS: "90",
       }),
-    ).toEqual({ phoneCallsEnabled: true, phoneCallCooldownMinutes: 1, phoneCallRingSeconds: 90 });
+    ).toEqual({
+      phoneCallsEnabled: true,
+      phoneCallCooldownMinutes: 1,
+      phoneCallRingSeconds: 90,
+      voiceAgentCalls: false,
+    });
     for (const value of ["TRUE", "1", "false", ""]) {
       expect(phoneCallSettings({ PHONE_CALLS_ENABLED: value }).phoneCallsEnabled).toBe(false);
     }
+    expect(phoneCallSettings({ VOICE_AGENT_URL: "http://token:8080" }).voiceAgentCalls).toBe(true);
+    expect(phoneCallSettings({ VOICE_AGENT_URL: "  " }).voiceAgentCalls).toBe(false);
   });
 
   it.each(["", "0", "-1", "invalid", "NaN", "Infinity"])(

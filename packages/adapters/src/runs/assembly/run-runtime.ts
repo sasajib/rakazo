@@ -100,6 +100,7 @@ export interface RunRuntimeEnv extends PipedreamEnvironmentValues {
   phoneCallsEnabled: boolean;
   phoneCallRingSeconds: number;
   phoneCallCooldownMinutes: number;
+  voiceAgentCalls: boolean;
   maxUploadSizeBytes: number;
   /** What one computer save may copy; read once from `WORKSPACE_SAVE_MAX_GB`. */
   workspaceSaveLimits: WorkspaceExportLimits;
@@ -236,6 +237,7 @@ type SetByRunRuntime =
   | "phoneCallsEnabled"
   | "phoneCallRingSeconds"
   | "phoneCallCooldownMinutes"
+  | "voiceAgentCalls"
   | "inboundEmailDomain"
   | "maxUploadSizeBytes"
   | "messaging"
@@ -325,6 +327,7 @@ export function createRunRuntime(
     phoneCallsEnabled: env.phoneCallsEnabled,
     phoneCallRingSeconds: env.phoneCallRingSeconds,
     phoneCallCooldownMinutes: env.phoneCallCooldownMinutes,
+    voiceAgentCalls: env.voiceAgentCalls,
     inboundEmailDomain: env.inboundEmailDomain,
     messaging: messaging
       ? {

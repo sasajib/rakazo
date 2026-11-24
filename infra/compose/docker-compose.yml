@@ -49,6 +49,8 @@ x-app-environment: &app-environment # Runtime
   PHONE_CALLS_ENABLED:
   PHONE_CALL_RING_SECONDS:
   PHONE_CALL_COOLDOWN_MINUTES:
+  # Optional LiveKit voice agent for duplex calls; the API and the worker both ring through it.
+  VOICE_AGENT_URL:
   # The worker names each bot's address to it and sends its email; the API receives the mail.
   INBOUND_EMAIL_DOMAIN:
   BOT_EMAIL_SMTP_URL:
@@ -484,6 +486,7 @@ services:
       # Where the ingress forwards to: the inbound listener, never the app port.
       INGRESS_UPSTREAM_URL: http://api:${INGRESS_PORT:-3101}
       API_HOST: "0.0.0.0"
+      VOICE_AGENT_INTERNAL_TOKEN:
       API_PORT:
       BETTER_AUTH_SECRET:
       BETTER_AUTH_URL:

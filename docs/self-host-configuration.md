@@ -118,6 +118,7 @@ callbacks.
 | `USER_DEVICES_ENABLED`    | on               | `false` stops signed-in desktop apps from letting bots run commands on the user's own computer. Set it on the API and worker.                           |
 | `PI_SESSION_RECORDING`    | off              | `true` records agent sessions as JSONL under `DATA_DIR/pi-sessions`. The files are not encrypted, so do not use it on a shared or multi-tenant install. |
 | `PRIVACY_POLICY_URL`      | Rakazo's policy  | The privacy policy linked from the AI data-sharing notice. Set it on the API.                                                                           |
+| `VOICE_AGENT_URL`         | unset            | Base URL of a LiveKit voice agent's token server. Set on the API, the in-app **Call** joins a duplex room with the agent instead of the built-in call loop; see [Voice and calls](./voice-and-calls.md#duplex-calls-with-a-livekit-agent). `VOICE_AGENT_INTERNAL_TOKEN` is forwarded to it as `x-voice-internal-token`. |
 | `AUTH_RATE_LIMIT_ENABLED` | on in production | Rate-limits sign-in and other credential routes. `true` turns it on for an install that runs without `NODE_ENV=production`. Set it on the API.          |
 
 ## Chat history retention

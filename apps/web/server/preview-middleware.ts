@@ -517,6 +517,8 @@ export function webServerSettings(read: (name: string) => string | undefined, lo
       connectSrc: parseContentSecuritySources(
         "RAKAZO_CSP_CONNECT_SRC",
         read("RAKAZO_CSP_CONNECT_SRC"),
+        // WebSocket origins too: a LiveKit voice agent's signalling (docs/voice-and-calls.md).
+        ["https", "wss"],
       ),
       crisp: parseCrispWebsiteId(read("CRISP_WEBSITE_ID")) !== null,
     }),

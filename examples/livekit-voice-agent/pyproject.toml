@@ -1,0 +1,22 @@
+[project]
+name = "rakazo-livekit-voice-agent"
+version = "0.1.0"
+description = "Duplex voice calls with a Rakazo bot through a LiveKit Agents worker"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = "Apache-2.0"
+dependencies = [
+  "livekit-agents[deepgram,openai,silero]~=1.8",
+  "livekit-api~=1.0",
+  "httpx>=0.27",
+  "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

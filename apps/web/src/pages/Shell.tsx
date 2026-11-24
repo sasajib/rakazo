@@ -186,7 +186,7 @@ function SpaceShell() {
     memoryProviderConfig,
     voiceStatus,
   } = useShellStatus(queries, Boolean(session.data?.user));
-  const { call, callBot, openCall } = useBotCall({
+  const { call, callBot, openCall, livekitCalls } = useBotCall({
     phoneCallsEnabled: Boolean(bootstrapMe?.phoneCallsEnabled),
     voiceStatus,
     openVoiceSettings: () => openSettings("voice"),
@@ -752,7 +752,7 @@ function SpaceShell() {
             activeSnapshot={activeSnapshot}
             phoneCallsEnabled={Boolean(bootstrapMe?.phoneCallsEnabled)}
             meetingsEnabled={Boolean(bootstrapMe?.meetingsEnabled)}
-            voiceReady={Boolean(voiceStatus?.ready)}
+            voiceReady={livekitCalls || Boolean(voiceStatus?.ready)}
             inCall={Boolean(active) && call?.botId === active?.id}
             panelOpen={chatPanelOpen}
             onOpenNavigation={() => setMobileSidebarOpen(true)}
@@ -848,6 +848,7 @@ function SpaceShell() {
       <IncomingCall
         bots={bootstrapMe?.phoneCallsEnabled ? bots : []}
         transcribe={voiceStatus ? Boolean(voiceStatus.transcribe) : undefined}
+        transport={livekitCalls ? "livekit" : "builtin"}
         onAnswered={(botId) => navigate(`/app/${botId}`)}
       />
 

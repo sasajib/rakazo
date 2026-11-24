@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, useNavigate } from "react-router-dom";
+import { voiceAgentConfigQuery } from "../../lib/calls/voice-agent";
 import { useSpaceQueries } from "../../lib/query/query";
 import { CallCard, CallReturnBar } from "./CallCard";
 import { IncomingCall } from "./IncomingCall";
@@ -19,6 +20,7 @@ export function CallLayout() {
     ...queries.voice.status.queryOptions(),
     enabled: callsEnabled,
   }).data;
+  const livekitCalls = useQuery(voiceAgentConfigQuery(callsEnabled)).data?.mode === "livekit";
   return (
     <div className="flex h-full flex-col">
       <CallReturnBar />
@@ -29,6 +31,7 @@ export function CallLayout() {
       <IncomingCall
         bots={calls}
         transcribe={voiceStatus ? Boolean(voiceStatus.transcribe) : undefined}
+        transport={livekitCalls ? "livekit" : "builtin"}
         onAnswered={(botId) => navigate(`/app/${botId}`)}
       />
     </div>

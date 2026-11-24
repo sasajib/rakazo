@@ -47,6 +47,7 @@ export * from "./calls/call-request.js";
 export * from "./calls/call-session.js";
 export * from "./calls/echo.js";
 export * from "./calls/farewell.js";
+export * from "./calls/livekit-call-state.js";
 export * from "./calls/speech-feed.js";
 export * from "./calls/speech-locale.js";
 export * from "./calls/speech-text.js";

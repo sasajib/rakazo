@@ -147,6 +147,25 @@ describe("operator-added origins", () => {
     ).toThrow(/^RAKAZO_CSP_SCRIPT_SRC accepts only https:\/\/ origins.*Invalid: /);
   });
 
+  it("takes wss:// origins only where a caller allows them, for connect-src", () => {
+    expect(
+      parseContentSecuritySources(
+        "RAKAZO_CSP_CONNECT_SRC",
+        "wss://lk.example.com https://x.example.com",
+        ["https", "wss"],
+      ),
+    ).toEqual(["wss://lk.example.com", "https://x.example.com"]);
+    expect(() =>
+      parseContentSecuritySources("RAKAZO_CSP_CONNECT_SRC", "ws://lk.example.com", [
+        "https",
+        "wss",
+      ]),
+    ).toThrow(/^RAKAZO_CSP_CONNECT_SRC accepts only https:\/\/ or wss:\/\/ origins.*Invalid: ws:/);
+    expect(() =>
+      parseContentSecuritySources("RAKAZO_CSP_SCRIPT_SRC", "wss://lk.example.com"),
+    ).toThrow(/^RAKAZO_CSP_SCRIPT_SRC accepts only https:\/\/ origins/);
+  });
+
   it("adds them to script-src and connect-src only, after 'self'", () => {
     const extended = directives(
       appContentSecurityPolicy({

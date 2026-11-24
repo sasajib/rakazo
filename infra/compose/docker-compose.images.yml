@@ -59,6 +59,8 @@ x-app-environment: &app-environment # Runtime
   PHONE_CALLS_ENABLED:
   PHONE_CALL_RING_SECONDS:
   PHONE_CALL_COOLDOWN_MINUTES:
+  # Optional LiveKit voice agent for duplex calls; the API and the worker both ring through it.
+  VOICE_AGENT_URL:
   # The worker names each bot's address to it and sends its email; the API receives the mail.
   INBOUND_EMAIL_DOMAIN:
   BOT_EMAIL_SMTP_URL:
@@ -573,6 +575,8 @@ services:
       RAKAZO_ADMIN_EMAILS:
       DEPLOYMENT_VOICE:
       VOICE_SUMMARY_MIN_CHARS:
+      # Optional LiveKit voice agent for duplex calls (docs/voice-and-calls.md#duplex-calls-with-a-livekit-agent).
+      VOICE_AGENT_INTERNAL_TOKEN:
     ports:
       - "127.0.0.1:${RAKAZO_API_PORT:-3100}:3100"
     volumes:

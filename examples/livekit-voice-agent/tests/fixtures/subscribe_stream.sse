@@ -1,0 +1,71 @@
+: 
+
+event: message
+data: {"json":{"id":"cmw9htk7q9f2c58d2rjxr7sav","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":0,"type":"run.started","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:13.144Z","payload":{"trigger":"created","routineId":null}}}
+
+event: message
+data: {"json":{"id":"cmw9htqdr9f2d58d2v2nw4yws","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":2,"type":"agent.tool.completed","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:21.137Z","payload":{"name":"ask_user","executionId":"[\"pi-tool\",\"main\",\"call_760325104ee441e4a263c0ff\"]","durationMs":0,"outcome":"paused"}}}
+
+event: message
+data: {"json":{"id":"cmw9htqdu9f2f58d2amme3kpm","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":3,"type":"agent.tool.called","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:21.139Z","payload":{"name":"ask_user","executionId":"[\"pi-tool\",\"main\",\"call_760325104ee441e4a263c0ff\"]"}}}
+
+event: message
+data: {"json":{"id":"cmw9htqen9f2h58d2oq6q3428","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":4,"type":"thread.message.created","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:21.168Z","payload":{"messageId":"cmw9htqeg9f2g58d2uxpmv1a8","role":"bot","blocks":[{"kind":"ask","text":"Hi Shakil — what should Voice do for you?","status":"pending","actions":[{"id":"choice-1","label":"Read my messages aloud"},{"id":"choice-2","label":"Voice control for my computer"},{"id":"choice-3","label":"Dictation and notes"},{"id":"choice-4","label":"Something else"}]}]}}}
+
+event: message
+data: {"json":{"id":"cmw9htqes9f2i58d2oypafybl","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":5,"type":"run.waiting_input","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:21.173Z","payload":{"userId":"hJ51drycO1AmfpYuhDdVTUfIW96g7wQ6"}}}
+
+event: message
+data: {"json":{"id":"cmw9htv8x9f2k58d2dxv5ccfp","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":6,"type":"thread.message.updated","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:27.442Z","payload":{"messageId":"cmw9htqeg9f2g58d2uxpmv1a8","role":"bot","blocks":[{"kind":"ask","text":"Hi Shakil — what should Voice do for you?","status":"answered","actions":[{"id":"choice-1","label":"Read my messages aloud"},{"id":"choice-2","label":"Voice control for my computer"},{"id":"choice-3","label":"Dictation and notes"},{"id":"choice-4","label":"Something else"}],"answer":"Hello, can you hear me? Say one short sentence back."}]}}}
+
+event: message
+data: {"json":{"id":"cmw9htv9g9f2l58d2g223qeyp","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":7,"type":"thread.message.created","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:27.461Z","payload":{"messageId":"cmw9htv739f2j58d2fbeyk6y3","seq":1,"role":"user","blocks":[{"kind":"text","text":"Hello, can you hear me? Say one short sentence back."}],"author":{"id":"hJ51drycO1AmfpYuhDdVTUfIW96g7wQ6","name":"Voice Agent"},"callId":"probe1794242787","runIds":["cmw9htk5p000b07mqhebou59s"]}}}
+
+event: message
+data: {"json":{"id":"cmw9htvch9f2m58d2tfmg9rez","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":8,"type":"run.started","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:27.570Z","payload":{"trigger":"user","routineId":null}}}
+
+: 
+
+event: message
+data: {"json":{"id":"cmw9hu31d9f2n58d2v4i5nx27","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":9,"type":"thread.meta","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:37.538Z","payload":{"activity":{"thinking":true}}}}
+
+: 
+
+event: message
+data: {"json":{"id":"cmw9hu7q99f2o58d29p7495li","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":10,"type":"thread.meta","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:43.618Z","payload":{"activity":{"thinking":false}}}}
+
+event: message
+data: {"json":{"id":"cmw9hu7sq9f2p58d2s9avkeib","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":11,"type":"thread.progress","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:43.707Z","payload":{"text":"Y","streaming":true}}}
+
+event: message
+data: {"json":{"id":"cmw9hu80l9f2q58d2u42q4n0d","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":12,"type":"thread.progress","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:43.990Z","payload":{"delta":"es, I can hear you loud and clear","streaming":true}}}
+
+event: message
+data: {"json":{"id":"cmw9hu87n9f2r58d2doycry29","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":13,"type":"thread.progress","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:44.244Z","payload":{"delta":", Shakil. \n\nWhile you test the mic — what would you like","streaming":true}}}
+
+event: message
+data: {"json":{"id":"cmw9hu8fm9f2s58d288kvgfc0","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":14,"type":"thread.progress","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:44.532Z","payload":{"delta":" me to be? I can read things aloud, handle dictation and notes, or act as your ","streaming":true}}}
+
+event: message
+data: {"json":{"id":"cmw9hu8o09f2t58d2arzo87jh","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":15,"type":"thread.progress","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:44.834Z","payload":{"delta":"voice assistant for computer tasks.","streaming":true}}}
+
+event: message
+data: {"json":{"id":"cmw9hu8rt9f2u58d26soocwma","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":16,"type":"thread.progress","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:44.971Z","payload":{"delta":" Just say the word (or pick one of the earlier options).","streaming":true}}}
+
+event: message
+data: {"json":{"id":"cmw9hu8sz9f2w58d2zhghcd1s","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":17,"type":"thread.message.created","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:45.012Z","payload":{"messageId":"cmw9hu8sm9f2v58d2drn4yb4m","role":"bot","blocks":[{"kind":"text","text":"Yes, I can hear you loud and clear, Shakil. \n\nWhile you test the mic — what would you like me to be? I can read things aloud, handle dictation and notes, or act as your voice assistant for computer tasks. Just say the word (or pick one of the earlier options)."}]}}}
+
+event: message
+data: {"json":{"id":"cmw9hu8t49f2x58d2olmk1rm1","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":18,"type":"run.completed","runId":"cmw9htk5p000b07mqhebou59s","createdAt":"2026-11-09T16:46:45.017Z","payload":{}}}
+
+: 
+
+: 
+
+: 
+
+: 
+
+event: message
+data: {"json":{"id":"heartbeat","spaceId":"fd5a62d022404818dc005ee21fc99499","threadId":"cmw9htk53000807mq7llw2zab","botId":"cmw9htk4pv9vnjqfjey0rcvex","seq":0,"type":"heartbeat","createdAt":"2026-11-09T16:47:05.054Z","payload":{}}}
+

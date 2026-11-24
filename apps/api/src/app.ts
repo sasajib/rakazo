@@ -78,6 +78,7 @@ import {
   PLUGIN_SUBMISSIONS_PATH,
   SERVER_BUILD_HEADER,
 } from "@rakazo/contracts";
+import { callRequestBlock, callRequestClientNonce } from "@rakazo/core";
 import { encryptionKeyWarning } from "@rakazo/core/node/secrets-guard";
 import type { Pool, PrismaClient } from "@rakazo/db";
 import {
@@ -85,8 +86,11 @@ import {
   createBoardEvents,
   createDb,
   createPool,
+  IsolationError,
   parsePositiveInteger,
   runAsSystem,
+  runAsTenant,
+  storedMessageBlocks,
 } from "@rakazo/db";
 import type { Logger } from "@rakazo/logging";
 import {
@@ -120,6 +124,7 @@ import { createBillingService } from "./billing/billing.js";
 import { mountBillingRoutes } from "./billing/billing-webhook.js";
 import { createSpeechSummarizer } from "./calls/speech-summary.js";
 import { mountVoiceHttpRoutes } from "./calls/voice.js";
+import { callerBearerFromRequest, mountVoiceAgentRoutes } from "./calls/voice-agent.js";
 import { homeRetentionSweep } from "./computers/home-retention.js";
 import { localSignupAdmitter, mountLocalComputerHost } from "./computers/local-settings.js";
 import { mountScreenTarget } from "./computers/screen-proxy.js";
@@ -161,6 +166,7 @@ import type { SpaceDeletionDeps } from "./spaces/space-deletion.js";
 import { afterSpaceDeparture } from "./spaces/space-departure.js";
 import { cspReportRoutes } from "./telemetry/csp-report.js";
 import { monitoringRoutes } from "./telemetry/monitoring.js";
+import { resolveThreadTarget } from "./threads/thread-target.js";
 import { mountWebhookHttpRoutes } from "./webhooks/webhook.js";
 
 // A stop that hands runs back is allowed 30 seconds before the process is killed.
@@ -868,6 +874,40 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   mountAccountExportRoute(app, { prisma, auth, artifacts, home });
   mountAuditExportRoute(app, { prisma, sessionActor });
   mountVoiceHttpRoutes(app, { prisma, secrets, env }, (c) => sessionActor(c.req.raw));
+  // Duplex calls through a LiveKit agent, present only when VOICE_AGENT_URL is set.
+  mountVoiceAgentRoutes(
+    app,
+    {
+      env,
+      callerBearer: async (c) =>
+        callerBearerFromRequest(c, (await auth.$context).authCookies.sessionToken.name),
+      // The bot's call the user answered: only its own chat holds the request, and only an
+      // `answered` one may name the room (threads/answerCall moved it there a moment ago).
+      answeredCall: (actor, input) =>
+        // Row security needs the tenant on this Hono route, as the oRPC handlers get it.
+        runAsTenant(actor, async () => {
+          let threadId: string;
+          try {
+            const target = await resolveThreadTarget(prisma, actor, { botId: input.botId });
+            if (target.kind !== "bot") return null;
+            threadId = target.threadId;
+          } catch (error) {
+            if (error instanceof IsolationError) return null;
+            throw error;
+          }
+          const message = await prisma.message.findUnique({
+            where: {
+              threadId_clientNonce: { threadId, clientNonce: callRequestClientNonce(input.callId) },
+            },
+            select: { id: true, role: true, blocks: true },
+          });
+          if (message?.role !== "bot") return null;
+          const block = callRequestBlock(storedMessageBlocks(message));
+          return block?.status === "answered" ? { opening: block.opening } : null;
+        }),
+    },
+    async (c) => sessionActor(c.req.raw),
+  );
   mountAccountImportRoute(
     app,
     { ...spaceDeletionDeps, maxArtifactBytes: env.maxUploadSizeBytes },
