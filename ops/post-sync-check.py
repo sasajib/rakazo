@@ -21,7 +21,13 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("rememberToolViaLedger(", 2), ("recallToolViaLedger(", 2), ('"memory_facts",', 1),
            ("!deleteMemories && !ledgerEnabled()", 1),
            # host computer serves bee's display :1 (live screen, take over, computer_observe/act)
-           ("userMachineServesScreen(", 3), ("displayConnect", 3), ("screenlessUserMachine(", 3)]
+           ("userMachineServesScreen(", 3), ("displayConnect", 3), ("screenlessUserMachine(", 3),
+           # deployment-wide disabled built-in tools: both seams (capabilities + tool selection)
+           ("RAKAZO_DISABLED_BUILTIN_TOOLS", 2),
+           # per-agent skills: filter in the catalog + skill_read, the run-records seam, RPC, web section
+           ("filterSkillsForBot(", 3), ("loadBotSkillSelection(", 3), ("addSkillToBotSelection(", 2),
+           ("botSkillsProcedures", 2), ("createBotSkillsService(", 2), ("BotSkillsSection", 2),
+           ('"BotSkillSelection",', 1)]
 results = []
 
 
@@ -73,6 +79,7 @@ def migrations():
     check("runs.lane column exists", psql("select 1 from information_schema.columns where table_name='runs' and column_name='lane'") == "1")
     check("memory ledger migration on disk", os.path.isdir(mdir + "/20261231235500_memory_ledger"))
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
+    check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
 
 
 def live_queue_test():
