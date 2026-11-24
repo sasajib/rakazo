@@ -34,7 +34,6 @@ import {
 } from "../../runtime/pi/pi-runtime-models.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
 import {
-  desktopGuardShellInstruction,
   dockerComputerToolInstruction,
   persistentComputerInstruction,
   RAKAZO_PLATFORM_INSTRUCTION,
@@ -322,6 +321,17 @@ describe("tool completion audit", () => {
       error: "destination rejected the record",
     });
     expect(completion).not.toHaveProperty("result");
+  });
+
+  it("records a shell command with a nonzero exit code as a tool error", () => {
+    const payload = toolCompletionAuditPayload({
+      name: "shell",
+      executionId: "call-1",
+      durationMs: 4,
+      result: { kind: "agent_tool_result", content: [], details: { code: 1 } },
+    });
+
+    expect(payload.outcome).toBe("error");
   });
 
   it("records an MCP tool result flagged isError as an error", () => {
@@ -1933,16 +1943,6 @@ describe("userTurnInstructions", () => {
   });
 });
 
-describe("desktopGuardShellInstruction", () => {
-  it("names write_file only when it is offered and says nothing without shell", () => {
-    expect(desktopGuardShellInstruction(new Set(["shell", "write_file"]))).toBe(
-      "Shell commands must be literal: no `$(...)`, backticks, subshells, loops, or `$` variables, environment variables included. Otherwise write a script with write_file and run it with `python3` or `bash`.",
-    );
-    expect(desktopGuardShellInstruction(new Set(["shell"]))).toContain("write a script file and");
-    expect(desktopGuardShellInstruction(new Set(["write_file"]))).toBeUndefined();
-  });
-});
-
 describe("dockerComputerToolInstruction", () => {
   it("documents rootless Python tool installation only for Docker images", () => {
     expect(dockerComputerToolInstruction("docker")).toContain("uv tool install <package>");
@@ -2319,6 +2319,7 @@ describe("createRunExecutor", () => {
           task: { create: taskCreate },
           run: {
             create: runCreate,
+            findFirst: vi.fn(async () => null),
             findMany: vi.fn(async () => []),
             findUnique: vi.fn(async () => null),
           },

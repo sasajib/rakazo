@@ -20,6 +20,7 @@ import {
 import { learnAfterRun } from "../../memory-ledger/run-hooks.js";
 import { returnBotMessageOutcome } from "../../messaging/bot-messages.js";
 import { clearRoutineBackoff } from "../../routines/routine-backoff.js";
+import { deleteSpentRoutine } from "../../routines/routine-end.js";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
 import {
   COMPACTION_BATCH_SIZE,
@@ -36,7 +37,6 @@ import {
   runAllowsSilentEmpty,
   TOOL_STEPS_WITHOUT_RESPONSE,
 } from "../assembly/run-replies.prompt.js";
-import { deleteSpentOneShotRoutine } from "../assembly/run-routines.js";
 import {
   isNoResponseReply,
   isPlaceholderReply,
@@ -157,7 +157,7 @@ export async function completeRun(ctx: RunContext) {
   ctx.stopHeartbeatAfterCompletion();
   if (run.trigger === "routine" && run.routineId) {
     await clearRoutineBackoff(deps, { routineId: run.routineId, userId: run.userId });
-    await deleteSpentOneShotRoutine(deps, {
+    await deleteSpentRoutine(deps, {
       spaceId: run.spaceId,
       routineId: run.routineId,
       userId: run.userId,

@@ -13,6 +13,10 @@ import { currentSessionGeneration } from "../api/session";
 import { errorText } from "../api/user-error";
 import { findSwitchTarget, ringOnArrival, takeRingOnArrival } from "../calls/bot-switch";
 import {
+  autoLanguageNeedsTranscription,
+  loadCallAutoLanguage,
+} from "../calls/call-language-preference";
+import {
   getSnapshot as getCallSnapshot,
   setCallProviderTranscribe,
   startCall,
@@ -212,17 +216,19 @@ export function useThreadVoiceCall({
     const spaceId = selectedSpaceId();
     // A late answer must not act on another chat or a newer sign-in.
     const stillHere = () =>
-      activeBotId.current === targetBotId && setupSession === currentSessionGeneration();
+      activeBotId.current === targetBotId &&
+      setupSession === currentSessionGeneration() &&
+      selectedSpaceId() === spaceId;
     try {
       // The call keeps the Space it starts in: an organization or Space switch mid-call must
       // not move its turns, speech or hang-up to another Space.
-      const requestContext: ApiRequestContext = await captureApiRequestContext();
+      const requestContext: ApiRequestContext = await captureApiRequestContext(spaceId);
       // A LiveKit voice agent brings its own speech and greeting: the call needs no voice
       // provider or dictation here, so the room is joined before any of that is checked.
       const transport = await resolveCallTransport(() =>
         fetchVoiceAgentConfig(requestContext, new AbortController().signal),
       );
-      if (activeBotId.current !== targetBotId) return;
+      if (!stillHere()) return;
       if (transport === "livekit") {
         startCall({
           botId: targetBotId,
@@ -235,8 +241,11 @@ export function useThreadVoiceCall({
         });
         return;
       }
+      const autoLanguage = await loadCallAutoLanguage();
+      if (!stillHere()) return;
       const [plan, callerName, greet] = await Promise.all([
         resolveVoiceCallPlan({
+          autoLanguage,
           loadDeviceVoiceEnabled,
           dictationAvailable,
           loadVoiceStatus,
@@ -264,7 +273,9 @@ export function useThreadVoiceCall({
       if (plan.kind === "dictation") {
         Alert.alert(
           t`Calls need transcription`,
-          t`Allow speech recognition in Settings, or connect a voice provider that transcribes.`,
+          autoLanguage
+            ? autoLanguageNeedsTranscription()
+            : t`Allow speech recognition in Settings, or connect a voice provider that transcribes.`,
           [
             { text: t`Not now`, style: "cancel" },
             { text: t`Open Voice`, onPress: () => router.push("/voice") },
@@ -279,6 +290,7 @@ export function useThreadVoiceCall({
         botColor: mentionBots.find((bot) => bot.id === targetBotId)?.color,
         botAvatarSet: mentionBots.find((bot) => bot.id === targetBotId)?.avatarSet,
         transcribe: plan.transcribe,
+        autoLanguage,
         greeting: greet ? callGreeting(botName, callerName, switchedHere) : undefined,
         session: setupSession,
         requestContext,
@@ -289,7 +301,7 @@ export function useThreadVoiceCall({
         },
       });
       if (!startedCallId) return;
-      if (plan.kind === "device") {
+      if (plan.kind === "device" && !autoLanguage) {
         void probeProviderTranscribe(loadVoiceStatus)
           .then((enabled) => {
             if (enabled) setCallProviderTranscribe(true, startedCallId);

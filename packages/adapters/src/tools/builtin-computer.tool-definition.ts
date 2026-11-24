@@ -5,6 +5,19 @@ import { BROWSER_ACT_KINDS } from "../browser/browser-tools.js";
 export const READ_FILE_MAX_BYTES = 250_000;
 export const READ_FILE_MAX_KB = READ_FILE_MAX_BYTES / 1000;
 
+// Fork (1.11 background shell jobs): job wording and the background flag.
+const SHELL_DESCRIPTION =
+  "Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. On a Linux computer a command still running after about 8 seconds keeps running as a background job and you get its job_id: its result comes back to this chat by itself when it finishes, so do not poll, sleep or wait for it; tell the user in one line that it is running, then end your turn unless other independent work remains. Pass background:true to start long work (builds, installs, coding agent CLIs, downloads) as a job at once. Where no job_id comes back, a command is stopped after a few minutes: start longer work as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.";
+
+/** The shell description, naming the offered tool that opens this bot's screen, if any. */
+export function shellDescription(screenTool: "computer_observe" | "browser_snapshot" | undefined) {
+  if (screenTool === "computer_observe")
+    return `${SHELL_DESCRIPTION} Graphical programs use this bot's own screen: if one can't open a display, call computer_observe to open it, then run the command again without setting DISPLAY.`;
+  if (screenTool === "browser_snapshot")
+    return `${SHELL_DESCRIPTION} Graphical programs use this bot's own screen, which opens with its browser: if one can't open a display, call browser_snapshot, then run the command again without setting DISPLAY.`;
+  return SHELL_DESCRIPTION;
+}
+
 /** Media, computer, browser, file and desktop app tools. */
 export const computerTools: ConnectorTool[] = [
   {
@@ -226,8 +239,7 @@ export const computerTools: ConnectorTool[] = [
   },
   {
     name: "shell",
-    description:
-      "Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. On a Linux computer a command still running after about 8 seconds keeps running as a background job and you get its job_id: its result comes back to this chat by itself when it finishes, so do not poll, sleep or wait for it; tell the user in one line that it is running, then end your turn unless other independent work remains. Pass background:true to start long work (builds, installs, coding agent CLIs, downloads) as a job at once. Where no job_id comes back, a command is stopped after a few minutes: start longer work as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.",
+    description: shellDescription("computer_observe"),
     inputSchema: {
       type: "object",
       properties: {

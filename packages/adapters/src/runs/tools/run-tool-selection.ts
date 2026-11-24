@@ -15,6 +15,7 @@ import { selectMemoryTools } from "../../memory/memory-tools.js";
 import { filterImageReturningComputerTools } from "../../models/model-vision.js";
 import { runMayStartShellJobs } from "../../shell-jobs/shell-job-rules.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
+import { shellDescription } from "../../tools/builtin-computer.tool-definition.js";
 import { JOB_TOOL_NAME_SET } from "../../tools/builtin-jobs.tool-definition.js";
 import { searchHistoryThisChat } from "../../tools/builtin-memory.tool-definition.js";
 import {
@@ -207,7 +208,7 @@ export function selectBuiltinToolsForRun(options: {
     : builtinAgentTools.map((tool) =>
         tool.name === "search_history" ? searchHistoryThisChat : tool,
       );
-  const selected = selectCloudAgentTools(
+  const offered = selectCloudAgentTools(
     selectMemoryTools(
       filterBuiltinToolsForRun(
         filterBuiltinToolsForThread(
@@ -285,8 +286,28 @@ export function selectBuiltinToolsForRun(options: {
   );
   // Fork: the job tools follow jobs that shell started, so they come with shell, in runs that start jobs.
   const jobsOffered =
-    runMayStartShellJobs(options.trigger) && selected.some((tool) => tool.name === "shell");
-  return jobsOffered ? selected : selected.filter((tool) => !JOB_TOOL_NAME_SET.has(tool.name));
+    runMayStartShellJobs(options.trigger) && offered.some((tool) => tool.name === "shell");
+  const selected = jobsOffered
+    ? offered
+    : offered.filter((tool) => !JOB_TOOL_NAME_SET.has(tool.name));
+  return withShellScreenTool(selected);
+}
+
+/** Tools that open this bot's own screen, in the order the shell names them. */
+const SCREEN_OPENING_TOOLS = ["computer_observe", "browser_snapshot"] as const;
+
+/** The offered tool a graphical shell command is told to open the bot's screen with. */
+export function screenOpeningTool(tools: readonly { name: string }[]) {
+  const offered = new Set(tools.map((tool) => tool.name));
+  return SCREEN_OPENING_TOOLS.find((name) => offered.has(name));
+}
+
+/** A text-only model has no computer_observe, so the shell points it at a tool it was offered. */
+function withShellScreenTool<T extends { name: string; description?: string }>(tools: T[]): T[] {
+  const screenTool = screenOpeningTool(tools);
+  if (screenTool === SCREEN_OPENING_TOOLS[0]) return tools;
+  const description = shellDescription(screenTool);
+  return tools.map((tool) => (tool.name === "shell" ? { ...tool, description } : tool));
 }
 
 /**

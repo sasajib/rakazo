@@ -1,5 +1,5 @@
 # Tool surface: messaging-channel
-49 tools, 57332 bytes of definitions
+49 tools, 57697 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -35,7 +35,7 @@ schema 75b3680fe686 (2641 bytes)
 
 ## create_child_routine
 Schedule a routine that wakes a bot in this space in its own thread. Identify it by bot_id or bot_name (exact). Repeats: cron or every/unit (min 1 minute). One-shot: runAt, delayMinutes, or delaySeconds. on: events, as in schedule_create.
-schema 0f312a5c4d94 (11196 bytes)
+schema da70dea0a3dd (11561 bytes)
 
 ## create_group
 Create a group of 2 to 10 of this user's bots. Pass bot_ids or bot_names (exact).

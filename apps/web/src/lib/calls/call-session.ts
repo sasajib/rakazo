@@ -37,6 +37,7 @@ import {
 import { reportClientError } from "../platform/monitoring";
 import { recheckSessionOnUnauthorized, rpc } from "../query/rpc.js";
 import { errorText } from "../query/user-error";
+import { callAutoLanguage } from "./call-language-preference.js";
 import { pickUp } from "./call-pickup.js";
 import { dictation, usesServerDictation } from "./dictation.js";
 import * as livekit from "./livekit-call-session.js";
@@ -95,6 +96,7 @@ const hangUps = new Set<Promise<void>>();
 /** Bumped when the session ends: a hang-up still queued then would run signed out or as someone else. */
 let sessionEpoch = 0;
 let transcribe: boolean | undefined;
+let autoLanguage = false;
 let thread: ThreadSnapshot | null = null;
 let feed: {
   controller: AbortController;
@@ -114,6 +116,8 @@ let botEndedCall = false;
 let hangUpTimer: ReturnType<typeof setTimeout> | null = null;
 /** Pending echo guard: the microphone stays shut until it fires. */
 let guardTimer: ReturnType<typeof setTimeout> | null = null;
+/** A finished recording waiting for playback and its echo guard to end. */
+let pendingTranscript: string | undefined;
 /** Whether dictation is running, so playback can leave it open instead of restarting it. */
 let micOpen = false;
 /** The caller cut the reply off: there is no tail left to wait out before listening. */
@@ -169,6 +173,7 @@ export function startCall(call: {
   botColor?: string;
   botAvatarSet?: BotAvatarSet;
   transcribe?: boolean;
+  autoLanguage?: boolean;
   /** The bot called and the user picked up: no ringing, and the bot speaks first. */
   answered?: { callId: string; opening: string };
   /** `livekit` holds the call in a room with the deployment's voice agent (VOICE_AGENT_URL). */
@@ -185,6 +190,7 @@ export function startCall(call: {
   prepareCallAudio();
   callId = call.answered?.callId ?? newClientId();
   transcribe = call.transcribe;
+  autoLanguage = call.autoLanguage ?? callAutoLanguage.get();
   spokenMemory.clear();
   replySpeech.clear();
   streamRunId = null;
@@ -212,14 +218,14 @@ export function startCall(call: {
   unsubSpeech = speaker.subscribe((speech) => {
     if (!state || state.phase === "ringing") return;
     if (openingPending && speech.status === "idle") openingPending = false;
-    if (speech.status === "speaking") {
+    if (speech.status === "speaking" || (autoLanguage && speech.status === "preparing")) {
       bargedIn = false;
       set({ phase: "speaking", caption: speech.caption ?? "" });
-      if (micOpen && dictation.recording) {
+      if (micOpen && (autoLanguage ? dictation.recordingOrStarting : dictation.recording)) {
         dictation.stop("cancel");
         micOpen = false;
       }
-      // Recognition stays open through playback so the caller can talk over the reply.
+      // Only device recognition may listen while a reply is playing.
       void openMic();
     } else if (speech.status === "idle" && state.phase !== "listening" && !bargedIn) {
       set({ caption: "" });
@@ -319,6 +325,7 @@ function dropCall(): void {
   hangUpTimer = null;
   if (guardTimer) clearTimeout(guardTimer);
   guardTimer = null;
+  pendingTranscript = undefined;
   interim.clear();
   micOpen = false;
   bargedIn = false;
@@ -443,6 +450,7 @@ export function toggleMute(): void {
   const muted = !state.muted;
   set({ muted });
   if (muted) {
+    pendingTranscript = undefined;
     dictation.stop("cancel");
     micOpen = false;
     set({ heard: "" });
@@ -587,8 +595,9 @@ function commit(next: ThreadSnapshot | null) {
 
 /** The tail of playback reaches the microphone after the audio element ends. */
 function guardThenListen() {
-  // Dictation ran right through playback: there is no shut mic to hold closed.
-  if (micOpen) {
+  // Device recognition can run through playback. Automatic transcription may still be
+  // flushing a closed recorder, so micOpen does not let it skip the quiet gap.
+  if (micOpen && !autoLanguage) {
     void listen();
     return;
   }
@@ -601,20 +610,26 @@ function guardThenListen() {
 
 async function listen() {
   if (!state) return;
+  // A reply still preparing or playing owns the audio session, including the farewell.
+  if (speaker.isSpeaking()) return;
   // The caller said goodbye: every path back to listening hangs up instead.
   if (hangUpAfterReply) {
     endCall();
     return;
   }
-  // A reply still playing owns the audio session; its idle event calls back here.
-  if (speaker.isSpeaking()) return;
   // A guard is already counting down the quiet gap; it calls back here when it ends.
-  if (guardTimer) return;
+  if (guardTimer || (autoLanguage && replyStillWritten())) return;
+  const final = pendingTranscript;
+  pendingTranscript = undefined;
   set({ phase: "listening", heard: "" });
   speaker.stop();
   if (state.muted || pendingCallSecretAsk(thread)) {
     dictation.stop("cancel");
     micOpen = false;
+    return;
+  }
+  if (final !== undefined) {
+    await handleTranscript(final);
     return;
   }
   await openMic();
@@ -623,13 +638,16 @@ async function listen() {
 /** Starts dictation unless it is already running, muted, or waiting on a typed secret. */
 async function openMic() {
   if (!state || micOpen || state.muted || pendingCallSecretAsk(thread)) return;
-  if (state.phase === "speaking" && usesServerDictation(transcribe)) return;
+  if (autoLanguage) {
+    if (state.phase === "speaking" || replyStillWritten()) return;
+  } else if (state.phase === "speaking" && usesServerDictation(transcribe)) return;
   micOpen = true;
   try {
     await dictation.listen({
       mode: "endpoint",
       callId,
       transcribe,
+      ...(autoLanguage ? { autoLanguage } : {}),
       onFinal: (text) => void handleTranscript(text),
     });
   } catch (error) {
@@ -649,8 +667,11 @@ async function handleTranscript(text: string) {
     else void listen();
     return;
   }
-  // Between sentences of a reply still being written counts as over it: a backchannel or the
-  // reply's echo must not become a turn.
+  // A completed automatic transcript belongs to the next turn, not the reply being read.
+  if (autoLanguage && (state.phase === "speaking" || guardTimer || replyStillWritten())) {
+    pendingTranscript = text;
+    return;
+  }
   if (state.phase === "speaking" || replyStillWritten()) {
     if (!isCallBargeIn(text)) {
       set({ heard: "" });
@@ -765,6 +786,7 @@ function reactToThread() {
   // The bot already said goodbye: neither its marker nor the work it files after it is spoken.
   if (botEndedCall) return;
   if (pendingCallSecretAsk(thread)) {
+    pendingTranscript = undefined;
     dictation.stop("cancel");
     micOpen = false;
     set({ heard: "" });
@@ -829,7 +851,7 @@ function reactToThread() {
     if (!runActive(thread)) {
       spokenMessageIds.add(lastBot.id);
       awaitingReply = false;
-      void listen();
+      finishTurnWithoutReply();
     }
   }
   if (awaitingReply && replyRunId && finishedRunIds.has(replyRunId)) {
@@ -837,8 +859,17 @@ function reactToThread() {
     approvalRunId = null;
     awaitedRunId = null;
     set({ caption: errorText(thread?.run?.id === replyRunId ? thread.run.error : undefined) });
-    void listen();
+    finishTurnWithoutReply();
   }
+}
+
+function finishTurnWithoutReply() {
+  if (!autoLanguage || streamRunId === null) {
+    void listen();
+    return;
+  }
+  streamRunId = null;
+  if (!speaker.isSpeaking()) guardThenListen();
 }
 
 /**

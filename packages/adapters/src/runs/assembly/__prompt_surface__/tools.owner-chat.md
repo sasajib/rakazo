@@ -1,5 +1,5 @@
 # Tool surface: owner-chat
-68 tools, 82939 bytes of definitions
+68 tools, 84212 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -35,7 +35,7 @@ schema 75b3680fe686 (2641 bytes)
 
 ## create_child_routine
 Schedule a routine that wakes a bot in this space in its own thread. Identify it by bot_id or bot_name (exact). Repeats: cron or every/unit (min 1 minute). One-shot: runAt, delayMinutes, or delaySeconds. on: events, as in schedule_create.
-schema 0f312a5c4d94 (11196 bytes)
+schema da70dea0a3dd (11561 bytes)
 
 ## create_group
 Create a group of 2 to 10 of this user's bots. Pass bot_ids or bot_names (exact).
@@ -170,8 +170,8 @@ Cancel a schedule by routineId or exact name; another bot's by bot_id or exact b
 schema 2d182e8b15b4 (143 bytes)
 
 ## schedule_create
-Create a reminder or recurring job for this bot. Use for "remind me in 10 minutes" or "every morning send a joke". Repeats: cron or every/unit (min 1 minute), optionally from startAt. One-shot: runAt, delayMinutes, or delaySeconds. A repeating job carries out the user's lasting request each time, not a copy of what was decided today. inChat true only when each run continues work this chat is doing, such as updating a draft or plan written here or fixing something started here; it then waits for work under way here. Otherwise false: it runs on time, seeing this chat's latest messages and its own earlier results. on: run on events too, or only (no timing); each run receives the event: webhook, git (a GitHub repo webhook the user adds with the routine URL and key; needs no connected app), chat (your connected chat app, by name), email (to your address from the owner or their domain).
-schema 19b5079788da (13784 bytes)
+Create a reminder or recurring job for this bot. Use for "remind me in 10 minutes" or "every morning send a joke". Repeats: cron or every/unit (min 1 minute), optionally from startAt and until endAt, when it is deleted; for a limited stretch, one routine with endAt, not one per run. One-shot: runAt, delayMinutes, or delaySeconds. A repeating job carries out the user's lasting request each time, not a copy of what was decided today. inChat true only when each run continues work this chat is doing, such as updating a draft or plan written here or fixing something started here; it then waits for work under way here. Otherwise false: it runs on time, seeing this chat's latest messages and its own earlier results. on: run on events too, or only (no timing); each run receives the event: webhook, git (a GitHub repo webhook the user adds with the routine URL and key; needs no connected app), chat (your connected chat app, by name), email (to your address from the owner or their domain).
+schema 7b95589a3f8c (14429 bytes)
 
 ## schedule_list
 List this bot's active and inactive schedules (routines), or another bot's.
@@ -179,7 +179,7 @@ schema 9a9d73d146c9 (88 bytes)
 
 ## schedule_update
 Edit one of this bot's schedules, or another bot's by bot_id or exact bot_name, by routineId instead of cancelling and recreating it. Send only what changes. Timing fields replace the current timing; startAt alone moves the next run of the current repeat. active false pauses it. The result's changes lists each field that changed with its before and after; the prompt is returned only there. A watch has no timing fields; everyMinutes changes how often it checks. on replaces the routine's events; {} removes them.
-schema c57e54f5b0b6 (2543 bytes)
+schema c5f9eea9ad11 (2706 bytes)
 
 ## scratchpad_add
 Add an open-work item to this bot's scratchpad. Use for todos or parked work that should outlive this turn. Not a reminder or schedule.

@@ -13,6 +13,7 @@ import { loadBotGroupDirectory } from "../../bots/group-handoff.js";
 import { parsePlaybook } from "../../bots/teaching-session.js";
 import type { RunMediaSources } from "../../media/media-sources.js";
 import { planInstruction, planPromptState } from "../../plans/plans.js";
+import { routineEnded } from "../../routines/routine-end.js";
 import { lateRoutineRunInstruction } from "../../routines/routine-lateness.prompt.js";
 import { routineRunInstruction } from "../../routines/routine-run.prompt.js";
 import { formatCompactedSummary } from "../../runtime/context/history-compaction.prompt.js";
@@ -40,7 +41,7 @@ import type {
 import type { ThreadHistory, TurnContext } from "./run-assembly-history.js";
 import type { ConnectedRun, RunRecords, SavedTurn } from "./run-assembly-records.js";
 import type { RunContext, RunState } from "./run-context.js";
-import { restoreTurnCheckpointEffects } from "./run-context.js";
+import { restoreTurnCheckpointEffects, seedIntroEffectOccurrences } from "./run-context.js";
 import {
   connectedPluginsInstruction,
   taughtSkillsInstruction,
@@ -86,7 +87,9 @@ export async function createRunContext(
     secrets: runSecrets,
   } = hold;
   const { heldForTakeover, takeoverResume } = hold.takeover;
-  const { storedTurnCheckpoint } = parts.saved;
+  const { introEffects, storedTurnCheckpoint } = parts.saved;
+  const effects = { counts: new Map<string, number>(), consumedIds: new Set<string>() };
+  seedIntroEffectOccurrences(effects, runId, introEffects);
   const {
     bot,
     channelId,
@@ -148,10 +151,9 @@ export async function createRunContext(
     reply,
     approval: { pausePending: false, request: undefined },
     effects: {
-      counts: new Map(),
+      ...effects,
       occurrences: [],
       restoredPending: undefined,
-      consumedIds: new Set(),
       pendingTurnCheckpoints: new Map(),
       storedTurnCheckpoint,
     },
@@ -412,13 +414,22 @@ export async function buildTurnPrompt(
       "load the routine for its run's prompt",
       deps.prisma.routine.findUnique({
         where: { id: run.routineId },
-        select: { name: true, timezone: true },
+        select: {
+          name: true,
+          timezone: true,
+          crons: true,
+          watch: true,
+          endsAt: true,
+          active: true,
+          nextRunAt: true,
+        },
       }),
     );
     // The name is not part of what the owner approved, and any of their runs can rename it.
     routineNote = routineRunInstruction(
       ownerComputerRoutine ? undefined : routine?.name,
       parts.records.historyReach === "recent",
+      routine ? routineEnded(routine) : false,
     );
     if (routine && lateSince)
       lateRoutineNote = lateRoutineRunInstruction(lateSince, executionStartedAt, routine.timezone);

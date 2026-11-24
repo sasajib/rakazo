@@ -5,7 +5,7 @@ import {
   effectiveMemoryScope,
   expireRunToolQuestions,
   loadRunHistoryMessages,
-  loadRunTurnCheckpoint,
+  loadRunTurnState,
   readMessageBlocks,
   teamChatRunFromOwner,
 } from "@rakazo/db";
@@ -64,13 +64,14 @@ export async function loadSavedTurn(services: RunExecutorServices, hold: RunHold
   const { deps, run, secrets: runSecrets } = hold;
   // A saved computer turn owns both identities. Resolve them before consulting
   // today's main selection, whose connection may have changed while paused.
-  let turnCheckpoint: string | undefined;
+  let saved: Awaited<ReturnType<typeof loadRunTurnState>> | undefined;
   let checkpointLoadError: Error | undefined;
   try {
-    turnCheckpoint = await loadRunTurnCheckpoint(deps.prisma, run);
+    saved = await loadRunTurnState(deps.prisma, run);
   } catch (error) {
     checkpointLoadError = error instanceof Error ? error : new Error("Unsupported turn checkpoint");
   }
+  const turnCheckpoint = saved?.turnCheckpoint;
   const storedTurnCheckpoint = Boolean(turnCheckpoint);
   const resolveCheckpointModel = (
     provider: string,
@@ -118,6 +119,7 @@ export async function loadSavedTurn(services: RunExecutorServices, hold: RunHold
   }
   return {
     turnCheckpoint,
+    introEffects: saved?.introEffects ?? [],
     checkpointLoadError,
     storedTurnCheckpoint,
     resolveCheckpointModel,

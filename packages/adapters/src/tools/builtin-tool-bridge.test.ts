@@ -77,13 +77,14 @@ describe("built-in tool bridge", () => {
     // routine can start on, saying a Git event needs no connected app; schedule_list reaches a
     // managed bot's routines; update_bot carries the settings its owner can change;
     // update_preferences includes the chat model picker and reply streaming; remember takes a
-    // list of operations so one call can make room and add, each with an optional end.
+    // list of operations so one call can make room and add, each with an optional end; shell
+    // says to open the bot's screen when a graphical program finds no display; schedule_create
+    // takes an end date for a repeat or watch, so a limited stretch is one routine.
     // Fork: standing_set, bot_queue, call_user, schedule_cancel, schedule_update and the five
-    // scratchpad tools are listed on every run, and message_bot takes lane and force
-    // (measured 44_052). Fork background shell jobs: shell's job wording and background flag plus
-    // the four pinned job tools (measured 45_633). Fork plan confirmation: plan_propose pinned and
-    // message_bot's replaces (measured 47_265).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(47_320);
+    // scratchpad tools are listed on every run, message_bot takes lane, force and replaces,
+    // shell carries the background-job wording and flag, the four job tools and plan_propose are
+    // pinned (measured 48_173).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(48_230);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

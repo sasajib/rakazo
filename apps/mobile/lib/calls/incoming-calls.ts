@@ -23,6 +23,7 @@ import {
   registerSessionDiskCache,
 } from "../api/session";
 import { registerCallPushToken } from "../notifications/push";
+import { autoLanguageNeedsTranscription, loadCallAutoLanguage } from "./call-language-preference";
 import { endCall, getSnapshot, startCall, subscribe as subscribeCall } from "./call-session";
 import { fetchVoiceAgentConfig, resolveCallTransport } from "./voice-agent";
 
@@ -286,6 +287,22 @@ export async function respondToMobileCall(call: IncomingBotCall, action: "answer
         ),
       );
     else {
+      const autoLanguage = await loadCallAutoLanguage();
+      // Fork: a LiveKit voice agent brings its own speech and speaks the bot's opening itself,
+      // so the call needs no voice provider (nor a transcriber for automatic language) here.
+      const answeringContext = context;
+      const transport = await resolveCallTransport(() =>
+        fetchVoiceAgentConfig(answeringContext, new AbortController().signal),
+      );
+      const voiceForAutomaticLanguage =
+        autoLanguage && transport !== "livekit"
+          ? await rpc("voice/status", {}, { requestContext: context })
+          : undefined;
+      if (voiceForAutomaticLanguage?.transcribe === false)
+        throw new Error(autoLanguageNeedsTranscription());
+      if (generation !== currentSessionGeneration())
+        throw new Error(t`Something went wrong. Try again.`);
+      if (nativeEnded.has(target.callId)) throw new Error(t`This call is no longer ringing.`);
       const result = await respondToIncomingCall(call.incomingCall, () =>
         rpc("threads/answerCall", target, { requestContext: context }),
       );
@@ -294,16 +311,11 @@ export async function respondToMobileCall(call: IncomingBotCall, action: "answer
       // context belongs to the old generation, so the server keeps the call answered.
       if (generation !== currentSessionGeneration())
         throw new Error(t`Something went wrong. Try again.`);
-      // A LiveKit voice agent brings its own speech and speaks the bot's opening itself: the
-      // call needs no voice provider here. Otherwise the built-in call speaks the opening.
-      const answeredContext = context;
-      const transport = await resolveCallTransport(() =>
-        fetchVoiceAgentConfig(answeredContext, new AbortController().signal),
-      );
       const voice =
         transport === "livekit"
           ? undefined
-          : await rpc("voice/status", {}, { requestContext: context });
+          : (voiceForAutomaticLanguage ??
+            (await rpc("voice/status", {}, { requestContext: context })));
       if (generation !== currentSessionGeneration())
         throw new Error(t`Something went wrong. Try again.`);
       if (nativeEnded.has(target.callId)) throw new Error(t`This call is no longer ringing.`);
@@ -316,6 +328,7 @@ export async function respondToMobileCall(call: IncomingBotCall, action: "answer
         botColor: call.color,
         botAvatarSet: call.avatarSet,
         transcribe: voice?.transcribe,
+        autoLanguage,
         greeting: result.opening,
         answered: { callId: target.callId },
         session: generation,
