@@ -264,6 +264,18 @@ class OwnerTabs:
             owners[self.owner] = target
             self._save(owners)
 
+    def close_strays(self, before: set[str]) -> None:
+        """Close blank tabs that opened during this call and that no bot owns: agent-browser opens
+        one when a bot's session first attaches, and the bot works in its own tab instead."""
+        with self._locked():
+            owned = set(self._load().values())
+            for tab in page_tabs(self.port):
+                ident = str(tab.get("id"))
+                if ident in before or ident in owned or str(tab.get("url") or "") not in ("", "about:blank"):
+                    continue
+                with contextlib.suppress(OSError):
+                    urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/close/{ident}", timeout=5.0).close()
+
     def front(self) -> bool:
         """Show this bot's tab on the shared screen."""
         try:
@@ -497,6 +509,10 @@ class AgentBrowser:
             "AGENT_BROWSER_NO_AUTO_DIALOG": "1",
             "AGENT_BROWSER_NO_WEBMCP": "1",
         })
+        if owner:
+            # On the shared browser another bot's new tab must not pull this bot's session to it:
+            # the session stays on the tab it was pointed at (fork).
+            self.env["AGENT_BROWSER_PIN_TAB"] = "1"
 
     def batch(self, commands: list[list[str]], *, timeout: float = 20.0, bail: bool = True) -> list[Any]:
         """Each command's result, in one agent-browser call. Commands and their text go over stdin, not argv."""
@@ -2849,6 +2865,8 @@ def run(argv: list[str]) -> int:
                 # Only once it knows the tabs the call began with: without them, every tab would look new.
                 tabs = started
         target, address = owned.tab(create=command != "purchase_check") if owned else front_tab(port)
+        # The tabs before agent-browser attaches: a blank one it opens on attaching is closed after.
+        tabs_before = {str(tab.get("id")) for tab in page_tabs(port)} if owned else set()
         if args.get("downloads") is not None:
             client = CdpClient(discover_ws_url(port))
             client.connect()
@@ -2895,12 +2913,9 @@ def run(argv: list[str]) -> int:
                 raise RuntimeError("actions must be an array")
             result = page.act(actions)
         note = None
-        if owned and command != "purchase_check":
-            # A tab the page opened, which agent-browser followed, becomes this bot's tab.
-            followed = browser.session_tab()
-            if followed and followed != target and followed not in owned.others():
-                owned.adopt(followed)
-                note = "A new tab opened, and page tools now read it; the tab before it is still open."
+        if owned:
+            with contextlib.suppress(Exception):
+                owned.close_strays(tabs_before)
         if tabs is not None:
             closed = tabs.closed
             now: list[dict[str, Any]] = []

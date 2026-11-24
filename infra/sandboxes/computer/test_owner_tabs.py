@@ -86,9 +86,25 @@ class OwnerTabsTest(unittest.TestCase):
         with patch.dict(os.environ, {"RAKAZO_TAB_OWNER": "cmwuevujdeuie7pw8o6tj0ptt"}):
             self.assertEqual(helper.tab_owner(), "cmwuevujdeuie7pw8o6tj0ptt")
 
+    def test_blank_tabs_opened_during_a_call_and_owned_by_nobody_are_closed(self):
+        mine, _ = self.owner("botA").tab()
+        before = {tab["id"] for tab in self.browser.tabs}
+        # agent-browser opened a blank tab as botA's session attached; botB opened its own tab.
+        self.browser.tabs.append({"id": "stray", "type": "page", "url": "about:blank"})
+        theirs, _ = self.owner("botB").tab()
+        self.browser.tabs.append({"id": "site", "type": "page", "url": "https://opened.test/"})
+        closed = []
+        with patch.object(helper.urllib.request, "urlopen", lambda url, timeout: closed.append(url) or Mock()):
+            self.owner("botA").close_strays(before)
+        self.assertEqual(closed, ["http://127.0.0.1:9222/json/close/stray"])
+        self.assertNotIn(theirs, " ".join(closed))
+        self.assertNotIn(mine, " ".join(closed))
+
     def test_agent_browser_session_is_per_bot(self):
         with patch.dict(os.environ, {"RAKAZO_TAB_OWNER": "botA"}):
             self.assertEqual(helper.AgentBrowser(9222).session, "display-9222-botA")
+            # Pinned: another bot's new tab must not pull this bot's session away from its own tab.
+            self.assertEqual(helper.AgentBrowser(9222).env.get("AGENT_BROWSER_PIN_TAB"), "1")
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("RAKAZO_TAB_OWNER", None)
             self.assertEqual(helper.AgentBrowser(9222).session, "display-9222")
