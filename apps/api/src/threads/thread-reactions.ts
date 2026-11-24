@@ -73,9 +73,11 @@ export async function reactToThreadMessage(
     const currentTarget = members
       ? { ...target, memberBotIds: members.map((member) => member.botId) }
       : target;
-    const replyBotId = input.mayStartTurn
-      ? await reactionReplyBotId(tx, currentTarget, parent)
-      : undefined;
+    // ✅ means "read / done": it is recorded for the bot's next run but never starts one.
+    const replyBotId =
+      input.mayStartTurn && input.reaction !== "✅"
+        ? await reactionReplyBotId(tx, currentTarget, parent)
+        : undefined;
     const botId =
       replyBotId ??
       (currentTarget.kind === "bot" ? currentTarget.botId : currentTarget.memberBotIds[0]);

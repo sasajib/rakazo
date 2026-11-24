@@ -171,6 +171,7 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "UsageRecord",
   "SpeechCost",
   "ScratchpadItem",
+  "StandingEmbedding",
   "BotEmailMessage",
   "BotEmailSend",
   "ActionApprovalRule",

@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A voice call can run a request beside a card the bot is waiting on: `threads/send` takes `leaveCards`, and cards that wait on the person stay in the chat during a call instead of inside the call card.
 - `threads/callNote` leaves a line the call's voice agent said on its own account in the chat.
 - A person's run that announced work and used no tool is continued once; on a spoken call the first tool call is announced from the tool's name.
+- Standing orders: one `STANDING.md` per Space, written only by the `standing_set` tool from the user's own direct chat or call (same key replaces, tiers and typed links, a read-only `review`), shown first in every prompt as binding. Optional related-order suggestions use pgvector through `STANDING_EMBEDDINGS_URL`.
+- Unattended runs see what the bot already told the user in the last 24 hours and do not send a near-identical `message_user` again; a ✅ reaction marks a bot message done without starting a run, and the web chat shows a Done button on notifications.
+- `end_call` is refused during a live call unless the caller asked to hang up, and a refused `my_chats` history search falls back to this chat with a note instead of failing.
 
 ## [0.15.0] - 2026-11-23
 

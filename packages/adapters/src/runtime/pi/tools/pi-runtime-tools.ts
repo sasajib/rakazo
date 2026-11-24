@@ -283,6 +283,7 @@ export function describeToolActivity(
   if (toolName === "set_child_bot_model") return "Setting a bot's model";
   if (toolName === "create_child_routine") return `Scheduling routine: ${detail(record.name)}`;
   if (toolName === "remember") return "Saving a note to memory";
+  if (toolName === "standing_set") return `Updating a standing order: ${detail(record.key)}`;
   if (toolName === "save_shared_memory") return `Saving shared memory: ${detail(record.path)}`;
   if (toolName === "delete_shared_memory") return `Deleting shared memory: ${detail(record.path)}`;
   if (toolName === "web_search") return `Searching the web: ${detail(record.query)}`;
@@ -400,6 +401,7 @@ function toAgentTool(
     // a sibling is about to change.
     ...(SCHEDULE_TOOL_NAMES.has(tool.name) ||
     tool.name === "remember" ||
+    tool.name === "standing_set" ||
     tool.name === "request_secret" ||
     PAGE_CHANGING_TOOL_NAMES.has(tool.name)
       ? { executionMode: "sequential" as const }

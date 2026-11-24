@@ -329,4 +329,38 @@ export const conversationTools: ConnectorTool[] = [
       required: ["path"],
     },
   },
+  {
+    name: "standing_set",
+    description:
+      "Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry; omit text to change only tier or links. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["rule", "decision"] },
+        key: {
+          type: "string",
+          description: "Short topic name; the same key replaces the old entry.",
+        },
+        text: {
+          type: "string",
+          description: "The rule or decision, with exact values. Empty removes it.",
+        },
+        tier: {
+          type: "integer",
+          description:
+            "Priority 0-3, lower wins: 0 safety and approvals, 1 the user's explicit commands, 2 procedures (default), 3 preferences.",
+        },
+        links: {
+          type: "string",
+          description:
+            "Tokens ADDED to the current links: >key wins over, ^key exception of, +key read with, @tag applies to; -key or -@tag removes one; !ack = user reviewed the exception wording. Empty string clears all.",
+        },
+        review: {
+          type: "boolean",
+          description:
+            "true = change nothing and return a check of all standing orders (hidden exceptions, overlaps, possible conflicts, old decisions).",
+        },
+      },
+    },
+  },
 ];

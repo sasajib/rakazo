@@ -135,6 +135,8 @@ export const MAX_SHARED_MEMORY_CHARS = 4_000;
 export function sharedMemorySaveError(args: Record<string, unknown>): string | undefined {
   const path = String(args.path ?? "").trim();
   if (!path) return "path is required";
+  if (path === "STANDING.md")
+    return "STANDING.md changes only through standing_set (it replaces by key).";
   const content = String(args.content ?? "");
   if (content.length > MAX_SHARED_MEMORY_CHARS) {
     return `content exceeds ${MAX_SHARED_MEMORY_CHARS} characters`;

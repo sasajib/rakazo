@@ -51,6 +51,8 @@ x-app-environment: &app-environment # Runtime
   PHONE_CALL_COOLDOWN_MINUTES:
   # Optional LiveKit voice agent for duplex calls; the API and the worker both ring through it.
   VOICE_AGENT_URL:
+  # Optional embeddings endpoint for related standing-order suggestions (pgvector); unset turns them off.
+  STANDING_EMBEDDINGS_URL:
   # The worker names each bot's address to it and sends its email; the API receives the mail.
   INBOUND_EMAIL_DOMAIN:
   BOT_EMAIL_SMTP_URL:

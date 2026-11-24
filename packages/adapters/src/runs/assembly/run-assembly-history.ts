@@ -1,8 +1,10 @@
 import { botMessageAllowsSilence, userTurnMessageForRun } from "@rakazo/core";
+import type { PrismaClient } from "@rakazo/db";
 import { isPartialReplyClientNonce, storedMessageBlocks } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { loadAgentMemoryContext } from "../../memory/memory-context.js";
 import { latestEndedDate } from "../../memory/memory-expiry.js";
+import { loadRecentNotices, renderNoticeLedger } from "../../memory/notice-ledger.js";
 import { PARTIAL_REPLY_NOTE } from "../../messaging/automated-messages.prompt.js";
 import {
   historyWindowSize,
@@ -236,9 +238,10 @@ export async function loadTurnContext(
           }),
       savedContextHidden
         ? Promise.resolve("")
-        : loadAgentScratchpadContext(deps, {
+        : loadScratchpadAndNotices(deps, {
             spaceId: run.spaceId,
             botId: bot.id,
+            threadId: thread.id,
           }),
       savedContextHidden || !ticketBoardEnabled
         ? Promise.resolve(undefined)
@@ -291,3 +294,22 @@ export async function loadTurnContext(
 }
 
 export type TurnContext = Awaited<ReturnType<typeof loadTurnContext>>;
+
+/** Open scratchpad work plus what the bot already told the user (ticked or not). */
+async function loadScratchpadAndNotices(
+  deps: Parameters<typeof loadAgentScratchpadContext>[0] & { prisma: PrismaClient },
+  input: { spaceId: string; botId: string; threadId: string },
+): Promise<string | undefined> {
+  const [scratchpad, notices] = await Promise.all([
+    loadAgentScratchpadContext(deps, { spaceId: input.spaceId, botId: input.botId }),
+    loadRecentNotices(deps.prisma, {
+      threadId: input.threadId,
+      botId: input.botId,
+      now: new Date(),
+    }).catch((error) => {
+      getLogger().warn("notice ledger unavailable", error);
+      return [];
+    }),
+  ]);
+  return [scratchpad, renderNoticeLedger(notices)].filter(Boolean).join("\n\n") || undefined;
+}

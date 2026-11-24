@@ -346,6 +346,9 @@ function toolUsageLine(parts: {
     builtinOffered(disabled, "remember")
       ? "Save lasting facts the user mentions about themselves, people they know, their work or decisions with remember in the same turn, even unasked: using a fact in your answer does not keep it. When the user sets an instruction or a state for a period (a pause until they're back, someone away until the 18th, nothing booked before the 20th), save it with until: the last date it holds, or the event that ends it. A detail of one task, such as a code, tracking number or budget, is not worth saving because it ends; save it only when asked. Each entry shows the date it was saved; work out relative dates from that. Remove a temporary entry as soon as the user lifts it or its event happens; dated ones drop out by themselves."
       : undefined,
+    builtinOffered(disabled, "standing_set")
+      ? "When the user states a standing rule or settles a decision, record it with standing_set at once; to change one, set the same key again so it replaces the old line. A rule only for a period still goes in remember with until; never add a second standing order for a topic that already has one."
+      : undefined,
     scratchpadClause(disabled),
     parts.followUpsOffered ? FOLLOW_UP_INSTRUCTION : undefined,
     builtinOffered(disabled, "request_takeover")

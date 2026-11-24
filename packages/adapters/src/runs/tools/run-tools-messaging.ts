@@ -7,6 +7,8 @@ import {
   redactSecrets,
   resolveBotAddress,
 } from "@rakazo/core";
+import { readMessageBlocks } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import {
   connectAgent,
   messageConnectedAgent,
@@ -14,11 +16,17 @@ import {
 } from "../../bots/agent-connections.js";
 import { handoffToGroupBot } from "../../bots/group-handoff.js";
 import { findPostableGroup, postToGroup } from "../../bots/group-post.js";
+import { CALL_END_NOT_ASKED, callEndRequested } from "../../calls/call-end-intent.js";
 import { endCallFromTool, requestUserCall } from "../../calls/call-request.js";
 import {
   normalizeWorkspacePath,
   resolveBotWorkspacePath,
 } from "../../computers/screens/computer-support.js";
+import {
+  findDuplicateNotice,
+  isUnattendedRun,
+  loadRecentNotices,
+} from "../../memory/notice-ledger.js";
 import { messageBot, unresolvedBotError } from "../../messaging/bot-messages.js";
 import { startBackgroundHelper } from "../../tasks/background-helpers.js";
 import type { RunContext } from "../assembly/run-context.js";
@@ -245,6 +253,15 @@ export const messagingTools: ToolHandlers = {
   async end_call(ctx, call) {
     const { deps, run, bot, thread } = ctx;
     const { args } = call;
+    // Only the caller ends a live call. A call_end run (the caller already hung up) just files the marker.
+    if (
+      ctx.source.voiceCall &&
+      !ctx.source.callEndRun &&
+      !callEndRequested(await callerWordsThisRun(ctx))
+    ) {
+      getLogger().info("call.end_refused", { "call.run_id": run.id });
+      return call.finish({ error: CALL_END_NOT_ASKED });
+    }
     return call.finish(
       await endCallFromTool(
         deps,
@@ -284,6 +301,27 @@ export const messagingTools: ToolHandlers = {
     const maxLength = messageUserMaxLength();
     const text = clampUserProgressMessage(rawMessage, maxLength);
     if (!text) return call.finish({ error: "message is required" });
+    // An unattended run (watch event, routine, another bot) must not tell the user what he was
+    // already told: refuse a near-identical message and say when it was sent.
+    if (isUnattendedRun(ctx.run.trigger)) {
+      const recent = await loadRecentNotices(ctx.deps.prisma, {
+        threadId: ctx.thread.id,
+        botId: ctx.bot.id,
+        now: new Date(),
+      }).catch(() => []);
+      const same = findDuplicateNotice(text, recent);
+      if (same) {
+        getLogger().info("notice.duplicate_suppressed", {
+          "notice.run_id": ctx.run.id,
+          "notice.earlier_message_id": same.id,
+          "notice.ticked": same.ticked,
+        });
+        return call.finish({
+          ok: true,
+          note: `Not sent: the user already got this at ${same.at.toISOString().slice(0, 16)} UTC${same.ticked ? " and marked it done" : ""}. Do not repeat it; if something is new, send only the new part.`,
+        });
+      }
+    }
     const truncated = isProgressMessageTruncated(rawMessage, maxLength);
     await flushProgress(ctx);
     // Text written before an answer to the person's mid-task message doesn't use up the
@@ -463,3 +501,25 @@ export const messagingTools: ToolHandlers = {
     return call.finish(result);
   },
 };
+
+/** What the caller said in this run: the turn that started it plus what reached it as steering. */
+async function callerWordsThisRun(ctx: RunContext): Promise<string> {
+  const words = [ctx.task.prompt];
+  try {
+    const steering = await ctx.deps.prisma.steeringMessage.findMany({
+      where: { runId: ctx.run.id },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { message: { select: { id: true, role: true, blocks: true } } },
+    });
+    for (const row of steering) {
+      const { blocks } = readMessageBlocks(row.message as never);
+      for (const block of blocks as Array<{ kind: string; text?: string }>) {
+        if (block.kind === "text" && block.text) words.push(block.text);
+      }
+    }
+  } catch {
+    // Without the steering text, fall back to the task prompt alone.
+  }
+  return words.join("\n");
+}

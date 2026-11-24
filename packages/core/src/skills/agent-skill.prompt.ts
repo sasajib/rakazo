@@ -13,6 +13,7 @@ export function formatSkillsCatalogInstruction(entries: SkillCatalogEntry[]): st
     "When a skill matches the user's request, call skill_read for that name and follow it immediately. Prefer matching skills over improvising multi-step recipes.",
     "Users can force a skill with /Name in the composer. Routines may mention a skill as @Name — that loads the skill at fire time.",
     "Create a skill with skill_create when a multi-step task is worth repeating (or when asked). After creating one, mention /Name so the user can open it.",
+    "When you got past an obstacle by a method that worked (a captcha or login quirk, a site layout, a tool error), save the generic recipe before you finish: skill_update if a skill for it exists, else skill_create. No account names or secrets. Do not save a guess; save only what you saw work.",
     "Only skill_update / skill_delete user-created skills (not builtin or plugin).",
   ].join("\n");
 }

@@ -72,10 +72,10 @@ describe("agent memory context", () => {
     );
 
     const result = await loadAgentMemoryContext(storeWith(read), "bot-1", context, {
-      maxBytes: 300,
+      maxBytes: 800,
     });
 
-    expect(Buffer.byteLength(result ?? "", "utf8")).toBeLessThanOrEqual(300);
+    expect(Buffer.byteLength(result ?? "", "utf8")).toBeLessThanOrEqual(800);
     expect(result).toContain("## Your memory: new.md");
     expect(result).not.toContain("old.md");
     expect(result).not.toContain("old fact");
@@ -305,7 +305,7 @@ describe("memory prompt budget", () => {
         doc("user", "same.md", "stale revision", 1, NEW),
         doc("user", "same.md", "current revision", 4, NEW),
       ],
-      400,
+      900,
     );
 
     expect(text).toContain("current revision");

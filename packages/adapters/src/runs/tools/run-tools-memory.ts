@@ -6,9 +6,24 @@ import {
   MEMORY_INDEX_PATH,
 } from "@rakazo/contracts";
 import { readHistory, searchHistory } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { redactConnectorPayload } from "../../integrations/connector-safety.js";
 import { stampMemoryEntry, userMemoryDate } from "../../memory/memory-expiry.js";
 import { editMemory } from "../../memory/memory-tools.js";
+import { curateStanding, findingsFor } from "../../memory/standing-curator.js";
+import {
+  backfillEmbeddings,
+  relatedPairs,
+  removeEmbedding,
+  suggestRelated,
+} from "../../memory/standing-embeddings.js";
+import {
+  normalizeStandingKey,
+  parseStandingOrders,
+  renderStandingEntry,
+  STANDING_ORDERS_PATH,
+  setStandingOrder,
+} from "../../memory/standing-orders.js";
 import { MAX_RECALLED_MEMORIES } from "../../runtime/context/history-compaction.prompt.js";
 import { sharedMemorySaveError } from "../../tools/builtin.tool-definition.js";
 import { RememberInputSchema } from "../../tools/builtin-conversation.tool-definition.js";
@@ -65,6 +80,25 @@ async function readHistoryTool(ctx: RunContext, call: ToolCall) {
     ...(run.trigger === "routine" ? { ownerOnly: run.userId } : {}),
   };
   const given = withoutBlankFields(args);
+  let scopeNote: string | undefined;
+  if (name === "search_history") {
+    // A refused my_chats search used to be an error the model retried; the safe answer is the
+    // narrower scope (this chat) with a plain note, so the call still returns something useful.
+    if (given.scope === "my_chats" && !allowMyChats) {
+      given.scope = "this_chat";
+      scopeNote =
+        "my_chats is not available in this run, so only this chat was searched. Other chats are out of reach here; do not retry with my_chats.";
+    }
+    const hasQuery =
+      typeof given.query === "string" || (Array.isArray(given.queries) && given.queries.length > 0);
+    if (!hasQuery && !(Array.isArray(given.kinds) && given.kinds.length > 0)) {
+      return call.finish({
+        untrusted: true,
+        messages: [],
+        note: "Nothing was searched: give `query` (1-500 characters, every word must match one message) or `kinds`. Blank fields count as not given.",
+      });
+    }
+  }
   let response: Awaited<ReturnType<typeof searchHistory | typeof readHistory>>;
   if (name === "search_history") {
     const parsed = HistorySearchInputSchema.safeParse(given);
@@ -96,7 +130,9 @@ async function readHistoryTool(ctx: RunContext, call: ToolCall) {
       })),
     ),
   );
-  return call.finish(redacted);
+  return call.finish(
+    scopeNote ? { ...(redacted as Record<string, unknown>), note: scopeNote } : redacted,
+  );
 }
 
 /** Memory documents, semantic memory and thread history. */
@@ -147,6 +183,142 @@ export const memoryTools: ToolHandlers = {
       }
     }
   },
+  async standing_set(ctx, call) {
+    const { deps, runId, thread, run, context } = ctx;
+    const { args } = call;
+    // Review reads only (the orders are already in every prompt), so any run may ask for it.
+    if (args.review === true) {
+      const snapshot = await deps.memory.read(
+        { scope: "user", path: STANDING_ORDERS_PATH },
+        context,
+      );
+      const entries = parseStandingOrders(snapshot.documents[0]?.content ?? "");
+      const findings = curateStanding(entries, new Date().toISOString().slice(0, 10));
+      // Meaning-based hints (pgvector): embed what is missing, then list related entries that are not linked yet.
+      await backfillEmbeddings(deps.prisma, { spaceId: run.spaceId, entries });
+      const related = await relatedPairs(deps.prisma, { spaceId: run.spaceId, entries });
+      return call.finish({
+        ok: true,
+        entries: entries.length,
+        ...(related.length
+          ? {
+              relatedNotLinked: related,
+              relatedNote:
+                "Close in meaning but not linked. Ask the user whether one is an exception of, wins over, or needs the other.",
+            }
+          : {}),
+        findings: findings.map((f) => ({ kind: f.kind, keys: f.keys, message: f.message })),
+        note: findings.length
+          ? "Tell the user these points in plain words and let him decide; change nothing yourself."
+          : "No problems found.",
+      });
+    }
+    // Standing orders bind every bot, so only the user's own words may change them: not a watch
+    // event, a webhook, a mail or another bot (the same trust gate as cross-chat history).
+    if (!ctx.source.myChatsAllowed || (await ctx.trust.receivedOutsideMessage())) {
+      return call.finish({
+        error:
+          "Standing orders change only when the user says so himself in a direct chat or call. Tell him what you would change and let him say it.",
+      });
+    }
+    let zone = "UTC";
+    try {
+      const user = await deps.prisma.user.findUnique({
+        where: { id: run.userId },
+        select: { timezone: true },
+      });
+      if (user?.timezone) zone = user.timezone;
+    } catch {
+      // The date is context only; UTC is a fine fallback.
+    }
+    const today = (() => {
+      try {
+        return new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(
+          new Date(run.createdAt ?? Date.now()),
+        );
+      } catch {
+        return new Date(run.createdAt ?? Date.now()).toISOString().slice(0, 10);
+      }
+    })();
+    for (let attempt = 1; ; attempt += 1) {
+      const snapshot = await deps.memory.read(
+        { scope: "user", path: STANDING_ORDERS_PATH },
+        context,
+      );
+      const existing = snapshot.documents[0];
+      const edit = setStandingOrder(
+        existing?.content ?? "",
+        {
+          kind: String(args.kind ?? "") as "rule" | "decision",
+          key: String(args.key ?? ""),
+          ...(args.text === undefined || args.text === null ? {} : { text: String(args.text) }),
+          ...(args.tier !== undefined && args.tier !== null ? { tier: Number(args.tier) } : {}),
+          ...(args.links !== undefined && args.links !== null ? { links: String(args.links) } : {}),
+        },
+        today,
+      );
+      if ("error" in edit) return call.finish({ error: edit.error });
+      if (edit.action === "unchanged") return call.finish({ ok: true, note: "Already set." });
+      try {
+        await deps.memory.commit(
+          {
+            scope: "user",
+            path: STANDING_ORDERS_PATH,
+            content: edit.content,
+            expectedRevision: existing?.revision ?? 0,
+            sourceRunId: runId,
+            sourceThreadId: thread.id,
+          },
+          context,
+        );
+        getLogger().info("standing.set", {
+          "standing.key": String(args.key ?? ""),
+          "standing.action": edit.action,
+          "standing.run_id": runId,
+          ...(edit.previous ? { "standing.replaced_len": edit.previous.length } : {}),
+        });
+        const key = normalizeStandingKey(String(args.key ?? ""));
+        const after = parseStandingOrders(edit.content);
+        const saved = after.find((e) => e.key === key);
+        let similar: { key: string; similarity: number }[] = [];
+        if (edit.action === "removed") {
+          await removeEmbedding(deps.prisma, { spaceId: run.spaceId, key }).catch(() => undefined);
+        } else if (saved) {
+          similar = await suggestRelated(deps.prisma, {
+            spaceId: run.spaceId,
+            key,
+            text: saved.text,
+            entries: after,
+          });
+        }
+        const review = findingsFor(
+          curateStanding(parseStandingOrders(edit.content), today),
+          key,
+        ).map((f) => f.message);
+        return call.finish({
+          ok: true,
+          action: edit.action,
+          ...(saved ? { now: renderStandingEntry(saved) } : {}),
+          ...(edit.previous ? { replaced: edit.previous } : {}),
+          ...(similar.length
+            ? {
+                similarNotLinked: similar,
+                similarNote:
+                  "Related by meaning but not linked. Tell the user in one line and ask whether to link them (exception of, wins over, needs).",
+              }
+            : {}),
+          ...(review.length
+            ? {
+                review: review.slice(0, 3),
+                note: "Saved. Tell the user the review points in one or two plain sentences and ask whether to adjust; do not change anything on your own.",
+              }
+            : {}),
+        });
+      } catch (error) {
+        if (!(error instanceof MemoryRevisionConflictError) || attempt >= 3) throw error;
+      }
+    }
+  },
   async save_shared_memory(ctx, call) {
     const { deps, runId, thread, context } = ctx;
     const { args } = call;
@@ -180,6 +352,12 @@ export const memoryTools: ToolHandlers = {
     const { deps, context } = ctx;
     const path = String(call.args.path ?? "").trim();
     if (!path) return call.finish({ error: "path is required" });
+    // Standing orders bind every bot: they change entry by entry, only through standing_set.
+    if (path === STANDING_ORDERS_PATH) {
+      return call.finish({
+        error: "STANDING.md changes only through standing_set (it replaces by key).",
+      });
+    }
     if (!isDeletableMemoryDocument(path)) {
       return call.finish({ error: `${path} cannot be deleted; edit its content instead.` });
     }
