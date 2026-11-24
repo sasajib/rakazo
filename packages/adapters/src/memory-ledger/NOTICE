@@ -1,0 +1,7 @@
+The memory ledger (this directory) adapts ideas and logic from Nod,
+https://github.com/n8n-io/nod, Copyright 2026 n8n GmbH, used under the Apache
+License, Version 2.0: the verbatim-quote gate and quote folding, the
+card-number/key/login-link secret filter (src/server/memory-tree.ts,
+src/server/memory-ops.ts) and the memory-model extraction instructions
+(src/server/memory-learning.ts). The code here is a rewrite for Rakazo's
+tables; see the repository NOTICE file.

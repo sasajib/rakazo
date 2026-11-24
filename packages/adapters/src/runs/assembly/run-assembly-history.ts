@@ -6,6 +6,7 @@ import { getLogger } from "@rakazo/logging";
 import { loadAgentMemoryContext } from "../../memory/memory-context.js";
 import { latestEndedDate } from "../../memory/memory-expiry.js";
 import { loadRecentNotices, renderNoticeLedger } from "../../memory/notice-ledger.js";
+import { withLedgerMemory } from "../../memory-ledger/seams.js";
 import { PARTIAL_REPLY_NOTE } from "../../messaging/automated-messages.prompt.js";
 import {
   historyWindowSize,
@@ -235,12 +236,22 @@ export async function loadTurnContext(
       loadCurrentTurnImages(deps, turnBlocks, context),
       savedContextHidden
         ? Promise.resolve("")
-        : loadAgentMemoryContext(deps.memory, bot.id, context, {
-            today: latestEndedDate(deps.now?.() ?? new Date()),
-            onPlan: (plan) => {
-              memoryPlan = plan;
+        : // Memory ledger seam (fork): adds the shared fact block when MEMORY_LEDGER is on.
+          withLedgerMemory(
+            deps,
+            {
+              spaceId: run.spaceId,
+              trigger: run.trigger,
+              query: task.prompt,
+              sourceClientNonce: messages.find((m) => m.id === run.sourceMessageId)?.clientNonce,
             },
-          }),
+            loadAgentMemoryContext(deps.memory, bot.id, context, {
+              today: latestEndedDate(deps.now?.() ?? new Date()),
+              onPlan: (plan) => {
+                memoryPlan = plan;
+              },
+            }),
+          ),
       savedContextHidden
         ? Promise.resolve("")
         : loadScratchpadAndNotices(deps, {

@@ -2,6 +2,7 @@ import type { ConnectorTool } from "@rakazo/adapter-kit";
 import { BOT_MEMORY_MAX_BYTES } from "@rakazo/contracts";
 import { byteLength } from "@rakazo/core";
 import type { z } from "zod";
+import { ledgerEnabled } from "../memory-ledger/config.js";
 import type { RememberInputSchema } from "../tools/builtin-conversation.tool-definition.js";
 import { withoutSavedDate } from "./memory-expiry.js";
 
@@ -25,7 +26,12 @@ export function selectMemoryTools(
           (semanticMemoryForgets || tool.name !== "forget_memory") &&
           (semanticMemoryReflects || tool.name !== "reflect_memory"),
       )
-    : tools.filter((tool) => !SEMANTIC_MEMORY_TOOL_NAMES.has(tool.name));
+    : tools.filter(
+        (tool) =>
+          !SEMANTIC_MEMORY_TOOL_NAMES.has(tool.name) ||
+          // Memory ledger seam (fork): recall_memory searches the shared fact ledger.
+          (tool.name === "recall_memory" && ledgerEnabled()),
+      );
 }
 
 export function appendMemoryFact(existing: string, fact: string): string {

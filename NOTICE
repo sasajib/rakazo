@@ -27,3 +27,9 @@ Nous Research, used under the MIT License:
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+The memory ledger (packages/adapters/src/memory-ledger/) adapts the verbatim
+quote gate, quote folding, secret filter and memory-model extraction
+instructions of Nod (src/server/memory-tree.ts, memory-ops.ts,
+memory-learning.ts), https://github.com/n8n-io/nod, Copyright 2026 n8n GmbH,
+used under the Apache License, Version 2.0.
