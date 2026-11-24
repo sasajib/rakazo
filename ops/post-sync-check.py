@@ -39,7 +39,12 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("planPromptState(", 2), ("planInstruction(", 2), ("planGateForMessageBot(", 2), ('"plan_propose"', 4),
            ("findReplaceableRequest(", 2), ("cancelReplacedRequest(", 2), ("planProcedures", 2),
            ("createPlansService(", 2), ("PlanBlockSchema", 2), ("PlanCard", 2), ("BotPlansSection", 2),
-           ("SkillTrustLine", 2), ('"agent_plans",', 1)]
+           ("SkillTrustLine", 2), ('"agent_plans",', 1),
+           # 2026-11-25 sync re-ports: shell's base description keeps the background-job wording under upstream's
+           # shellDescription(); job tools filtered before withShellScreenTool; LiveKit calls skip the
+           # automatic-language transcriber check on mobile
+           ("Fork (1.11 background shell jobs)", 1), ("JOB_TOOL_NAME_SET", 2),
+           ('autoLanguage && transport !== "livekit"', 1)]
 results = []
 
 

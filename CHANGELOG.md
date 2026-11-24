@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `end_call` is refused during a live call unless the caller asked to hang up, and a refused `my_chats` history search falls back to this chat with a note instead of failing.
 - A shared memory ledger per Space (off unless `MEMORY_LEDGER=1`): facts the owner states in a direct chat are kept only when quoted verbatim from the owner's own message, scored tentative/confirmed, contradictions asked once in a non-blocking card, and every run gets a core block after the standing orders plus a hybrid-search work-start pack (`MEMORY_LEDGER_*`, `MEMORY_EMBEDDINGS_*`; needs pgvector). While it is on, deleting a bot no longer re-files its `MEMORY.md` as shared memory.
 - The mobile app can hold calls through the LiveKit voice agent, offers **Done** on finished-work notifications, and logs incoming-call rings.
+- Fork synced with upstream through `dbc0c9d46` (0.16.0 and later). With a LiveKit voice agent, mobile calls in automatic spoken-language mode need no transcribing voice provider; a shell on a Team Computer's shared screen gets upstream's "open the screen" notice instead of another screen's display.
 
 ## [0.16.0] - 2026-11-24
 

@@ -417,8 +417,9 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** `message_bot`/`bot-messages.ts` delivery transaction, the `agentSkillsLine` join in `run-assembly-context.ts`,
   `run-tools-messaging.ts` handlers, upstream message block kinds (exhaustive switches), pinned tool cap.
 
-### 1.18 Merge commit
+### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
+- `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
 
 ---
 
@@ -483,21 +484,24 @@ If upstream moved a directory that holds fork files (e.g. `packages/core/src` su
 their siblings and fix `index.ts` exports.
 
 ### 3.4 Gates (all must pass before `main` moves)
-1. **Type-check per package, unfiltered counts** (baseline today: only the 2 `stripe-invoice-refund.ts` errors, which
-   show in adapters/api/worker/testkit):
-   `for p in packages/contracts packages/core packages/db packages/adapters apps/api apps/web apps/worker packages/testkit; do (cd $p && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -c "error TS"); done`
+1. **Type-check per package, unfiltered counts** (baseline on upstream `dbc0c9d46` too: only the 2 `stripe-invoice-refund.ts`
+   errors, which show in adapters/api/worker/testkit; apps/mobile 0):
+   `for p in packages/contracts packages/core packages/db packages/adapters apps/api apps/web apps/worker packages/testkit apps/mobile; do (cd $p && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -c "error TS"); done`
    (`npx turbo check` gets OOM-killed on bee under load.)
 2. **Biome on the fork's changed files only, never piped:** `npx biome check $(git diff --name-only upstream/main...HEAD -- '*.ts' '*.tsx')`.
 3. **Vitest in chunks ≤ 5 min:** at least `packages/adapters/src/{tools,tasks,runs/assembly,runs/tools,runs/lifecycle,memory,memory-ledger,shell-jobs,computers}`,
    `packages/core/src`, `apps/api/src`, `apps/web/src/pages/shell`, `infra/updater/src/compose-env.test.ts`,
    `packages/testkit/src/runtime/executor-turn-checkpoint.test.ts`, mobile call tests. Compare failures against
-   `git stash -u` / upstream (`desktop-runtime`, `mcp-package-installer`, testkit journeys 4/4b/4d/13c/54 fail on bee without the fork too).
+   `git stash -u` / upstream (`desktop-runtime` (8), `infra/sandboxes/supervisor/src/focus-or-launch.test.ts` (1, since upstream
+   `dbc0c9d46`: no xdotool + screen-gateway marker on bee), `mcp-package-installer`, testkit journeys 4/4b/4d/13c/54 fail on bee
+   without the fork too). A pure-upstream worktree for comparison: `git worktree add --detach ../upstream-<mmdd> upstream/main`
+   + `pnpm install --frozen-lockfile` + `pnpm --filter @rakazo/db generate`.
 4. **Postgres tests against pgvector:** start a scratch `rakazo/postgres-graph:16-pgv-age1.6`, then for each of
    `row-security.postgres.test.ts`, `memory-ledger/{ledger,seams}.postgres.test.ts`, `shell-jobs.postgres.test.ts`,
    `chat-wait.postgres.test.ts`, `computer-lifecycle.postgres.test.ts`, `apps/api/src/bots/bot-skills.postgres.test.ts`,
    `skill-curator/curator.postgres.test.ts`, `apps/api/src/bots/skill-learning.postgres.test.ts`,
-   `plans/plans.postgres.test.ts`, `messaging/bot-supersede.postgres.test.ts`,
-   `packages/testkit/src/product/authorization.test.ts`:
+   `plans/plans.postgres.test.ts`, `messaging/bot-supersede.postgres.test.ts`, `takeover-chat.postgres.test.ts`,
+   `wakeup.postgres.test.ts`, `packages/testkit/src/product/authorization.test.ts` (one fresh database per spec):
    `CI_POSTGRES_URL=postgresql://postgres:pw@127.0.0.1:<port>/rakazo MCP_ALLOW_PRIVATE_ENDPOINT=true pnpm test:integration --spec=<file>`;
    remove the container after. (Plain `postgres:18-alpine` lacks pgvector; the ledger migration fails there.)
 5. **Prompt surface:** `npx vitest run packages/adapters/src/runs/assembly/prompt-surface.test.ts`; on failure review
@@ -508,6 +512,13 @@ their siblings and fix `index.ts` exports.
 8. **Image-vs-git check** before building (a hotfix may exist only in the running image):
    `docker create rakazo/app:<running>` → `docker cp <c>:/app/packages` → `diff -rq` against `git archive <deployed ref>`
    (ignore `apps/desktop`, `apps/mobile`, generated dirs).
+
+9. **Migration order against the live DB:** upstream migrations are dated before the fork's `2027-01-xx` ones. Restore the
+   live schema (`pg_dump --schema-only`) + its `_prisma_migrations` rows into a scratch database and run
+   `DATABASE_MIGRATION_URL=<scratch> npx prisma migrate deploy` in `packages/db`: it must apply only upstream's new
+   migrations, cleanly (Prisma `migrate deploy` applies any unapplied migration, even one dated before applied ones).
+10. **Host-computer bundle:** build `host-computer/build.mjs` into a scratch copy (`node build.mjs <fork>`) and diff it with the
+   deployed `dist/host-computer.mjs` ignoring path comments; if code differs, rebuild in place and restart the unit at deploy.
 
 ### 3.5 Land on main
 ```bash
@@ -547,3 +558,61 @@ Tell him: stale web tabs keep the old bundle until reloaded.
   Fork migrations are additive, so the previous image runs on the newer schema.
 - Data: `pg_restore` from `backups/deploy-<ts>/rakazo.dump` (stop app services first) only if a migration damaged data.
 - Code: `git branch -f main backup/main-pre-sync-<mmdd>` + force-push only with the owner's word.
+
+---
+
+## 4. Sync log
+
+### 2026-11-25 — upstream `7dbc01748..dbc0c9d46` (76 commits, incl. Release v0.16.0) → `main` `42d432574`, image `main-1125a`
+- **Decision: merge, not rebuild.** 46 fork commits vs 76 upstream; `git merge-tree` touched 91 files but only **11 had content
+  conflicts**, all in seams the ledger names (well under the ~25-file merge threshold). Backup: branch + tag
+  `backup/main-pre-sync-1125` (= `7453a0fc2`), pushed.
+- **Conflicts and resolutions** (ours kept, upstream's fix ported onto it):
+  - `tools/builtin-computer.tool-definition.ts`: upstream turned the shell description into `shellDescription(screenTool)`
+    (adds "open the bot's screen" when a graphical program finds no display). Took upstream's function; its base text
+    `SHELL_DESCRIPTION` is the fork's background-job wording (1.11). **Ours wins** on the base text.
+  - `runs/tools/run-tool-selection.ts`: upstream's `withShellScreenTool` applied AFTER the fork's job-tool filter (1.11).
+  - `runs/tools/run-tools-computer.ts`: the shell result carries both the fork's job limit `note` and upstream's
+    no-display `notice`; `postBytesToChat` import (1.12) and upstream's `screenOpeningTool` import both kept.
+  - `infra/sandboxes/supervisor/src/routes.ts` (exec): fork's team-shared screen key (`screenIdentity(...).screenKey`, 1.14)
+    kept; upstream #6658 rule "no screen for this key = no DISPLAY" applied to that key (before: fork fell back to index 0).
+  - `runs/assembly/run-assembly-context.ts`: plan imports (1.20) + upstream `routineEnded`.
+  - mobile `lib/calls/incoming-calls.ts` + test, `lib/thread/thread-voice.ts`: upstream added automatic spoken language
+    (`loadCallAutoLanguage`, transcriber check before answering, Space-scoped request context). Fork LiveKit transport (1.1)
+    kept: the transport is resolved before the automatic-language check, and on LiveKit no voice provider/transcriber is
+    asked for (**ours wins**: upstream would refuse an automatic-language call without a transcriber; the voice agent
+    transcribes). Upstream's `captureApiRequestContext(spaceId)` + `stillHere()` now also guard the fork's LiveKit start.
+  - `apps/web/src/pages/shell/chat/chat-column.tsx`: fork lesson bar (1.19) + upstream `FileDropZoneContext`.
+  - `tools/builtin-tool-bridge.test.ts`: upstream's comment + fork note; cap re-measured 48_173 → `48_230` (upstream 37_791).
+  - `CHANGELOG.md`: fork lines under Unreleased, upstream 0.16.0 verbatim.
+- **Auto-merged fork seams re-checked:** all 57 `post-sync-check.py` markers present; prompt-surface snapshots changed only by
+  upstream's `schedule_create`/`schedule_update` `endAt` wording (fork tools/args unchanged).
+- **New upstream migration** `20261231230000_routine_ends_at` (dated before the fork's 2027-01 migrations): applies cleanly on
+  an empty DB and on a copy of the live schema + `_prisma_migrations` (only it is pending there).
+- **Gates:** tsc per package = upstream baseline (2 stripe errors in adapters/api/worker/testkit; others 0; mobile 0).
+  Biome on 302 fork-touched files: exit 0 after `--write` (organize-imports in 2 files). Vitest 11 chunks: only
+  `desktop-runtime` (8) + `focus-or-launch` (1) fail, identical on pure upstream `dbc0c9d46`. Mobile `apps/mobile/lib`
+  3910/3910. 14 postgres specs (incl. authorization inventory, row-security) PASS on `rakazo/postgres-graph`. compose-env PASS.
+  Secret grep: fixtures only. Image-vs-git (`main-1124s` vs `f05e734f0`): no image-only edits.
+- **Not re-ported / dropped:** nothing. Upstream fixes kept: all 76.
+- **Deploy (bee, 2026-11-24 23:32 UTC):** no live call (voice agent log empty for 20 min) and no running runs; backups
+  `backups/deploy-20261124-2331/{rakazo.dump,env.bak}`; image `rakazo/app:main-1125a` (`--build-arg GIT_SHA=42d432574…`);
+  recreated `migrate api worker web supervisor` (migrate applied `routine_ends_at`); `/health` 200; stack compose gained
+  upstream's `SANDBOX_COMPUTER_GPU` key. Host-computer bundle differed (upstream code pulled in transitively), so
+  `host-computer/build.mjs` was re-run and `bee-rakazo-host-computer` restarted (listening 172.17.0.1:7093/7094). Voice agent
+  unchanged (deployed copy == example), not rebuilt. Computer image not rebuilt (upstream GPU change is not used by host mode).
+- **Live checks (throwaway bots, archived; no ledger facts written):** `post-sync-check.py` full ALL PASS (repeat refused
+  4→3, same lane serial, other lane parallel). Probe bots: `/api/voice/agent` → `{mode: livekit}` (1.1); talk run 18 s into a
+  40 s host shell, answered in 3 s (1.3); shell on the desktop host (1.15, rebuilt bundle) 40 s, output returned;
+  `computer_observe share:true` posted an image message (1.12/1.15); `computer/screenUrl` → `/novnc/session/view/…` (1.15);
+  delegation request → `plan_propose` card pending → `plans/decide approve` → `message_bot` → B's `bot_message` run
+  completed (1.20); `agentSkills/forBot`, `skillLearning/settings`, `plans/settings` answer (1.17/1.19/1.20);
+  `run.prompt_manifest` logged; `tools.exposed` 78 on an owner run.
+- **Not verified live this sync:** a spoken call (`scenario_assert.py`: the voice-agent account's space has no bots/model);
+  mobile LiveKit + automatic language (APK not built; unit tests only); background shell jobs (desktop host skips them by
+  design; unit + postgres tests only); Team-Computer shared screen exec path (not used on bee; unit tests only); skill
+  curator card flow (unchanged seams; tests only).
+- **New baseline failure:** `focus-or-launch.test.ts` (1, upstream test, same on pure upstream).
+- **Rollback:** `.env` `RAKAZO_IMAGE_TAG=main-1124s` → recreate `api worker web supervisor` (the new `routines.endsAt` column
+  is additive; the old image ignores it); host bundle backup `backups/deploy-20261124-2331/host-computer.mjs` (copy over
+  `host-computer/dist/host-computer.mjs`, restart the unit; or rebuild from `backup/main-pre-sync-1125` with `node build.mjs`).
