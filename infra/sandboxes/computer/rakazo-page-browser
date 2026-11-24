@@ -270,8 +270,32 @@ class OwnerTabs:
             target, _ = self.tab(create=False)
         except RuntimeError:
             return False
-        urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/activate/{target}", timeout=5.0).close()
-        return True
+        client = page_secrets.connect(self.port)
+        try:
+            session = client.call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+
+            def shown() -> bool:
+                # The tab on screen is the only visible one.
+                answer = client.call("Runtime.evaluate", {"expression": "document.visibilityState",
+                                                          "returnByValue": True}, session_id=session)
+                return (answer.get("result") or {}).get("value") == "visible"
+
+            with contextlib.suppress(Exception):
+                client.call("Target.activateTarget", {"targetId": target})
+            if shown():
+                return True
+            # BrowserOS neo keeps agents from switching the person's tab over CDP, so the tabs are
+            # stepped through on the screen, as a person would with Ctrl+Tab, until the bot's is shown.
+            for _ in range(len(page_tabs(self.port))):
+                subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chromium-browser",
+                                "windowactivate", "--sync", "key", "--clearmodifiers", "ctrl+Tab"],
+                               capture_output=True, timeout=3)
+                time.sleep(0.15)
+                if shown():
+                    return True
+            return False
+        finally:
+            client.close()
 
 
 # A page may open tabs: a pop-up, a link to a new tab, or a report it opens once it has made it.
