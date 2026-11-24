@@ -67,6 +67,7 @@ describePostgres("queued turns share a chat one at a time (PostgreSQL)", () => {
     startedAt?: Date;
     createdAt?: Date;
     routineId?: string;
+    lane?: string;
   }) {
     const userId = data.userId ?? identity.userId;
     const task = await system.task.create({
@@ -84,6 +85,7 @@ describePostgres("queued turns share a chat one at a time (PostgreSQL)", () => {
         startedAt: data.startedAt,
         createdAt: data.createdAt,
         routineId: data.routineId,
+        lane: data.lane,
         leaseOwner: data.status === "running" ? "worker" : null,
         leaseFence: data.status === "running" ? 1 : 0,
       },
@@ -222,6 +224,43 @@ describePostgres("queued turns share a chat one at a time (PostgreSQL)", () => {
     expect(await claimRun(deps, second!, "worker-2")).toBeUndefined();
     expect(await claimRun(deps, first!, "worker-2")).toBeDefined();
     expect(await claimRun(deps, third!, "worker-2")).toBeUndefined();
+  });
+
+  it("starts another bot's requests in other lanes beside each other, one at a time per lane", async () => {
+    // Every message_bot request from one bot lands in one chat; lanes are what keep them apart.
+    await system.bot.update({ where: { id: identity.botId }, data: { concurrency: 4 } });
+    try {
+      const working = await createRun({
+        trigger: "bot_message",
+        status: "running",
+        startedAt: new Date(),
+        lane: "site-a",
+      });
+      const sameLane = await createRun({
+        trigger: "bot_message",
+        status: "queued",
+        lane: "site-a",
+        createdAt: new Date(Date.now() - 2_000),
+      });
+      const otherLane = await createRun({
+        trigger: "bot_message",
+        status: "queued",
+        lane: "site-b",
+        createdAt: new Date(Date.now() - 1_000),
+      });
+      const noLane = await createRun({ trigger: "bot_message", status: "queued" });
+
+      expect(await claimRun(deps, sameLane, "worker-2")).toBeUndefined();
+      expect(await claimRun(deps, otherLane, "worker-2")).toBeDefined();
+      expect(await claimRun(deps, noLane, "worker-2")).toBeDefined();
+
+      // A refused claim sets a short wake; the run is due again once it passes.
+      await system.run.update({ where: { id: working.id }, data: { status: "completed" } });
+      await system.run.update({ where: { id: sameLane.id }, data: { wakeAt: null } });
+      expect(await claimRun(deps, sameLane, "worker-2")).toBeDefined();
+    } finally {
+      await system.bot.update({ where: { id: identity.botId }, data: { concurrency: 1 } });
+    }
   });
 
   it("keeps another bot's message waiting for a turn of its own instead of handing it over", async () => {

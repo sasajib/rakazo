@@ -18,6 +18,8 @@ interface ChatWaitingRun {
   threadId: string;
   taskId: string;
   trigger: string;
+  /** Work queue lane of a bot_message run (fork); other lanes never hold it. */
+  lane?: string | null;
   status: string;
   startedAt: Date | null;
   wakeAt: Date | null;
@@ -34,7 +36,7 @@ interface ChatWaitingRun {
  * in the chat.
  */
 export function claimWaitsForChat(
-  run: Pick<ChatWaitingRun, "id" | "botId" | "trigger" | "startedAt" | "createdAt">,
+  run: Pick<ChatWaitingRun, "id" | "botId" | "trigger" | "lane" | "startedAt" | "createdAt">,
   now: Date,
 ): Prisma.RunWhereInput {
   if (!CHAT_WAITING_TRIGGERS.includes(run.trigger) || run.startedAt) return {};
@@ -43,16 +45,32 @@ export function claimWaitsForChat(
   return { OR: [{ routine: { is: { inChat: false } } }, chatFree] };
 }
 
+/**
+ * Fork: requests from another bot share one chat, but each names its own work lane (a site or
+ * topic; none = the conversation). A request never waits on a request in another lane, so lanes
+ * run side by side; the admission gate (run-gate.ts) keeps one lane serial and the bot's slots.
+ */
+export function otherLaneRequestsWhere(
+  run: Pick<ChatWaitingRun, "trigger" | "lane">,
+): Prisma.RunWhereInput {
+  if (run.trigger !== "bot_message") return {};
+  const lane = run.lane ?? null;
+  const otherLane: Prisma.RunWhereInput =
+    lane === null ? { lane: { not: null } } : { OR: [{ lane: null }, { lane: { not: lane } }] };
+  return { NOT: { trigger: "bot_message", ...otherLane } };
+}
+
 /** Another run in the chat is under way, or queued ahead of this one and due. */
 function busyRunWhere(
-  run: Pick<ChatWaitingRun, "id" | "botId" | "createdAt">,
+  run: Pick<ChatWaitingRun, "id" | "botId" | "trigger" | "lane" | "createdAt">,
   now: Date,
 ): Prisma.RunWhereInput {
   return {
     id: { not: run.id },
     botId: run.botId,
     status: { in: [...QUEUE_HOLDING_RUN_STATUSES] },
-    ...HOLDS_CHAT,
+    // HOLDS_CHAT carries its own NOT, so the lane rule goes under AND rather than a spread.
+    AND: [HOLDS_CHAT, otherLaneRequestsWhere(run)],
     OR: [
       { startedAt: { not: null } },
       { status: { not: "queued" } },
