@@ -35,6 +35,30 @@ export const SELECTED_SCHEMA_MAX_BYTES = 100_000;
 const MAX_TOOL_NAME_LENGTH = 200;
 export const MAX_DESCRIPTION_LENGTH = 500;
 
+/**
+ * Tools reachable only through the catalog wrappers in `tools`, for logs only. Read from the
+ * wrapper's own description (a tool list is copied on its way to a run, so nothing can ride on
+ * the object): either "Sources: name (count), …" or the full name index, one source per block.
+ */
+export function deferredToolCount(tools: readonly ConnectorTool[]): number | null {
+  let total = 0;
+  let wrappers = 0;
+  for (const tool of tools) {
+    if (!/_search_tools$/.test(tool.name)) continue;
+    wrappers += 1;
+    const description = tool.description ?? "";
+    const sources = /\nSources: ([^\n]*)/.exec(description)?.[1];
+    if (sources) {
+      for (const match of sources.matchAll(/\((\d+)\)/g)) total += Number(match[1]);
+    } else {
+      for (const line of description.split("\n").slice(1)) {
+        if (line.startsWith("  ")) total += line.split(",").filter((name) => name.trim()).length;
+      }
+    }
+  }
+  return wrappers === 0 ? 0 : total;
+}
+
 export type CatalogEntry = { id: string; tool: ConnectorTool; group: string };
 
 export type CatalogSearchHit = {

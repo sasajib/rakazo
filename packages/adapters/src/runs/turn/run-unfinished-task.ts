@@ -2,6 +2,7 @@ import { continuationPrompt, needsContinuation } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import type { RunContext } from "../assembly/run-context.js";
 import { wakeRun } from "../wakeups/wake-run.js";
+import { noteAutoContinuation } from "./run-audit.js";
 
 /**
  * The deterministic part of "it will do the work": a person's run that announced work and used no
@@ -49,6 +50,7 @@ export async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
       select: { id: true },
     });
   });
+  noteAutoContinuation(run.id);
   getLogger().warn("run continued: it announced work and used no tool", {
     "run.id": run.id,
     "run.continuation": created.id,

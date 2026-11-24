@@ -1,4 +1,5 @@
 import type { AdapterContext, MemorySnapshot, MemoryStore } from "@rakazo/adapter-kit";
+import type { MemoryPromptBudget } from "@rakazo/contracts";
 import { MEMORY_ARCHIVE_PATH } from "@rakazo/contracts";
 import { bestEffort } from "@rakazo/logging";
 import type { MemoryPromptDocument } from "./memory-context.prompt.js";
@@ -11,7 +12,12 @@ export async function loadAgentMemoryContext(
   memory: MemoryStore,
   botId: string,
   context: AdapterContext,
-  options: { today?: string; maxBytes?: number } = {},
+  options: {
+    today?: string;
+    maxBytes?: number;
+    /** Told what reached the block (see `memory.prompt.built`); never changes the block. */
+    onPlan?: (plan: MemoryPromptBudget) => void;
+  } = {},
 ): Promise<string | undefined> {
   const stored = await readStoredMemory(memory, botId, context);
   if (options.today) {
@@ -20,10 +26,12 @@ export async function loadAgentMemoryContext(
       archiveEndedEntries(memory, botId, stored.bot, options.today, context),
     );
   }
-  return buildAgentMemoryPrompt(
+  const built = buildAgentMemoryPrompt(
     promptDocuments(stored, options.today),
     options.maxBytes ?? AGENT_MEMORY_MAX_BYTES,
-  ).text;
+  );
+  options.onPlan?.(built.plan);
+  return built.text;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   releaseRunHold,
 } from "../lifecycle/run-attempt.js";
 import { retryRunSetup, runEndedForThisWorker } from "../lifecycle/run-lifecycle.js";
+import { onRunFinalized } from "../turn/run-audit-run.js";
 import { resolveConnectedRunModel, resolveRunModel } from "../turn/run-model.js";
 import { runModelTurn } from "../turn/run-model-turn.js";
 import type { ExecutorDeps } from "./executor-deps.js";
@@ -53,6 +54,19 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
       );
       if (result || (await runEndedForThisWorker(executorDeps.prisma, input))) {
         endRunConnectorState(input.runId);
+      }
+      // Log-only: `run.audit_summary` for the run this attempt just ended.
+      if (result) {
+        await onRunFinalized(
+          executorDeps.prisma,
+          {
+            runId: input.runId,
+            spaceId: input.spaceId,
+            threadId: input.threadId,
+            botId: input.botId,
+          },
+          input.outcome,
+        ).catch(() => undefined);
       }
       return result;
     },

@@ -1,3 +1,4 @@
+import type { MemoryPromptBudget } from "@rakazo/contracts";
 import { botMessageAllowsSilence, userTurnMessageForRun } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { isPartialReplyClientNonce, storedMessageBlocks } from "@rakazo/db";
@@ -227,6 +228,7 @@ export async function loadTurnContext(
           context,
         )
       : Promise.resolve(null);
+  let memoryPlan: MemoryPromptBudget | undefined;
   const [discovered, currentTurnImages, memoryContext, scratchpadContext, ticketContext, recalled] =
     await Promise.all([
       discoveredPromise,
@@ -235,6 +237,9 @@ export async function loadTurnContext(
         ? Promise.resolve("")
         : loadAgentMemoryContext(deps.memory, bot.id, context, {
             today: latestEndedDate(deps.now?.() ?? new Date()),
+            onPlan: (plan) => {
+              memoryPlan = plan;
+            },
           }),
       savedContextHidden
         ? Promise.resolve("")
@@ -262,7 +267,13 @@ export async function loadTurnContext(
       // conversation was this bot's own. Storage cannot promote it to owner authority.
       recalledMemory = stored.length ? formatRecalledMemory(stored) : "";
     } else {
-      getLogger().error("semantic memory recall failed", recalled.error);
+      getLogger().error("semantic memory recall failed", recalled.error, {
+        "run.id": run.id,
+        "space.id": run.spaceId,
+        "thread.id": thread.id,
+        "bot.id": bot.id,
+        "memory.operation": "recall",
+      });
     }
   }
   if (!compactedHistory.usedLocalSummary) {
@@ -286,6 +297,7 @@ export async function loadTurnContext(
     discovered,
     currentTurnImages,
     memoryContext,
+    memoryPlan,
     scratchpadContext,
     ticketContext,
     semanticMemoryEnabled,

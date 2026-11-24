@@ -7,6 +7,7 @@ import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js
 import { personSpeaker } from "../../runtime/context/history-speakers.js";
 import { backgroundHelpersAllowed } from "../../tasks/background-helpers.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
+import { deferredToolCount } from "../../tools/lazy-tool-catalog.js";
 import { promptVersion } from "../assembly/prompt-version.js";
 import type { AssembledTurn } from "../assembly/run-assembly.js";
 import {
@@ -19,11 +20,13 @@ import {
   GROUP_UNADDRESSED_REPLY_GUIDANCE,
   runReplyGuidance,
 } from "../assembly/run-replies.prompt.js";
+import { TALK_RUN_INSTRUCTION } from "../assembly/talk-run.prompt.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { completeRun } from "../lifecycle/run-complete.js";
 import { failRun, handoffEndedTurn, requeueRunAfterDatabaseOutage } from "../lifecycle/run-fail.js";
 import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection.js";
 import { applyTool } from "../tools/run-tools.js";
+import { holdAuditSummary, logPromptAudit, releaseAuditSummary } from "./run-audit-run.js";
 import { consumeRunEvents } from "./run-turn.js";
 import { claimRunSteering } from "./run-turn-images.js";
 import { continueUnfinishedTask } from "./run-unfinished-task.js";
@@ -64,18 +67,22 @@ export async function runModelTurn(
         }),
       )
       .catch((error: unknown) => getLogger().warn("run.prompt_version_failed", { error }));
+    logTurnPromptAudit(hold, turn);
     const runtimeEvents = deps.runtime.run(modelTurnRequest(services, hold, turn), {
       ...context,
       signal: AbortSignal.any([context.signal, ctx.runtimeAbortController.signal]),
     });
     if (await consumeRunEvents(ctx, runtimeEvents)) return;
     if (await interruptedByShutdown()) return;
+    holdAuditSummary(runId);
     await completeRun(ctx);
     // The work is only done if it was done: a run that only announced it is continued once.
     await continueUnfinishedTask(ctx).catch((error) => {
       getLogger().error("continuation check", error);
     });
+    await releaseAuditSummary(deps.prisma, auditTarget(hold, turn)).catch(() => undefined);
   } catch (turnError) {
+    holdAuditSummary(runId, false);
     if (await interruptedByShutdown()) return;
     let caughtError = turnError;
     if (handoffEndedTurn(state, caughtError)) {
@@ -95,6 +102,50 @@ export async function runModelTurn(
       active: activeModel,
     });
   }
+}
+
+function auditTarget(hold: RunHold, turn: AssembledTurn) {
+  return {
+    runId: hold.runId,
+    spaceId: hold.run.spaceId,
+    threadId: turn.records.thread.id,
+    botId: turn.records.bot.id,
+  };
+}
+
+/** Log-only: what this run's prompt is made of (sizes and fingerprints, never text). */
+function logTurnPromptAudit(hold: RunHold, turn: AssembledTurn): void {
+  const { run } = hold;
+  const { bot } = turn.records;
+  const { agentEnvironmentInstruction } = turn.records;
+  const { memoryContext, memoryPlan, scratchpadContext, ticketContext } = turn.turnContext;
+  const { groupContext, mainRunModel, messagingContext } = turn.capabilities;
+  const { taskCatalogInstruction, tools } = turn.tools;
+  const { computerInstruction, workspaceInstruction } = turn.computerInstructions;
+  const { agentSkillsLine, pluginLine, prompt, taughtSkillsLine } = turn.prompt;
+  const talkRun = run.trigger === TALK_RUN_TRIGGER;
+  logPromptAudit(auditTarget(hold, turn), {
+    trigger: run.trigger,
+    model: mainRunModel,
+    memoryPlan,
+    tools: { exposed: tools.length, deferred: deferredToolCount(tools) },
+    sections: [
+      ["bot_instructions", runIdentityInstruction(bot, run.trigger)],
+      ["memory_block", memoryContext],
+      ["scratchpad", scratchpadContext],
+      ["tickets", ticketContext],
+      ["task_catalog", taskCatalogInstruction],
+      ["talk_run", talkRun ? TALK_RUN_INSTRUCTION : undefined],
+      ["skills_list", [agentSkillsLine, taughtSkillsLine].filter(Boolean).join("\n")],
+      ["plugins", pluginLine],
+      ["group_context", groupContext],
+      ["messaging_context", messagingContext],
+      ["computer", computerInstruction],
+      ["workspace", workspaceInstruction],
+      ["environment", agentEnvironmentInstruction],
+      ["turn_prompt", prompt],
+    ],
+  });
 }
 
 function modelTurnRequest(

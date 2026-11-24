@@ -18,6 +18,7 @@ import { strategicInitiativeToolAllowed } from "../../routines/strategic-initiat
 import type { RunContext } from "../assembly/run-context.js";
 import { markReadOutsideContent } from "../assembly/run-context.js";
 import { announceFirstStep, noteComputerTaskStep } from "../lifecycle/run-progress.js";
+import { recordToolCall } from "../turn/run-audit.js";
 import { logToolRefusal } from "../turn/tool-completion-audit.js";
 import { refusal } from "../turn/tool-refusal.js";
 import { auditToolCall } from "./run-tool-audit.js";
@@ -205,6 +206,8 @@ async function dispatchTool(
   observer: AgentToolExecutionObserver | undefined,
 ) {
   ctx.context.signal.throwIfAborted();
+  // Counted here, before any refusal, so retries of a refused call are visible too.
+  const callAudit = recordToolCall(ctx.runId, { name, args, executionId });
   // A call turned away before its tool runs is logged by its refusal code. `target` is the
   // connector tool a catalog call resolved to.
   const refuse = <T>(refused: T, target?: string): T => {
@@ -220,6 +223,7 @@ async function dispatchTool(
       refused,
       ctx.secrets,
       target === name ? undefined : target,
+      callAudit,
     );
     if (logged) {
       ctx.state.toolRefusals ??= new Map();
