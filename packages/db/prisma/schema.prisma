@@ -761,6 +761,7 @@ model Space {
   mcpServerSpaces             McpServerSpace[]
   capabilityInstallSpaces     CapabilityInstallSpace[]
   shellJobs                   ShellJob[]
+  botSkillSelections          BotSkillSelection[]
 
   @@unique([id, organizationId])
   @@index([organizationId, createdAt])
@@ -1108,6 +1109,7 @@ model Bot {
   emailAddress      BotEmailAddress?
   emailMessages     BotEmailMessage[]
   shellJobs        ShellJob[]
+  skillSelection   BotSkillSelection?
 
   @@unique([spaceId, spawnKey])
   @@index([spaceId, userId, archivedAt, pinned, updatedAt])
@@ -1820,6 +1822,7 @@ model AgentSkill {
   /// Available in every space of its owner, including later ones; otherwise in spaceId and availableIn.
   allSpaces   Boolean  @default(false)
   availableIn AgentSkillSpace[]
+  botSkills   BotSkill[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -3270,4 +3273,38 @@ model ShellJob {
   @@index([threadId, status])
   @@index([botId, status])
   @@map("shell_jobs")
+}
+
+/// Fork: the skills one agent may use. No row = every skill of its space (upstream behaviour).
+/// A row = only the stored skills listed in bot_skills, plus every built-in skill not named in
+/// excludedBuiltins (so built-ins added later stay on until the owner unticks them).
+model BotSkillSelection {
+  botId            String     @id
+  bot              Bot        @relation(fields: [botId], references: [id], onDelete: Cascade)
+  spaceId          String
+  space            Space      @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId           String
+  excludedBuiltins String[]   @default([])
+  skills           BotSkill[]
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@index([spaceId, userId])
+  @@map("bot_skill_selections")
+}
+
+/// Fork: one stored skill chosen for an agent whose skills are restricted.
+model BotSkill {
+  botId     String
+  selection BotSkillSelection @relation(fields: [botId], references: [botId], onDelete: Cascade)
+  skillId   String
+  skill     AgentSkill        @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  spaceId   String
+  userId    String
+  createdAt DateTime          @default(now())
+
+  @@id([botId, skillId])
+  @@index([skillId])
+  @@index([spaceId, userId])
+  @@map("bot_skills")
 }

@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@rakazo/ui-web/componen
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { SkillAgentsLine } from "../../components/integrations/skill-agents-line";
 import {
   AvailabilityControl,
   AvailabilityLabel,
@@ -498,6 +499,7 @@ export function AgentSkills() {
               ) : null}
             </div>
           ) : null}
+          {open ? <SkillAgentsLine skillId={open.id} /> : null}
           <Textarea
             aria-label="SKILL.md"
             disabled={busy}

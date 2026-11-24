@@ -497,6 +497,9 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["agentSkills/create", { name: "Unauthenticated", description: "Nope", body: "Steps" }],
       ["agentSkills/update", { skillId: "missing-skill", description: "Nope" }],
       ["agentSkills/remove", { skillId: "missing-skill" }],
+      ["agentSkills/forBot", { botId: "missing-bot" }],
+      ["agentSkills/setForBot", { botId: "missing-bot", all: true }],
+      ["agentSkills/agents"],
       ["capabilities/list"],
       ["capabilities/sourcePresets"],
       ["capabilities/install", capabilityInput("Unauthenticated")],
@@ -928,6 +931,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["agentSkills/get", { skillId: ownerAgentSkill.id }],
       ["agentSkills/update", { skillId: ownerAgentSkill.id, description: "Stolen" }],
       ["agentSkills/remove", { skillId: ownerAgentSkill.id }],
+      ["agentSkills/forBot", { botId: ownerBot.id }],
+      ["agentSkills/setForBot", { botId: ownerBot.id, all: false, skillIds: [] }],
       ["memory/update", { documentId: ownerMemory.id, content: "stolen" }],
       ["connections/complete", { connectionId: ownerConnection.connectionId }],
     ] satisfies Array<[string, unknown]>;
@@ -944,6 +949,16 @@ describeWithDatabase("API authorization and resource isolation", () => {
     );
     expect(await rpc<Array<{ id: string }>>(app, intruder, "agentSkills/list")).not.toContainEqual(
       expect.objectContaining({ id: ownerAgentSkill.id }),
+    );
+    // Fork: per-agent skills never show another space's agents or skills.
+    const intruderSkillAgents = await rpc<Array<{ skillId: string; bots: Array<{ id: string }> }>>(
+      app,
+      intruder,
+      "agentSkills/agents",
+    );
+    expect(intruderSkillAgents.map((entry) => entry.skillId)).not.toContain(ownerAgentSkill.id);
+    expect(intruderSkillAgents.flatMap((entry) => entry.bots.map((bot) => bot.id))).not.toContain(
+      ownerBot.id,
     );
     expect(await rpc<Array<{ id: string }>>(app, intruder, "connections/list")).not.toContainEqual(
       expect.objectContaining({ id: ownerConnection.connectionId }),

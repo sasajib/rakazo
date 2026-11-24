@@ -17,6 +17,11 @@ import {
   runAsSystemInTransaction,
   spaceAvailability,
 } from "@rakazo/db";
+import {
+  addSkillToBotSelection,
+  filterSkillsForBot,
+  loadBotSkillSelection,
+} from "./bot-skill-access.js";
 import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.prompt.js";
 
 export const SKILL_TOOL_NAMES = new Set([
@@ -34,7 +39,13 @@ const MAX_SKILL_DESCRIPTION_CHARS = 2000;
 type SkillOwner = {
   spaceId: string;
   userId: string;
+  /** Fork: the agent asking. Its skill selection (bot-skill-access.ts) limits what it sees. */
+  botId?: string | null;
 };
+
+function spaceOwner(owner: SkillOwner): { spaceId: string; userId: string } {
+  return { spaceId: owner.spaceId, userId: owner.userId };
+}
 
 type AgentSkillRow = {
   id: string;
@@ -149,13 +160,19 @@ export async function listAgentSkillRecords(
   prisma: PrismaClient,
   owner: SkillOwner,
 ): Promise<Array<SkillRecord & { id: string }>> {
-  const rows = await prisma.agentSkill.findMany({
-    where: availableInSpace(owner),
-    // Reference files are read one at a time through skill_read, never with the catalog.
-    omit: { files: true },
-    orderBy: [{ name: "asc" }, { id: "asc" }],
-  });
-  return mergeBuiltinSkills(builtinAgentSkillRecords(), rows.map(toRecord));
+  const [rows, selection] = await Promise.all([
+    prisma.agentSkill.findMany({
+      where: availableInSpace(spaceOwner(owner)),
+      // Reference files are read one at a time through skill_read, never with the catalog.
+      omit: { files: true },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    }),
+    loadBotSkillSelection(prisma, owner.botId),
+  ]);
+  return mergeBuiltinSkills(
+    filterSkillsForBot(selection, builtinAgentSkillRecords()),
+    filterSkillsForBot(selection, rows.map(toRecord)),
+  );
 }
 
 type SkillKey = Pick<AgentSkillRow, "id" | "name">;
@@ -185,18 +202,38 @@ export async function skillReadFromTool(
   owner: SkillOwner,
   input: { name?: string; skillId?: string; file?: string },
 ): Promise<Record<string, unknown>> {
-  const keys = await prisma.agentSkill.findMany({
-    where: availableInSpace(owner),
-    select: { id: true, name: true },
-    orderBy: [{ name: "asc" }, { id: "asc" }],
-  });
+  const [keys, selection] = await Promise.all([
+    prisma.agentSkill.findMany({
+      where: availableInSpace(spaceOwner(owner)),
+      select: { id: true, name: true },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    }),
+    loadBotSkillSelection(prisma, owner.botId),
+  ]);
   // Builtins already have a document. Stored entries have only a name and ID here.
   const catalog = mergeBuiltinSkills<SkillKey | (SkillRecord & { id: string })>(
-    builtinAgentSkillRecords(),
-    keys,
+    filterSkillsForBot(selection, builtinAgentSkillRecords()),
+    filterSkillsForBot(selection, keys),
   );
   const key = matchSkill(catalog, input);
-  if (!key) return { error: "Skill not found." };
+  if (!key) {
+    // Fork: a skill of the space that the owner did not choose for this agent is refused by name.
+    const unassigned =
+      selection &&
+      matchSkill(
+        mergeBuiltinSkills<SkillKey | (SkillRecord & { id: string })>(
+          builtinAgentSkillRecords(),
+          keys,
+        ),
+        input,
+      );
+    if (unassigned) {
+      return {
+        error: `The skill "${unassigned.name}" is not assigned to this agent. Its owner chooses its skills in the agent's settings.`,
+      };
+    }
+    return { error: "Skill not found." };
+  }
 
   const builtin = "readOnly" in key ? key : undefined;
   const row = builtin
@@ -204,7 +241,7 @@ export async function skillReadFromTool(
     : await prisma.agentSkill.findFirst({
         where: {
           id: key.id,
-          ...availableInSpace(owner),
+          ...availableInSpace(spaceOwner(owner)),
           ...(input.skillId ? {} : { name: key.name }),
         },
         select: {
@@ -268,7 +305,8 @@ export async function skillCreateFromTool(
   const oversized = rejectOversizedContent(content);
   if (oversized) return { error: oversized };
 
-  const existing = await findOwnedSkill(prisma, owner, { name });
+  // Names are unique across the space, so check every skill, not only the agent's.
+  const existing = await findOwnedSkill(prisma, spaceOwner(owner), { name });
   if (existing) return { error: `A skill named "${existing.name}" already exists.` };
 
   try {
@@ -282,6 +320,15 @@ export async function skillCreateFromTool(
         source: "user",
       },
     });
+    // Fork: an agent with chosen skills keeps the skill it just wrote.
+    if (owner.botId) {
+      await addSkillToBotSelection(prisma, {
+        botId: owner.botId,
+        skillId: row.id,
+        spaceId: owner.spaceId,
+        userId: owner.userId,
+      }).catch(() => false);
+    }
     return {
       ok: true,
       id: row.id,
@@ -351,7 +398,7 @@ export async function skillUpdateFromTool(
 
   const renamed = nextName !== existing.name;
   if (nextName.toLowerCase() !== existing.name.toLowerCase()) {
-    const clash = await findOwnedSkill(prisma, owner, { name: nextName });
+    const clash = await findOwnedSkill(prisma, spaceOwner(owner), { name: nextName });
     if (clash && clash.id !== existing.id) {
       return { error: `A skill named "${clash.name}" already exists.` };
     }

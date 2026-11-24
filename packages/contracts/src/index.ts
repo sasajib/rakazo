@@ -78,6 +78,7 @@ export * from "./rpc/app-contract.js";
 export * from "./runs/runs.js";
 export * from "./settings-scope.js";
 export * from "./skills/agent-skills.js";
+export * from "./skills/bot-skills.js";
 export * from "./skills/taught-skills.js";
 export * from "./spaces/groups.js";
 export * from "./spaces/organization.js";

@@ -16,6 +16,7 @@ import { lateRoutineRunInstruction } from "../../routines/routine-lateness.promp
 import { routineRunInstruction } from "../../routines/routine-run.prompt.js";
 import { formatCompactedSummary } from "../../runtime/context/history-compaction.prompt.js";
 import { inferScript } from "../../runtime/scripted-runtime.js";
+import { filterSkillsForBot } from "../../tools/bot-skill-access.js";
 import { partitionTools } from "../../tools/builtin-tool-bridge.js";
 import type { FleetRun } from "../../tools/fleet-tools.js";
 import { builtinAgentSkillRecords } from "../../tools/skill-tools.js";
@@ -279,6 +280,7 @@ export async function buildTurnPrompt(
   let { turnCheckpoint } = parts.saved;
   const {
     agentSkills,
+    botSkillSelection,
     nonOwnerChatRun,
     ownerComputerRoutine,
     savedSkills,
@@ -310,7 +312,7 @@ export async function buildTurnPrompt(
   const runAgentSkills = ownerComputerRoutine
     ? []
     : nonOwnerChatRun
-      ? builtinAgentSkillRecords()
+      ? filterSkillsForBot(botSkillSelection ?? null, builtinAgentSkillRecords())
       : agentSkills;
   const taughtSkillIndex = runSavedSkills.slice(0, 20);
   const taughtSkillsLine = taughtSkillsInstruction(

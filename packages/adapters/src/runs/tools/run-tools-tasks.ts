@@ -277,6 +277,7 @@ export const taskTools: ToolHandlers = {
       {
         spaceId: run.spaceId,
         userId: run.userId,
+        botId: run.botId,
       },
       {
         name: args.name ? String(args.name) : undefined,
@@ -294,6 +295,7 @@ export const taskTools: ToolHandlers = {
         {
           spaceId: run.spaceId,
           userId: run.userId,
+          botId: run.botId,
         },
         {
           name: args.name ? String(args.name) : undefined,
@@ -313,6 +315,7 @@ export const taskTools: ToolHandlers = {
         {
           spaceId: run.spaceId,
           userId: run.userId,
+          botId: run.botId,
         },
         {
           name: args.name ? String(args.name) : undefined,
@@ -335,6 +338,7 @@ export const taskTools: ToolHandlers = {
         {
           spaceId: run.spaceId,
           userId: run.userId,
+          botId: run.botId,
         },
         {
           name: args.name ? String(args.name) : undefined,

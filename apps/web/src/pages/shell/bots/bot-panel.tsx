@@ -41,6 +41,7 @@ import {
   ToolsGroup,
   VoiceRow,
 } from "./bot-settings-sections";
+import { BotSkillsSection } from "./bot-skills-section";
 import { InstructionSettings } from "./instruction-settings";
 
 const ScratchpadSection = lazyComponent(() =>
@@ -760,6 +761,9 @@ export function BotSettings({
               <Suspense fallback={null}>
                 <KnowledgeSection botId={bot.id} />
               </Suspense>
+            </ErrorBoundary>
+            <ErrorBoundary fallback={<SectionLoadFailed />}>
+              <BotSkillsSection key={bot.id} botId={bot.id} ids={ids} />
             </ErrorBoundary>
             <DescriptionGroup
               ids={ids}

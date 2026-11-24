@@ -234,6 +234,7 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
   const skillRecords = await listAgentSkillRecords(deps.prisma, {
     spaceId: routine.spaceId,
     userId: routine.userId,
+    botId: routine.botId,
   });
   const claimed = await deps.prisma.$transaction(async (tx) => {
     if (!(await spaceTakesWork(tx, routine.spaceId))) return null;

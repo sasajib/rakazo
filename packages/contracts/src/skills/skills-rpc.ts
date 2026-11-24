@@ -11,6 +11,7 @@ import {
   CreateAgentSkillInput,
   UpdateAgentSkillInput,
 } from "./agent-skills.js";
+import { botSkillsProcedures } from "./bot-skills.js";
 import {
   SkillPlaybookSchema,
   TaughtSkillSchema,
@@ -67,6 +68,8 @@ export const skillsRpc = {
     create: oc.input(CreateAgentSkillInput).output(AgentSkillSchema),
     update: oc.input(UpdateAgentSkillInput).output(AgentSkillSchema),
     remove: oc.input(z.object({ skillId: Id })).output(z.object({ ok: z.literal(true) })),
+    // Fork: per-agent skills (bot-skills.ts).
+    ...botSkillsProcedures,
   },
   availability: {
     set: oc

@@ -45,6 +45,7 @@ import {
   loadRunCodeRedactions,
   loadRunLoginRedactions,
 } from "../../secrets/bot-secrets.js";
+import { loadBotSkillSelection } from "../../tools/bot-skill-access.js";
 import { listAgentSkillRecords } from "../../tools/skill-tools.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { PausedTurnModelUnlistedError } from "../lifecycle/run-lifecycle.js";
@@ -193,6 +194,7 @@ export async function loadRunRecords(
     configuredMemory,
     savedSkills,
     agentSkills,
+    botSkillSelection,
     { env: initialBotCommandEnvironment, redactions: commandRedactions },
     savedLoginPasswordRedactions,
     purchaseRedactions,
@@ -268,7 +270,9 @@ export async function loadRunRecords(
     listAgentSkillRecords(deps.prisma, {
       spaceId: run.spaceId,
       userId: run.userId,
+      botId: run.botId,
     }),
+    loadBotSkillSelection(deps.prisma, run.botId),
     loadCommandVariables(deps.prisma, deps.secretStore, run),
     loadLoginPasswordRedactions(deps.prisma, deps.secretStore, run),
     deps.paymentWallet ? loadPurchaseRedactions(deps, run) : [],
@@ -353,6 +357,7 @@ export async function loadRunRecords(
     configuredMemory,
     savedSkills,
     agentSkills,
+    botSkillSelection,
     nonOwnerChatRun,
     replaysToolHistory,
     ticketBoardEnabled,

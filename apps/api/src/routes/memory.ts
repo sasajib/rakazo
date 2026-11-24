@@ -12,6 +12,7 @@ import {
 import { isDeletableMemoryDocument } from "@rakazo/contracts";
 import { ClientError } from "@rakazo/core";
 import { findSpaceMemoryConfig, IsolationError } from "@rakazo/db";
+import { createBotSkillsService } from "../bots/bot-skills.js";
 import {
   disconnectMemoryProvider,
   persistMemoryProviderConfig,
@@ -23,6 +24,7 @@ import type { RouterContext } from "./context.js";
 
 export function memoryRoutes(ctx: RouterContext) {
   const { deps, repos, taughtSkills, agentSkills, authed } = ctx;
+  const botSkills = createBotSkillsService(deps.prisma);
   return {
     memory: {
       list: authed.memory.list.handler(async ({ context, input }) => {
@@ -269,6 +271,16 @@ export function memoryRoutes(ctx: RouterContext) {
       ),
       remove: authed.agentSkills.remove.handler(async ({ context, input }) =>
         agentSkills.remove(context.actor, input.skillId),
+      ),
+      // Fork: per-agent skills.
+      forBot: authed.agentSkills.forBot.handler(async ({ context, input }) =>
+        botSkills.forBot(context.actor, input),
+      ),
+      setForBot: authed.agentSkills.setForBot.handler(async ({ context, input }) =>
+        botSkills.setForBot(context.actor, input),
+      ),
+      agents: authed.agentSkills.agents.handler(async ({ context }) =>
+        botSkills.agents(context.actor),
       ),
     },
   };
