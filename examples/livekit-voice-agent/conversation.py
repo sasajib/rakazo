@@ -283,10 +283,12 @@ def heartbeat_line(label: str, activity: str, count: int) -> str:
     if len(doing) > 70 or not doing:
         doing = ""
     on = label or "that"
+    # Lower-case the first letter only where that is right: never "I" / "I'll".
+    tail = doing if re.match(r"I\b", doing) else (doing[:1].lower() + doing[1:])
     if count == 0:
-        return f"Still working on {on}" + (f" — {doing[0].lower() + doing[1:]}." if doing else ".")
+        return f"Still working on {on}" + (f" — {tail}." if doing else ".")
     if count == 1:
-        return "Still going" + (f" — {doing[0].lower() + doing[1:]}." if doing else ", it's taking a little longer.")
+        return "Still going" + (f" — {tail}." if doing else ", it's taking a little longer.")
     if count == 2:
         return f"Nothing wrong, {on} just needs a bit more time."
     return f"Still on {on}. I'll tell you the moment it's done."

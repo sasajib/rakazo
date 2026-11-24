@@ -509,6 +509,22 @@ describePostgres("chat replies during screen takeover (PostgreSQL)", () => {
     expect(requests).toHaveLength(1);
   });
 
+  it("keeps an unopened takeover when a call turn arrives; the turn gets a run of its own", async () => {
+    const fixture = await setup("unopened");
+    const response = await fixture.send({ clientNonce: "call:call-takeover-1:1" });
+    expect(response.status).toBe(200);
+    const { json: sent } = await response.json();
+    expect(sent.runId).not.toBe(fixture.run.id);
+    expect(await system.run.findUniqueOrThrow({ where: { id: fixture.run.id } })).toMatchObject({
+      status: "waiting_takeover",
+    });
+    expect(
+      await system.event.count({
+        where: { runId: fixture.run.id, type: "computer.takeover.released" },
+      }),
+    ).toBe(0);
+  });
+
   it("releases an unopened takeover and restores tools for the steered continuation", async () => {
     const fixture = await setup("unopened");
     expect(await fixture.control()).toMatchObject({

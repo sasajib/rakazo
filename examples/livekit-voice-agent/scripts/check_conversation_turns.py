@@ -175,7 +175,7 @@ async def main() -> None:
     agent.state.register_task("run-task", "create a voice assistant", now=0)
     report = "The assistant has three voices. It greets callers by name. It also keeps a call log."
     segments = [
-        Segment("line", "About your request to create a voice assistant:", "run-task", "your request to create a voice assistant"),
+        Segment("preface", "About your request to create a voice assistant:", "run-task", "your request to create a voice assistant"),
         Segment("report", report, "run-task", "your request to create a voice assistant"),
     ]
     agent.log_speech(segments)
@@ -193,7 +193,7 @@ async def main() -> None:
     label = "your request to create a voice assistant"
     segments = [
         Segment("answer", "New Delhi is the capital of India.", "run-ours"),
-        Segment("line", f"About {label}:", "run-task", label),
+        Segment("preface", f"About {label}:", "run-task", label),
         Segment("report", "It has three voices. It keeps a call log.", "run-task", label),
     ]
     agent.log_speech(segments)

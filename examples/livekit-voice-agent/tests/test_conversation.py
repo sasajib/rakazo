@@ -408,3 +408,12 @@ def test_a_word_in_progress_stays_held_until_it_is_whole():
     assert gate.take_words() == "I understood you "
     assert gate.held == "wa"
     assert gate.take_words() == ""
+
+
+def test_heartbeat_keeps_a_leading_I():
+    from conversation import heartbeat_line
+
+    # "i'll open the browser" was written into the chat on a call.
+    line = heartbeat_line("your request", "I'll open the browser for you to log in first", 0)
+    assert "— I'll open the browser" in line
+    assert "— opening" in heartbeat_line("your request", "Opening the browser", 0)

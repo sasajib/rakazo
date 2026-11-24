@@ -35,6 +35,39 @@ describe("groupVoiceChats cards that wait on the person", () => {
     expect(group && group.kind === "voiceChat" ? group.messages : []).toEqual([user, reply]);
   });
 
+  it("keeps the computer, a screenshot and a created bot visible beside the call card", () => {
+    const user = message({ role: "user", callId: "call-1", runId: "run-1" });
+    const computer = message({
+      role: "bot",
+      runId: "run-1",
+      blocks: [{ kind: "computer", state: "Waiting", text: "Log in to YouTube" } as never],
+    });
+    const shot = message({
+      role: "bot",
+      runId: "run-1",
+      blocks: [
+        { kind: "image", artifactId: "a1", mimeType: "image/png", name: "shot.png" } as never,
+      ],
+    });
+    const child = message({
+      role: "bot",
+      runId: "run-1",
+      blocks: [
+        { kind: "child_bot", botId: "b1", name: "YouTube Specialist", status: "created" } as never,
+      ],
+    });
+    const words = message({
+      role: "bot",
+      runId: "run-1",
+      blocks: [{ kind: "steps", steps: [] } as never, { kind: "text", text: "Done." }],
+    });
+    const items = groupVoiceChats([user, computer, shot, child, words]);
+    const apart = items.flatMap((item) => (item.kind === "message" ? [item.message] : []));
+    expect(apart).toEqual([computer, shot, child]);
+    const group = items.find((item) => item.kind === "voiceChat");
+    expect(group && group.kind === "voiceChat" ? group.messages : []).toEqual([user, words]);
+  });
+
   it("still speaks a call reply that carries a question card", () => {
     const user = message({ role: "user", callId: "call-1", runId: "run-1" });
     const reply = message({

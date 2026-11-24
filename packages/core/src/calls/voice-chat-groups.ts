@@ -48,10 +48,10 @@ export function groupVoiceChats<T extends VoiceChatMessage>(
   let openRunIds = new Set<string>();
   const segments = new Map<string, number>();
   for (const message of messages) {
-    // A card that waits on the person (a secret, an approval) is not part of the spoken
-    // transcript: the call card shows captions only, so folding it in hid the card for as long as
-    // the call lasted and left the run parked behind it. It stays a message of its own, and the
-    // call's group carries on around it.
+    // A card that waits on the person (a secret, an approval), the computer, an image or a file is
+    // not part of the spoken transcript: the call card shows captions only, so folding it in hid
+    // it for as long as the call lasted (and left a run parked behind a card). It stays a message
+    // of its own, and the call's group carries on around it.
     if (cardsApart && needsPersonOnScreen(message)) {
       items.push({ kind: "message", message });
       continue;
@@ -123,10 +123,26 @@ export function latestSpokenCallReply<T extends VoiceChatMessage>(
   return undefined;
 }
 
-const ON_SCREEN_BLOCKS = new Set(["ask", "mcp_approval", "app_connect", "connect"]);
+/**
+ * What a call transcript can show: words. A message carrying anything else (a card waiting on the
+ * person, the computer with its Take over button, a screenshot, a file, a bot it created, a chart)
+ * stays a message of its own beside the call card. Folded in, a takeover showed as the line
+ * "Shakil wants to log in…" with no screen to take over, and a screenshot as nothing at all.
+ */
+const SPOKEN_BLOCKS = new Set([
+  "text",
+  "progress",
+  "meta",
+  "steps",
+  "voice_call",
+  "call_request",
+  "delivery",
+  "bot_message_sent",
+  "bot_message_received",
+]);
 
 function needsPersonOnScreen(message: VoiceChatMessage): boolean {
-  return message.role === "bot" && message.blocks.some((block) => ON_SCREEN_BLOCKS.has(block.kind));
+  return message.role === "bot" && message.blocks.some((block) => !SPOKEN_BLOCKS.has(block.kind));
 }
 
 function isCallMarker(message: VoiceChatMessage): boolean {

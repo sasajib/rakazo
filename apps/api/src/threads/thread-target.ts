@@ -851,7 +851,10 @@ export async function sendThreadMessage(
           : activeRuns.filter(
               (run) =>
                 QUEUE_HOLDING_RUN_STATUSES.some((status) => status === run.status) &&
-                !messageBypassesTakeoverWait(run) &&
+                // Fork: a spoken turn never answers a takeover. On a call the person has not opened
+                // the screen yet ("where is the browser?"), and taking the turn as the reply
+                // released the takeover they were about to use. It gets a run of its own.
+                !messageBypassesTakeoverWait(run, !callId) &&
                 runHoldsChat(run) &&
                 // A talk run answers one message and ends in seconds: it never owns the queue.
                 run.trigger !== TALK_RUN_TRIGGER,

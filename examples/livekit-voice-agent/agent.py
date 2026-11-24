@@ -44,6 +44,8 @@ from livekit.agents import (
 from livekit.agents.types import FlushSentinel
 from livekit.plugins import deepgram, openai, silero
 
+from name_fixes import fix_names, name_fix_rules
+from local_streaming_stt import LocalStreamingSTT
 from conversation import (
     ConversationState,
     Segment,
@@ -305,7 +307,7 @@ class RakazoAgent(Agent):
             preface = self.state.resume_preface()
             rest = self.state.resume_report()
             if rest:
-                out.append(Segment("line", preface, run_id, label))
+                out.append(Segment("preface", preface, run_id, label))
                 out.append(Segment("report", rest, run_id, label))
         while True:
             task = self.state.take_pending_report()
@@ -322,7 +324,7 @@ class RakazoAgent(Agent):
             text = " ".join(fresh).strip()
             if not text:
                 continue
-            out.append(Segment("line", f"About {task.label}:", task.run_id, task.label))
+            out.append(Segment("preface", f"About {task.label}:", task.run_id, task.label))
             out.append(Segment("report", text, task.run_id, task.label))
         return out
 
@@ -434,7 +436,10 @@ class RakazoAgent(Agent):
         # What a run wrote is already in the chat. What this agent says on its own account (a
         # progress line, which report it is returning to, a status answer) is not: leave it there,
         # so everything the caller hears is also written.
-        if kind in ("line", "beat") or (kind == "answer" and not run_id):
+        # Not mirrored: a "preface" ("About your request to ...:", "I was giving you an update on
+        # ...") only joins speech and dangled in the chat without the report it led into, and a
+        # "beat" ("Still working on ...") repeats what the chat's own progress already shows.
+        if kind == "line" or (kind == "answer" and not run_id):
             self.mirror(text)
         yield text
         yield FlushSentinel()
@@ -926,7 +931,48 @@ def _unspoken_remainder(streamed: str, final: str) -> str:
 # --- providers ------------------------------------------------------------------------------------
 
 
+class LocalSTT(openai.STT):
+    """The local speech service (Parakeet) through its OpenAI-compatible API, with the bots' names put right."""
+
+    def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        self._name_rules = name_fix_rules()
+
+    async def _recognize_impl(self, buffer, *, language=None, conn_options):  # type: ignore[no-untyped-def,override]
+        event = await super()._recognize_impl(buffer, language=language, conn_options=conn_options)
+        for alternative in event.alternatives:
+            alternative.text = fix_names(alternative.text, self._name_rules)
+        return event
+
+
 def make_stt():
+    provider = os.environ.get("STT_PROVIDER", "deepgram")
+    if provider == "local":
+        url = os.environ.get("LOCAL_SPEECH_URL", "http://rakazo-speech-local:8890/v1")
+        if os.environ.get("LOCAL_STT_STREAM", "1") != "0":
+            # Streaming (default since 2026-11-18): the audio is decoded while the caller speaks, so the final
+            # transcript is ready ~0.2 s after the VAD flushes, instead of after a full-clip decode. Measured on
+            # this box: 0.20 s streaming vs 1.95 s batch for an 18 s utterance, and only 8.4 s of audio was
+            # actually decoded (the rest was committed early and never decoded again).
+            return (
+                LocalStreamingSTT(
+                    url=url,
+                    language="en",
+                    name_rules=name_fix_rules(),
+                    fix_names=fix_names,
+                ),
+                None,
+            )
+        # Not streaming: the session wraps it with the Silero VAD, so the turn ends on a pause, not on a guess.
+        return (
+            LocalSTT(
+                base_url=url,
+                api_key="not-needed",
+                model="parakeet",
+                language="en",
+            ),
+            None,
+        )
     model = os.environ.get("DEEPGRAM_STT_MODEL", "flux-general-en")
     key = os.environ["DEEPGRAM_API_KEY"]
     if model.startswith("flux"):
@@ -939,6 +985,15 @@ def make_stt():
 
 def make_tts():
     provider = os.environ.get("TTS_PROVIDER", "deepgram")
+    if provider == "local":
+        # Piper (or Supertonic) from the local speech service: first audio in ~0.1 s, flat under load.
+        return openai.TTS(
+            base_url=os.environ.get("LOCAL_SPEECH_URL", "http://rakazo-speech-local:8890/v1"),
+            api_key="not-needed",
+            model="piper",
+            voice=os.environ.get("LOCAL_TTS_VOICE", "amy"),
+            response_format="pcm",
+        )
     if provider == "kokoro":
         return openai.TTS(
             base_url=os.environ.get("KOKORO_BASE_URL", "http://kokoro-tts:8880/v1"),
@@ -1002,7 +1057,13 @@ server = AgentServer()
 
 
 def prewarm(proc: JobProcess) -> None:
-    proc.userdata["vad"] = silero.VAD.load()
+    # 0.7 s of silence ends the caller's turn (framework default 0.55): the transcript is ready almost
+    # immediately now, and the extra 0.15 s is what keeps a caller who pauses to think mid-sentence from
+    # being split into two turns by the VAD alone.
+    proc.userdata["vad"] = silero.VAD.load(
+        min_silence_duration=float(os.environ.get("VOICE_VAD_SILENCE_S", "0.7")),
+        min_speech_duration=float(os.environ.get("VOICE_VAD_MIN_SPEECH_S", "0.05")),
+    )
 
 
 server.setup_fnc = prewarm
@@ -1040,6 +1101,15 @@ async def entrypoint(ctx: JobContext) -> None:
     }
     if turn_detection is not None:
         turn_handling["turn_detection"] = turn_detection
+    elif os.environ.get("STT_PROVIDER", "deepgram") == "local":
+        # Ends on a pause of this length. Longer than the 0.5 s default so a caller who thinks mid-sentence is not
+        # split; the cost is that long a wait on every turn. 0.45 s is affordable because the transcript is
+        # already decoded when the flush arrives (the streaming STT, not this delay, is what made turns feel slow).
+        turn_handling["endpointing"] = {
+            "mode": "fixed",
+            "min_delay": float(os.environ.get("VOICE_MIN_ENDPOINT_S", "0.45")),
+            "max_delay": float(os.environ.get("VOICE_MAX_ENDPOINT_S", "4.0")),
+        }
     session: AgentSession = AgentSession(
         vad=ctx.proc.userdata["vad"],
         stt=stt,
