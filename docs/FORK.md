@@ -36,7 +36,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Purpose:** the in-app Call button (web + mobile) and bot-initiated calls run on a LiveKit room with a
   separate voice agent (STT/TTS, barge-in) instead of upstream's half-duplex dictation loop.
 - **Commits:** `daec9e310` (calls + example agent), `2a1b0c0a8` (mobile LiveKit, Done button, ring logging),
-  `6dc010ef4` (a reply carrying a question card is still spoken).
+  `6dc010ef4` (a reply carrying a question card is still spoken), `f05e734f0` (plan cards spoken; spoken yes
+  approves a pending plan; half-sentence join measured to when the caller resumed, see 1.20).
 - **Seams:** `apps/api/src/app.ts` (mounts `calls/voice-agent.ts`: `GET /api/voice/agent`, `POST /api/voice/agent/token`),
   `apps/api/src/env.ts`, `apps/web/src/lib/calls/call-session.ts` (delegates to `livekit-call-session.ts`),
   `CallCard/CallLayout/IncomingCall.tsx`, `Shell.tsx`, `use-bot-call.ts`, `apps/web/server/preview-middleware.ts`
@@ -372,6 +373,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   approval (revision 1, approved as proposed) adds 1 to `plan_trust(botId, workflow)`; a change/reject resets it;
   at `threshold` (default 3) under **Ask until trusted** the next proposal is `auto` (approved by `trust`, bound to
   the proposing run, card shown as a notice). Owner revokes per workflow (Skills window line or agent settings).
+- **Commits:** `f05e734f0` (feature), docs/ops follow-up in the next commit. Deployed as `main-1124s` (2026-11-25); live (a)-(d) passed on bee (stack RAKAZO.md).
 - **Settings:** per agent, agent settings -> **Plans** (next to Learning): Default (= Ask until trusted) / Always ask /
   Ask until trusted / Never ask, and the approvals threshold; trusted workflows listed with counters + Revoke.
   Skills window: under a skill, "<agent>: approved n of 3 times" / "runs it without asking" + Revoke.

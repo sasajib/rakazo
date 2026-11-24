@@ -77,7 +77,17 @@ class Rpc:
                 "{method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({json:a.j, meta: []})}); "
                 "return {status:r.status, text:(await r.text()).slice(0,400000)}; }, {path:%s, j:%s});\nreturn JSON.stringify(out);"
                 % (self.page, json.dumps(path), json.dumps(payload)))
-        out = self._run(code)
+        out = None
+        for attempt in range(6):
+            try:
+                out = self._run(code)
+                break
+            except RuntimeError as error:
+                # Our tab is between pages (about:blank while the app redirects): try again shortly.
+                if "Failed to parse URL" not in str(error) or attempt == 5:
+                    raise
+                import time
+                time.sleep(2)
         if isinstance(out, dict) and out.get("writtenToFile"):
             # Neo saves a large result to a file instead of returning it
             raw = open(out["path"]).read()
