@@ -45,6 +45,8 @@ export interface LedgerStore {
     query: { subjects?: string[]; ids?: string[]; texts?: string[] },
     limit?: number,
   ): Promise<Fact[]>;
+  /** Facts no longer in use (superseded or retracted) whose text shares words with `text`. */
+  findRetired(spaceId: string, text: string, limit?: number): Promise<Fact[]>;
   /** Live fact ids ranked by full-text match, best first. */
   searchText(spaceId: string, query: string, limit: number): Promise<string[]>;
   /** Live fact ids ranked by cosine similarity, best first. */
@@ -114,6 +116,17 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
       )
     ).map(toFact);
   return {
+    async findRetired(spaceId, text, limit = 10) {
+      const words = [...new Set(contentWords(text))]
+        .filter((word) => /^[\p{L}\p{M}\p{N}]+$/u.test(word))
+        .slice(0, 40);
+      if (!words.length) return [];
+      return selectFacts(
+        `"spaceId" = $1 AND "status" IN ('superseded','retracted') AND "fts" @@ to_tsquery('english', $2)
+         ORDER BY "updatedAt" DESC LIMIT $3`,
+        [spaceId, words.join(" | "), limit],
+      );
+    },
     async findLive(spaceId, query, limit = 30) {
       const subjects = query.subjects?.filter(Boolean) ?? [];
       const ids = query.ids?.filter(Boolean) ?? [];
@@ -383,6 +396,12 @@ export function createMemoryLedgerStore(): LedgerStore & {
     links,
     embeddings,
     jobs,
+    async findRetired(spaceId, text, limit = 10) {
+      return inSpace(spaceId)
+        .filter((fact) => fact.status === "superseded" || fact.status === "retracted")
+        .filter((fact) => textScore(fact, text) > 0)
+        .slice(0, limit);
+    },
     async findLive(spaceId, query, limit = 30) {
       return inSpace(spaceId)
         .filter(isLive)

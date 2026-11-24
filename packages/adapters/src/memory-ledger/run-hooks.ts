@@ -37,7 +37,11 @@ export function learnAfterRun(ctx: RunContext): void {
 /** remember tool: the ledger's result, or undefined to keep the bot's MEMORY.md behaviour. */
 export async function rememberToolViaLedger(
   ctx: RunContext,
-  operations: ReadonlyArray<{ action: "add" | "replace" | "remove"; content?: string | undefined }>,
+  operations: ReadonlyArray<{
+    action: "add" | "replace" | "remove";
+    content?: string | undefined;
+    old_text?: string | undefined;
+  }>,
 ): Promise<Record<string, unknown> | undefined> {
   if (!ledgerEnabled()) return undefined;
   // Text another source steered into this run is not the owner's request to remember.

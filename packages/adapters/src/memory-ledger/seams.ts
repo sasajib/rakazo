@@ -21,6 +21,7 @@ import { createOpenAiMemoryModel } from "./model.js";
 import { assemblePack, within } from "./pack.js";
 import type { LedgerJob, LedgerStore } from "./store.js";
 import { createSqlLedgerStore } from "./store.js";
+import { fold, overlap, sameText } from "./text.js";
 import type { Fact, OwnerMessage } from "./types.js";
 import type { LearnResult } from "./writer.js";
 import { learnFromMessages } from "./writer.js";
@@ -124,12 +125,12 @@ export async function ledgerPromptBlock(
           spaceId: input.spaceId,
           query: input.query,
           limit: fast ? config.fastPackLimit : config.packLimit,
-          budgetMs: config.packBudgetMs,
+          budgetMs: fast ? Math.min(config.packBudgetMs, 400) : config.packBudgetMs,
           coreMaxBytes: config.coreMaxBytes,
           packMaxBytes: fast ? Math.min(config.packMaxBytes, 1500) : config.packMaxBytes,
         },
       ),
-      config.packBudgetMs + 1_500,
+      (fast ? Math.min(config.packBudgetMs, 400) : config.packBudgetMs) + 1_500,
       undefined,
     ),
   );
@@ -356,13 +357,61 @@ export interface ToolRun {
   messagingChannelRun: boolean;
 }
 
-type RememberOperation = { action: "add" | "replace" | "remove"; content?: string | undefined };
+type RememberOperation = {
+  action: "add" | "replace" | "remove";
+  content?: string | undefined;
+  old_text?: string | undefined;
+};
 
 /**
- * A bot's remember call asks the writer to learn from the owner's message instead of writing
- * memory text itself. Returns the tool result when the ledger kept something; undefined means
- * "not handled" and the caller keeps the bot's own MEMORY.md behaviour (working notes, edits,
- * or text that is not the owner's own words).
+ * How close `old_text` must be to a ledger fact before a bot's edit is applied to it. High on
+ * purpose: "reports as PDF" must never match "reports as Word documents" (they share most words).
+ */
+const EDIT_MATCH = 0.75;
+
+const describe = (fact: Fact) => ({ text: fact.text, status: fact.status });
+
+function editScore(oldText: string, fact: Fact): number {
+  if (sameText(oldText, fact.text)) return 1;
+  const wanted = fold(oldText);
+  const own = fold(fact.text);
+  if (wanted.length >= 12 && (own.includes(wanted) || wanted.includes(own))) return 0.95;
+  return overlap(oldText, fact.text);
+}
+
+/**
+ * The ledger fact a bot's `old_text` names: the best match among live and retired facts, so an
+ * edit naming an already-replaced fact is never applied to its live successor.
+ */
+async function factNamedBy(
+  store: LedgerStore,
+  spaceId: string,
+  oldText: string,
+): Promise<{ fact: Fact; live: boolean } | undefined> {
+  const wanted = oldText.trim();
+  if (!wanted) return undefined;
+  const [live, retired] = await Promise.all([
+    store.findLive(spaceId, { texts: [wanted] }, 20),
+    store.findRetired(spaceId, wanted, 20).catch(() => [] as Fact[]),
+  ]);
+  let best: { fact: Fact; live: boolean; score: number } | undefined;
+  for (const [facts, isLive] of [
+    [live, true],
+    [retired, false],
+  ] as const)
+    for (const fact of facts) {
+      const score = editScore(wanted, fact);
+      if (!best || score > best.score || (score === best.score && isLive && !best.live))
+        best = { fact, live: isLive, score };
+    }
+  return best && best.score >= EDIT_MATCH ? { fact: best.fact, live: best.live } : undefined;
+}
+
+/**
+ * A bot's remember call. Facts the owner states go through the writer (quote gate and all);
+ * a replace or remove that names a ledger fact is applied to that fact, so a correction never
+ * leaves the old fact live. Returns the tool result; undefined means "not handled" and the
+ * caller keeps the bot's own MEMORY.md behaviour (working notes that are not ledger facts).
  */
 export async function rememberViaLedger(
   deps: Deps,
@@ -373,54 +422,159 @@ export async function rememberViaLedger(
   const config = ledgerConfig(env);
   if (!config.enabled || run.messagingChannelRun || !run.ownerStartedRun || !run.sourceMessageId)
     return undefined;
-  if (operations.some((operation) => operation.action !== "add")) return undefined;
-  const hint = operations
-    .map((operation) => operation.content?.trim() ?? "")
-    .filter(Boolean)
-    .join("\n");
-  if (!hint) return undefined;
-  const result = await bestEffort(
-    "memory ledger remember",
-    within(
-      (async () => {
-        const messages = await loadOwnerMessages(deps.prisma, {
-          threadId: run.threadId,
-          userId: run.userId,
-          sourceMessageId: run.sourceMessageId!,
-        });
-        return learnFromMessages(
-          {
-            store: createSqlLedgerStore(deps.prisma),
-            model: await memoryModel(deps, run.userId, config),
-            embedder: embedder(config),
-            config,
-          },
-          {
-            spaceId: run.spaceId,
-            userId: run.userId,
-            threadId: run.threadId,
-            runId: run.runId,
-            botId: run.botId,
-            botName: run.botName,
-            messages,
-            hint,
-            ask: false,
-          },
-        );
-      })(),
-      REMEMBER_BUDGET_MS,
-      undefined,
+  const store = createSqlLedgerStore(deps.prisma);
+  const now = new Date();
+
+  // Resolve which operations name ledger facts. Anything that names none stays a bot note.
+  const named = await bestEffort(
+    "memory ledger edit lookup",
+    Promise.all(
+      operations.map((operation) =>
+        operation.action === "add" || !operation.old_text
+          ? Promise.resolve(undefined)
+          : factNamedBy(store, run.spaceId, operation.old_text),
+      ),
     ),
   );
-  if (!result) return undefined;
-  logLearned(run.runId, result, 0);
-  const kept = [...result.saved, ...result.reinforced];
-  if (!kept.length) return undefined;
+  if (!named) return undefined;
+  const targets = named.map((hit) => (hit?.live ? hit.fact : undefined));
+  const retired = named.map((hit) => (hit && !hit.live ? hit.fact : undefined));
+  const ledgerOps = operations.filter(
+    (operation, index) => operation.action === "add" || named[index] !== undefined,
+  );
+  if (!ledgerOps.length) return undefined;
+  const alreadyRetired = retired.filter((fact): fact is Fact => fact !== undefined);
+  const notFound = operations
+    .filter((operation, index) => operation.action !== "add" && !named[index])
+    .map((operation) => operation.old_text ?? "");
+
+  const removed: Fact[] = [];
+  const replaced: Array<{ old: Fact; new?: Fact | undefined }> = [];
+  const hints: string[] = [];
+  operations.forEach((operation, index) => {
+    const target = targets[index];
+    if (operation.action === "add" && operation.content?.trim())
+      hints.push(operation.content.trim());
+    if (operation.action === "replace" && target && operation.content?.trim())
+      hints.push(`Correction of "${target.text}": ${operation.content.trim()}`);
+  });
+
+  for (const [index, operation] of operations.entries()) {
+    const target = targets[index];
+    if (operation.action !== "remove" || !target) continue;
+    await store.updateFact(run.spaceId, target.id, { status: "retracted", validTo: now });
+    removed.push(target);
+  }
+
+  let result: LearnResult | undefined;
+  if (hints.length) {
+    result = await bestEffort(
+      "memory ledger remember",
+      within(
+        (async () => {
+          const messages = await loadOwnerMessages(deps.prisma, {
+            threadId: run.threadId,
+            userId: run.userId,
+            sourceMessageId: run.sourceMessageId!,
+          });
+          return learnFromMessages(
+            {
+              store,
+              model: await memoryModel(deps, run.userId, config),
+              embedder: embedder(config),
+              config,
+            },
+            {
+              spaceId: run.spaceId,
+              userId: run.userId,
+              threadId: run.threadId,
+              runId: run.runId,
+              botId: run.botId,
+              botName: run.botName,
+              messages,
+              hint: hints.join("\n"),
+              ask: false,
+            },
+          );
+        })(),
+        REMEMBER_BUDGET_MS,
+        undefined,
+      ),
+    );
+    if (result) logLearned(run.runId, result, 0);
+  }
+
+  // A replace the writer did not already supersede: retire the named fact now that a new one
+  // from the owner's words exists, or keep it and say so when nothing new passed the checks.
+  const fresh = result ? [...result.saved, ...result.reinforced] : [];
+  for (const [index, operation] of operations.entries()) {
+    const target = targets[index];
+    if (operation.action !== "replace" || !target) continue;
+    if (result?.superseded.some((fact) => fact.id === target.id)) {
+      replaced.push({ old: target, new: fresh[0] });
+      continue;
+    }
+    const successor = fresh.find((fact) => fact.id !== target.id);
+    if (successor) {
+      await store.updateFact(run.spaceId, target.id, { status: "superseded", validTo: now });
+      await store.updateFact(run.spaceId, successor.id, { supersedesId: target.id });
+      await store.addLink({
+        spaceId: run.spaceId,
+        fromId: successor.id,
+        toId: target.id,
+        kind: "supersedes",
+      });
+      replaced.push({ old: target, new: successor });
+    } else {
+      replaced.push({ old: target });
+    }
+  }
+
+  const keptReplaces = replaced.filter((entry) => !entry.new);
+  const superseded = [
+    ...(result?.superseded ?? []).filter(
+      (fact) => !replaced.some((entry) => entry.old.id === fact.id),
+    ),
+  ];
+  const nothing = !fresh.length && !removed.length && !replaced.some((entry) => entry.new);
+  if (nothing && !keptReplaces.length && !alreadyRetired.length) {
+    if (operations.every((operation) => operation.action === "add")) return undefined;
+  }
+  const lines: string[] = [];
+  if (fresh.length)
+    lines.push(`Saved to shared memory: ${fresh.map((f) => `"${f.text}"`).join("; ")}.`);
+  for (const entry of replaced)
+    if (entry.new)
+      lines.push(
+        `Replaced "${entry.old.text}" with "${entry.new.text}". The old fact is no longer used.`,
+      );
+  for (const fact of superseded) lines.push(`"${fact.text}" was replaced by the new fact.`);
+  for (const fact of removed) lines.push(`Removed "${fact.text}" from shared memory.`);
+  for (const fact of alreadyRetired)
+    lines.push(`"${fact.text}" is already out of use (${fact.status}); nothing more to do.`);
+  for (const entry of keptReplaces)
+    lines.push(
+      `Did NOT change "${entry.old.text}": the new version could not be matched to the owner's own words. Ask the owner to state the correction plainly, or tell them it is unchanged.`,
+    );
+  for (const text of notFound)
+    lines.push(`No shared-memory fact matches "${text.slice(0, 120)}"; that edit was not applied.`);
+  if (result?.disputed.length)
+    lines.push(
+      `Conflict with a confirmed fact kept both as disputed: ${result.disputed.map((f) => `"${f.text}"`).join("; ")}.`,
+    );
   return {
-    ok: true,
+    ok: !keptReplaces.length,
     savedTo: "shared memory ledger",
-    facts: kept.map((fact) => ({ text: fact.text, status: fact.status })),
-    note: "Saved from the owner's own words; every bot in this Space will see it. Use remember only for facts the owner told you; your own working notes still go to your memory document.",
+    facts: fresh.map(describe),
+    replaced: replaced
+      .filter((entry) => entry.new)
+      .map((entry) => ({ old: entry.old.text, new: entry.new!.text })),
+    superseded: superseded.map(describe),
+    removed: removed.map(describe),
+    alreadyOutOfUse: alreadyRetired.map(describe),
+    unchanged: keptReplaces.map((entry) => entry.old.text),
+    summary: lines.join(" "),
+    note: "Report exactly what summary says. Shared memory is the Space's; every bot sees it. Superseded facts are already out of use: never tell the owner you could not remove them.",
   };
 }
 

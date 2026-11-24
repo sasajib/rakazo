@@ -66,7 +66,7 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
               },
             ],
           }
-        : /PDF/.test(text)
+        : /PDF/.test(text) && !/Word/.test(text)
           ? {
               facts: [
                 {
@@ -80,7 +80,21 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
                 },
               ],
             }
-          : { facts: [] },
+          : /Word/.test(text)
+            ? {
+                facts: [
+                  {
+                    area: "preferences",
+                    subject: "pref.report-format.new",
+                    text: "Owner wants reports as Word documents",
+                    quote: "send reports as Word now",
+                    origin: "stated",
+                    confidence: 0.9,
+                    entities: [],
+                  },
+                ],
+              }
+            : { facts: [] },
     );
     const env = {
       MEMORY_LEDGER: "1",
@@ -197,6 +211,67 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
       expect(block).toContain("<durable_memory>notes</durable_memory>");
       expect(block).toContain("(preferences): Owner wants reports as PDF");
       expect(block).toContain("Rahim is the owner's accountant");
+
+      // A bot's replace that names a ledger fact retires that fact (regression: the old fact
+      // stayed live and the bot reported it "could not remove the old entry").
+      const fourth = await say("Actually, send reports as Word now, not PDF.");
+      const replaced = await tenant(() =>
+        rememberViaLedger(
+          { prisma, secretStore: { load: async () => "" } },
+          run(`${id}-r4`, fourth.id),
+          [
+            {
+              action: "replace",
+              old_text: "Owner wants reports as PDF",
+              content: "Owner wants reports as Word documents",
+            },
+          ],
+          env,
+        ),
+      );
+      expect(replaced).toMatchObject({
+        ok: true,
+        replaced: [
+          { old: "Owner wants reports as PDF", new: "Owner wants reports as Word documents" },
+        ],
+      });
+      const formats = await tenant(() => store.findLive(spaceId, { texts: ["reports PDF Word"] }));
+      expect(formats.map((fact) => fact.text)).toEqual(["Owner wants reports as Word documents"]);
+
+      // Naming the retired fact again is answered truthfully, not an error.
+      const fifth = await say("Remove the PDF one.");
+      const again = await tenant(() =>
+        rememberViaLedger(
+          { prisma, secretStore: { load: async () => "" } },
+          run(`${id}-r5`, fifth.id),
+          [{ action: "remove", old_text: "Owner wants reports as PDF" }],
+          env,
+        ),
+      );
+      expect(again).toMatchObject({
+        removed: [],
+        alreadyOutOfUse: [{ text: "Owner wants reports as PDF" }],
+      });
+      expect(
+        (await tenant(() => store.findLive(spaceId, { texts: ["reports Word"] }))).map(
+          (f) => f.text,
+        ),
+      ).toEqual(["Owner wants reports as Word documents"]);
+
+      // A remove of a live fact retracts it.
+      const sixth = await say("Forget that Rahim is my accountant.");
+      const forgot = await tenant(() =>
+        rememberViaLedger(
+          { prisma, secretStore: { load: async () => "" } },
+          run(`${id}-r6`, sixth.id),
+          [{ action: "remove", old_text: "Rahim is the owner's accountant" }],
+          env,
+        ),
+      );
+      expect(forgot).toMatchObject({ removed: [{ text: "Rahim is the owner's accountant" }] });
+      expect(
+        await tenant(() => store.findLive(spaceId, { subjects: ["person.rahim.role"] })),
+      ).toEqual([]);
     } finally {
       model.close();
       await fixture(async () => {
