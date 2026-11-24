@@ -230,6 +230,37 @@ describe("decide: conflicts and supersession", () => {
     expect(decision).toMatchObject({ kind: "insert", status: "disputed", conflicts: [old] });
   });
 
+  it("the owner's latest message correcting it by name replaces a confirmed fact", () => {
+    const old = fact({
+      status: "confirmed",
+      subject: "owner.car",
+      text: "Owner's car is a white Honda Civic",
+      quote: "my car is a white Honda Civic",
+      entities: ["Honda Civic"],
+    });
+    const decision = decide({
+      candidate: candidate({
+        subject: "owner.car",
+        text: "Owner's car is a blue Toyota Corolla",
+        quote: "my blue Toyota Corolla",
+        message: 1,
+        entities: ["Toyota Corolla"],
+        confidence: 0.9,
+      }),
+      messages: [
+        {
+          id: "m1",
+          text: "Get my blue Toyota Corolla washed this weekend, it is my car.",
+          at,
+          current: false,
+        },
+        { id: "m2", text: "Corolla replaces the Civic", at, current: true },
+      ],
+      existing: [old],
+    });
+    expect(decision).toMatchObject({ kind: "insert", status: "confirmed", supersedes: [old] });
+  });
+
   it("an unsure correction of a confirmed fact still asks", () => {
     const old = fact({ status: "confirmed" });
     const decision = decide({

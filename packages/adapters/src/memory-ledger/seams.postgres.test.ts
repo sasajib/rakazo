@@ -350,6 +350,33 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
       );
       expect(card[0]?.askedAt).toBeTruthy();
 
+      // The owner then picks one: the bot's replace naming a side of the open conflict settles
+      // it (regression: it was disputed again, a second card asked, and the bot said it failed).
+      const ninth = await say("Selim replaces Rafiq as my dentist.");
+      const picked = await tenant(() =>
+        rememberViaLedger(
+          { prisma, secretStore: { load: async () => "" } },
+          run(`${id}-r9`, ninth.id),
+          [
+            {
+              action: "replace",
+              old_text: "Owner's dentist is Dr Rafiq",
+              content: "Owner's dentist is Dr Selim",
+            },
+          ],
+          env,
+        ),
+      );
+      expect(picked).toMatchObject({
+        settled: [{ holds: "Owner's dentist is Dr Selim", dropped: "Owner's dentist is Dr Rafiq" }],
+      });
+      const afterPick = await tenant(() =>
+        store.findLive(spaceId, { subjects: ["person.dentist"] }),
+      );
+      expect(afterPick.map((fact) => [fact.text, fact.status])).toEqual([
+        ["Owner's dentist is Dr Selim", "confirmed"],
+      ]);
+
       // A remove of a live fact retracts it.
       const sixth = await say("Forget that Rahim is my accountant.");
       const forgot = await tenant(() =>

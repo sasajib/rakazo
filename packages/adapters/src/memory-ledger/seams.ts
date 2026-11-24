@@ -417,6 +417,53 @@ async function factNamedBy(
 }
 
 /**
+ * The other side of an open conflict with `fact` (an unresolved `contradicts` link), if any.
+ * Both sides are disputed until the owner picks one.
+ */
+async function openRival(
+  store: LedgerStore,
+  spaceId: string,
+  fact: Fact,
+): Promise<{ rival: Fact; linkId: string; rivalIsNewer: boolean } | undefined> {
+  const links = (await store.linksOf(spaceId, [fact.id], ["contradicts"])).filter(
+    (link) => !link.resolvedAt,
+  );
+  for (const link of links) {
+    const otherId = link.fromId === fact.id ? link.toId : link.fromId;
+    const [rival] = await store.getFacts(spaceId, [otherId]);
+    if (rival && rival.status === "disputed")
+      return { rival, linkId: link.id, rivalIsNewer: link.fromId === otherId };
+  }
+  return undefined;
+}
+
+/** The owner settled a conflict: `winner` holds, `loser` is retired. */
+async function settleConflict(
+  store: LedgerStore,
+  spaceId: string,
+  winner: Fact,
+  loser: Fact,
+  linkId: string,
+  winnerIsNewer: boolean,
+  now: Date,
+): Promise<void> {
+  await store.updateFact(spaceId, winner.id, {
+    status: "confirmed",
+    ...(winnerIsNewer ? { supersedesId: loser.id } : {}),
+  });
+  await store.updateFact(spaceId, loser.id, {
+    status: winnerIsNewer ? "superseded" : "retracted",
+    validTo: now,
+  });
+  if (winnerIsNewer)
+    await store.addLink({ spaceId, fromId: winner.id, toId: loser.id, kind: "supersedes" });
+  await store.updateLink(spaceId, linkId, {
+    resolvedAt: now,
+    resolution: winnerIsNewer ? "use_new" : "keep_old",
+  });
+}
+
+/**
  * A bot's remember call. Facts the owner states go through the writer (quote gate and all);
  * a replace or remove that names a ledger fact is applied to that fact, so a correction never
  * leaves the old fact live. Returns the tool result; undefined means "not handled" and the
@@ -457,11 +504,50 @@ export async function rememberViaLedger(
     .filter((operation, index) => operation.action !== "add" && !named[index])
     .map((operation) => operation.old_text ?? "");
 
+  // An edit naming one side of an open conflict is the owner's answer to it (the bot asked, the
+  // owner chose): settle it here, instead of disputing again and asking a second time.
+  const settled: Array<{ winner: Fact; loser: Fact }> = [];
+  const handled = new Set<number>();
+  for (const [index, operation] of operations.entries()) {
+    const target = targets[index];
+    if (!target || target.status !== "disputed" || operation.action === "add") continue;
+    const open = await openRival(store, run.spaceId, target);
+    if (!open) continue;
+    if (operation.action === "replace") {
+      const wanted = operation.content?.trim() ?? "";
+      // The replacement must be the rival, not a third version.
+      if (!wanted || editScore(wanted, open.rival) < 0.3) continue;
+      await settleConflict(
+        store,
+        run.spaceId,
+        open.rival,
+        target,
+        open.linkId,
+        open.rivalIsNewer,
+        now,
+      );
+      settled.push({ winner: open.rival, loser: target });
+    } else {
+      await settleConflict(
+        store,
+        run.spaceId,
+        open.rival,
+        target,
+        open.linkId,
+        open.rivalIsNewer,
+        now,
+      );
+      settled.push({ winner: open.rival, loser: target });
+    }
+    handled.add(index);
+  }
+
   const removed: Fact[] = [];
   const replaced: Array<{ old: Fact; new?: Fact | undefined }> = [];
   const conflicted: Fact[] = [];
   const hints: string[] = [];
   operations.forEach((operation, index) => {
+    if (handled.has(index)) return;
     const target = targets[index];
     if (operation.action === "add" && operation.content?.trim())
       hints.push(operation.content.trim());
@@ -471,7 +557,7 @@ export async function rememberViaLedger(
 
   for (const [index, operation] of operations.entries()) {
     const target = targets[index];
-    if (operation.action !== "remove" || !target) continue;
+    if (handled.has(index) || operation.action !== "remove" || !target) continue;
     await store.updateFact(run.spaceId, target.id, { status: "retracted", validTo: now });
     removed.push(target);
   }
@@ -523,7 +609,7 @@ export async function rememberViaLedger(
   const fresh = result ? [...result.saved, ...result.reinforced] : [];
   for (const [index, operation] of operations.entries()) {
     const target = targets[index];
-    if (operation.action !== "replace" || !target) continue;
+    if (handled.has(index) || operation.action !== "replace" || !target) continue;
     if (result?.superseded.some((fact) => fact.id === target.id)) {
       replaced.push({ old: target, new: fresh[0] });
       continue;
@@ -556,7 +642,8 @@ export async function rememberViaLedger(
       (fact) => !replaced.some((entry) => entry.old.id === fact.id),
     ),
   ];
-  const nothing = !fresh.length && !removed.length && !replaced.some((entry) => entry.new);
+  const nothing =
+    !fresh.length && !removed.length && !settled.length && !replaced.some((entry) => entry.new);
   if (nothing && !keptReplaces.length && !alreadyRetired.length) {
     if (operations.every((operation) => operation.action === "add")) return undefined;
   }
@@ -570,6 +657,10 @@ export async function rememberViaLedger(
       );
   for (const fact of superseded) lines.push(`"${fact.text}" was replaced by the new fact.`);
   for (const fact of removed) lines.push(`Removed "${fact.text}" from shared memory.`);
+  for (const entry of settled)
+    lines.push(
+      `Settled the conflict as the owner chose: "${entry.winner.text}" now holds; "${entry.loser.text}" is no longer used.`,
+    );
   for (const fact of alreadyRetired)
     lines.push(`"${fact.text}" is already out of use (${fact.status}); nothing more to do.`);
   for (const entry of keptReplaces)
@@ -598,6 +689,7 @@ export async function rememberViaLedger(
     alreadyOutOfUse: alreadyRetired.map(describe),
     unchanged: keptReplaces.map((entry) => entry.old.text),
     disputed: conflicted.map(describe),
+    settled: settled.map((entry) => ({ holds: entry.winner.text, dropped: entry.loser.text })),
     summary: lines.join(" "),
     note: "Report exactly what summary says. Shared memory is the Space's; every bot sees it. Superseded facts are already out of use: never tell the owner you could not remove them.",
   };

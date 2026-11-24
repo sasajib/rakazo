@@ -99,6 +99,23 @@ export function scoreCandidate(
   return Math.round(Math.min(1, Math.max(0, score)) * 100) / 100;
 }
 
+/** A current owner message with a correction cue that names one of the candidate's entities. */
+function currentCorrectionNames(
+  messages: readonly OwnerMessage[],
+  candidate: FactCandidate,
+): boolean {
+  const names = candidate.entities
+    .flatMap((entity) => contentWords(entity))
+    .filter((word) => word.length >= 3);
+  if (!names.length) return false;
+  return messages.some(
+    (message) =>
+      message.current &&
+      isCorrection(message.text) &&
+      contentWords(message.text).some((word) => names.includes(word)),
+  );
+}
+
 export function decide(input: DecisionInput): Decision {
   const { candidate, messages, existing } = input;
   const text = candidate.text.trim();
@@ -162,7 +179,10 @@ export function decide(input: DecisionInput): Decision {
     // asked for it to be kept. The model's `correction` flag alone is a guess about a confirmed
     // fact: it was replacing "meetings after 3pm" on "I like meetings before 11am".
     (isCorrection(sentenceAround(source.text, quote)) ||
-      (Boolean(candidate.correction) && explicit));
+      (Boolean(candidate.correction) && explicit) ||
+      // The owner's latest message corrects it in so many words, even when the quote came from
+      // an earlier one ("Corolla replaces the Civic" after "my blue Toyota Corolla ...").
+      currentCorrectionNames(messages, candidate));
 
   if (confirmed.length && !obviousCorrection) {
     // Never replace what the owner confirmed on a guess: both are kept as disputed until the

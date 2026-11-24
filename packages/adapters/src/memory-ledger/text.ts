@@ -159,7 +159,7 @@ export const EXPLICIT_CUE =
 
 /** Words that mark a statement as changing an earlier one. */
 export const CORRECTION_CUE =
-  /\b(?:actually|correction|not anymore|no longer|i was wrong|changed|moved|instead|now (?:i|my|we)|switched|anymore)\b/i;
+  /\b(?:actually|correction|not anymore|no longer|i was wrong|changed|moved|instead|now (?:i|my|we)|switched|anymore|replaces?|replaced|rather than)\b/i;
 
 /** Words that make a statement hypothetical or unsure. */
 const HEDGE_CUE =
