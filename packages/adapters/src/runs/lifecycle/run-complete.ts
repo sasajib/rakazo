@@ -17,6 +17,7 @@ import {
   answeredSteeringMessageIds,
   retainsConversationTurn,
 } from "../../memory/conversation-memory.js";
+import { learnAfterRun } from "../../memory-ledger/run-hooks.js";
 import { returnBotMessageOutcome } from "../../messaging/bot-messages.js";
 import { clearRoutineBackoff } from "../../routines/routine-backoff.js";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
@@ -200,6 +201,8 @@ export async function completeRun(ctx: RunContext) {
     });
   }
   await enqueueConversationRetention(ctx, answeredMessageIds);
+  // Memory ledger seam (fork): queue the writer for the owner's messages; returns at once.
+  learnAfterRun(ctx);
   await enqueueHistoryCompaction(ctx);
 }
 

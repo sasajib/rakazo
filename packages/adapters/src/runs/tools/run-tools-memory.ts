@@ -9,6 +9,7 @@ import { readHistory, searchHistory } from "@rakazo/db";
 import { redactConnectorPayload } from "../../integrations/connector-safety.js";
 import { stampMemoryEntry, userMemoryDate } from "../../memory/memory-expiry.js";
 import { editMemory } from "../../memory/memory-tools.js";
+import { recallToolViaLedger, rememberToolViaLedger } from "../../memory-ledger/run-hooks.js";
 import { MAX_RECALLED_MEMORIES } from "../../runtime/context/history-compaction.prompt.js";
 import { sharedMemorySaveError } from "../../tools/builtin.tool-definition.js";
 import { RememberInputSchema } from "../../tools/builtin-conversation.tool-definition.js";
@@ -106,6 +107,9 @@ export const memoryTools: ToolHandlers = {
     const { args } = call;
     const parsed = RememberInputSchema.safeParse(args);
     if (!parsed.success) return call.finish({ error: argsError(parsed.error) });
+    // Memory ledger seam (fork): facts from the owner's words go to the shared ledger.
+    const ledger = await rememberToolViaLedger(ctx, parsed.data.operations);
+    if (ledger) return call.finish(ledger);
     const today = await userMemoryDate(deps.prisma, run.userId, deps.now?.() ?? new Date());
     const operations = parsed.data.operations.map((operation) =>
       operation.action !== "remove" && operation.content?.trim()
@@ -196,6 +200,9 @@ export const memoryTools: ToolHandlers = {
   async recall_memory(ctx, call) {
     const { bot, thread, context } = ctx;
     const { args } = call;
+    // Memory ledger seam (fork): the shared fact ledger answers first; a provider adds to it.
+    const facts = await recallToolViaLedger(ctx, String(args.query ?? ""));
+    if (facts && !ctx.memory.semantic) return { ok: true, facts };
     const response = await ctx.memory.semantic!.recall(
       {
         query: String(args.query ?? ""),
@@ -212,6 +219,7 @@ export const memoryTools: ToolHandlers = {
     if (response.ok && response.value.length > 0) {
       await markReadOutsideContent(ctx, response.value);
     }
+    if (facts) return { ...response, facts };
     return response;
   },
   async reflect_memory(ctx, call) {

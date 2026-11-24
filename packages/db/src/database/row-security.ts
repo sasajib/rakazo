@@ -188,6 +188,10 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "PageGrant",
   "PageComment",
   "PageRevisionRequest",
+  // Memory ledger (fork): raw-SQL tables with no Prisma model, listed by table name.
+  "memory_facts",
+  "memory_fact_links",
+  "memory_ledger_jobs",
 ]);
 
 /**
