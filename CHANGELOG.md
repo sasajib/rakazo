@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Self-hosted deployments can route the in-app **Call** through a LiveKit voice agent (`VOICE_AGENT_URL`), for a duplex call with live captions and barge-in instead of the built-in turn-taking loop; a call the bot placed and the user answered joins the same room and the agent speaks the bot's opening first. Unset, calls work as before.
 - An example duplex voice front-end built on LiveKit Agents (`examples/livekit-voice-agent/`).
+- A bot can execute more than one run at a time: `bots/update` takes `concurrency` (1–8, default 1). Concurrency parallelises separate threads only; one conversation still has one writer ([concurrency](docs/agent-concurrency.md)).
+- A message sent while the bot's own run has been working for a while also gets a short `talk` run that answers at once beside it, with no tools and its own session; `threads/send` and `threads/followUp` take `answerNow` and return `talkRunId`.
+- A voice call can run a request beside a card the bot is waiting on: `threads/send` takes `leaveCards`, and cards that wait on the person stay in the chat during a call instead of inside the call card.
+- `threads/callNote` leaves a line the call's voice agent said on its own account in the chat.
+- A person's run that announced work and used no tool is continued once; on a spoken call the first tool call is announced from the tool's name.
 
 ## [0.15.0] - 2026-11-23
 

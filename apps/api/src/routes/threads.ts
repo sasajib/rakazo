@@ -34,6 +34,7 @@ import {
   touchGroupUpdatedAt,
   withTransactionRetry,
 } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { HANG_UP_PROMPT } from "../bots/hidden-turns.prompt.js";
 import { assertTeachingSendAllowed } from "../bots/taught-skills.js";
 import { answerComputerRequest } from "../computers/computer-control.js";
@@ -413,11 +414,16 @@ export function threadsRoutes(ctx: RouterContext) {
             prompt: input.text,
             trigger: "follow_up",
             clientNonce: input.clientNonce,
+            answerNow: input.answerNow,
           });
           if (sent.taskId && sent.runId) {
             await wakeRun(deps.jobs, sent.runId);
           }
-          return { ok: true as const };
+          if (sent.talkRunId) {
+            // The run that answers this turn while the busy one keeps working.
+            await wakeRun(deps.jobs, sent.talkRunId);
+          }
+          return { ok: true as const, talkRunId: sent.talkRunId ?? null };
         }
         const committed = await deps.prisma.$transaction(async (tx) => {
           if (input.clientNonce) {
@@ -644,6 +650,42 @@ export function threadsRoutes(ctx: RouterContext) {
         if (!committed) return { ok: true as const };
         await deps.events.notify(threadId, committed.eventSeq);
         await wakeRun(deps.jobs, committed.runId);
+        return { ok: true as const };
+      }),
+      callNote: callsEnabled.threads.callNote.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        const { botId, threadId } = target;
+        const blocks = [{ kind: "text" as const, text: input.text }];
+        const committed = await deps.prisma
+          .$transaction(async (tx) => {
+            const message = await createThreadMessageInTransaction(tx, {
+              threadId,
+              role: "bot",
+              botId,
+              blocks,
+              // Same call prefix as a spoken turn, so clients keep it inside the call's card.
+              clientNonce: `${CALL_CLIENT_NONCE_PREFIX}${input.callId}:note-${input.noteId}`,
+            });
+            const event = await appendEventInTransaction(tx, {
+              spaceId: context.actor.spaceId,
+              threadId,
+              botId,
+              type: "thread.message.created",
+              payload: { messageId: message.id, role: "bot", blocks, callId: input.callId },
+            });
+            return { eventSeq: event.seq };
+          })
+          .catch((error) => {
+            if (!isUniqueViolation(error)) throw error;
+            return null;
+          });
+        if (committed) {
+          await deps.events.notify(threadId, committed.eventSeq).catch((error) => {
+            getLogger().error("call note realtime notification", error);
+          });
+        }
         return { ok: true as const };
       }),
       answer: authed.threads.answer.handler(async ({ context, input }) => {

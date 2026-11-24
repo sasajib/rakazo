@@ -30,6 +30,7 @@ describe("call route gates", () => {
         () => client.threads.answerCall(input),
         () => client.threads.declineCall({ ...input, outcome: "declined" }),
         () => client.threads.endCall(input),
+        () => client.threads.callNote({ ...input, noteId: "n1", text: "Still working on it." }),
       ]) {
         await expect(call()).rejects.toMatchObject({ code: "NOT_FOUND" });
       }
@@ -48,6 +49,9 @@ describe("call route gates", () => {
       client.threads.declineCall({ ...input, outcome: "declined" }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(client.threads.endCall(input)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      client.threads.callNote({ ...input, noteId: "n1", text: "Still working on it." }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });
 

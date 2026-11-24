@@ -1,6 +1,6 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
-import { disabledBuiltinToolSet } from "@rakazo/contracts";
+import { BUILTIN_TOOL_NAMES, disabledBuiltinToolSet } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
   chatAppConnectNote,
@@ -10,6 +10,7 @@ import {
   messagingChannelPrivacyBlock,
   messagingDmSurfaceNote,
   nonOwnerChatPrivacyBlock,
+  TALK_RUN_TRIGGER,
 } from "@rakazo/core";
 import { mayBeChannelMessage, parseComputerMode } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -506,7 +507,12 @@ export async function resolveRunCapabilities(
           mainRunModel,
         ));
   const sourceMessage =
-    (run.trigger === "user" || run.trigger === "follow_up") && run.sourceMessageId
+    (run.trigger === "user" ||
+      run.trigger === "follow_up" ||
+      // A talk run is often a spoken turn: its nonce carries the call, and the reply is
+      // spoken, so it needs the same voice instruction a user turn gets.
+      run.trigger === TALK_RUN_TRIGGER) &&
+    run.sourceMessageId
       ? await deps.prisma.message.findUnique({
           where: { id: run.sourceMessageId },
           select: {
@@ -534,9 +540,16 @@ export async function resolveRunCapabilities(
     deps.runtime.describe().capabilities.scripted ||
     modelSeesImages ||
     Boolean(computerModel || checkpointModelResolver);
-  const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover;
-  const pageBrowserAllowed = graphical && browser.describe().capabilities.page && !heldForTakeover;
-  const disabledBuiltinTools = disabledBuiltinToolSet(bot.disabledBuiltinTools);
+  const talkRun = run.trigger === TALK_RUN_TRIGGER;
+  const graphicalToolsAllowed = graphical && acceptsImages && !heldForTakeover && !talkRun;
+  const pageBrowserAllowed =
+    graphical && browser.describe().capabilities.page && !heldForTakeover && !talkRun;
+  // A talk run answers a message while the bot's own run keeps working. It holds no tool: it
+  // cannot start a second piece of work, touch the computer or write memory, so the run it runs
+  // beside stays the only writer of the bot's state. Its answer is its text.
+  const disabledBuiltinTools = talkRun
+    ? new Set<string>(BUILTIN_TOOL_NAMES)
+    : disabledBuiltinToolSet(bot.disabledBuiltinTools);
   const replyMode = runReplyMode(run.trigger, bot.replyMode, disabledBuiltinTools);
   const emailName = deps.inboundEmailDomain
     ? await deps.prisma.botEmailAddress.findUnique({

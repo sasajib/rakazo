@@ -13,6 +13,7 @@ import {
   runPriority,
   sameThreadWriterBlocks,
 } from "./agent-concurrency.js";
+import { asksForAnswer, talkLaneDue } from "./run-state.js";
 
 const now = new Date("2026-11-11T12:00:00Z");
 const botInput = (concurrency: number) => ({ botId: "bot-1", concurrency });
@@ -176,6 +177,92 @@ describe("planLeaseSlot", () => {
         now,
       }),
     ).toEqual({ kind: "reclaim", slot: 1 });
+  });
+});
+
+describe("asksForAnswer", () => {
+  it("counts a question, however it is phrased", () => {
+    for (const said of [
+      "What is the capital of Bangladesh?",
+      "what is the capital of bangladesh",
+      "How long will that take",
+      "Can you check the logs",
+      "Tell me what you found",
+      "Explain the pricing page",
+    ]) {
+      expect(asksForAnswer(said), said).toBe(true);
+    }
+  });
+
+  it("does not count listening, so the work keeps reporting", () => {
+    for (const said of [
+      "",
+      "   ",
+      "okay",
+      "hmm",
+      "go on",
+      "keep going",
+      "thanks",
+      "sounds good, continue",
+    ]) {
+      expect(asksForAnswer(said), said).toBe(false);
+    }
+  });
+});
+
+describe("talkLaneDue", () => {
+  const now = new Date("2026-11-11T12:00:00Z");
+  const started = (secondsAgo: number) => new Date(now.getTime() - secondsAgo * 1000);
+  const base = {
+    activeUserId: "user-1",
+    userId: "user-1",
+    hasLiveTalkRun: false,
+    isCallTurn: false,
+    stopping: false,
+    now,
+  };
+
+  it("answers beside a run that has been working a while", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30) })).toBe(true);
+  });
+
+  it("does not answer beside a run that just started, when nothing was asked", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(2) })).toBe(false);
+  });
+
+  it("answers a question beside a run however recently it started", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(1), asksAnswer: true })).toBe(true);
+  });
+
+  it("does not answer beside a run that is still queued", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: null })).toBe(false);
+  });
+
+  it("never answers twice for one message", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), hasLiveTalkRun: true })).toBe(
+      false,
+    );
+  });
+
+  it("answers a spoken turn at once, whatever the run's age", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(1), isCallTurn: true })).toBe(true);
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), isCallTurn: true })).toBe(true);
+  });
+
+  it("still refuses a spoken turn while a talk run is live for it", () => {
+    expect(
+      talkLaneDue({ ...base, activeStartedAt: started(5), isCallTurn: true, hasLiveTalkRun: true }),
+    ).toBe(false);
+  });
+
+  it("leaves another person's run alone", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), activeUserId: "user-2" })).toBe(
+      false,
+    );
+  });
+
+  it("stays quiet while a stop is being handled", () => {
+    expect(talkLaneDue({ ...base, activeStartedAt: started(30), stopping: true })).toBe(false);
   });
 });
 

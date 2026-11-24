@@ -45,30 +45,47 @@ const threadSendFields = threadTarget.safeExtend({
   clientNonce: z.string().min(1).max(200).optional(),
 });
 
-export const threadSendInput = threadSendFields.superRefine((input, ctx) => {
-  const text = input.text?.trim() ?? "";
-  const artifactIds = input.artifactIds ?? [];
-  if (!text && artifactIds.length === 0) {
-    ctx.addIssue({
-      code: "custom",
-      message: "Provide text or at least one attachment",
-      path: ["text"],
-    });
-  }
-  if (input.replyQuote && !input.replyToMessageId) {
-    ctx.addIssue({
-      code: "custom",
-      message: "replyQuote requires replyToMessageId",
-      path: ["replyQuote"],
-    });
-  }
-});
+export const threadSendInput = threadSendFields
+  .safeExtend({
+    /**
+     * The caller is asking something (or keeping a question going), so this turn must be answered
+     * by its own run even while the bot is working. Absent means "decide from the text".
+     */
+    answerNow: z.boolean().optional(),
+    /**
+     * A card the bot is waiting on (a secret, an approval) stays open: this message is a request of
+     * its own and starts or steers a run beside the parked one, instead of answering the card or
+     * retiring it. The voice agent sets it, because a spoken request must neither be taken as the
+     * answer nor cancel what someone at the screen can still fill in.
+     */
+    leaveCards: z.boolean().optional(),
+  })
+  .superRefine((input, ctx) => {
+    const text = input.text?.trim() ?? "";
+    const artifactIds = input.artifactIds ?? [];
+    if (!text && artifactIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide text or at least one attachment",
+        path: ["text"],
+      });
+    }
+    if (input.replyQuote && !input.replyToMessageId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "replyQuote requires replyToMessageId",
+        path: ["replyQuote"],
+      });
+    }
+  });
 
 export const threadSendOutput = z.object({
   taskId: Id,
   runId: Id,
   seq: z.number().int(),
   runIds: z.array(Id).optional(),
+  /** The run that answers this turn beside a busy one, for a client that speaks a single run. */
+  talkRunId: Id.nullable().optional(),
 });
 
 /** Without text or attachments, only the routines run and no message is saved. */

@@ -6,6 +6,7 @@ import {
   promptInvokesSkill,
   redactSecrets,
   renderBotDirectory,
+  TALK_RUN_TRIGGER,
 } from "@rakazo/core";
 import { bestEffort } from "@rakazo/logging";
 import { loadBotGroupDirectory } from "../../bots/group-handoff.js";
@@ -43,6 +44,11 @@ import {
   voiceCallInstruction,
 } from "./run-instructions.prompt.js";
 import { loadSharedSpaceNote } from "./shared-space-note.js";
+import {
+  EVIDENCE_INSTRUCTION,
+  PLAN_FIRST_INSTRUCTION,
+  TALK_RUN_INSTRUCTION,
+} from "./talk-run.prompt.js";
 
 export async function createRunContext(
   services: RunExecutorServices,
@@ -128,7 +134,9 @@ export async function createRunContext(
     trustLoaders,
   } = parts.tools;
   const { hostEnvironment } = parts.computerInstructions;
-  const reply = await createReplyState(deps, run, runSecrets);
+  const reply = await createReplyState(deps, run, runSecrets, {
+    confirmationFirst: voiceCall,
+  });
   const script = scripted ? inferScript(task.prompt, takeoverResume?.checkpoint) : undefined;
   const state: RunState = {
     lease,
@@ -387,11 +395,19 @@ export async function buildTurnPrompt(
     people && !ownerComputerRoutine
       ? await loadSharedSpaceNote(deps.prisma, run.spaceId, run.userId)
       : undefined;
+  const talkRun = run.trigger === TALK_RUN_TRIGGER;
   const prompt = [
     replyContext,
     parts.meetingContext,
     routineNote,
     run.trigger === "reaction" && replyContext ? undefined : basePrompt,
+    talkRun ? TALK_RUN_INSTRUCTION : undefined,
+    !talkRun && (run.trigger === "user" || run.trigger === "follow_up")
+      ? PLAN_FIRST_INSTRUCTION
+      : undefined,
+    run.trigger === "user" || run.trigger === "follow_up" || talkRun
+      ? EVIDENCE_INSTRUCTION
+      : undefined,
     takeoverResume?.promptNote,
     approvalContinuation,
     // A hang-up turn is read, not heard: no spoken-reply constraint.

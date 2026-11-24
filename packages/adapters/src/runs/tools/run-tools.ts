@@ -17,7 +17,7 @@ import { calendarTool } from "../../personal-calendar/run-calendar-tool.js";
 import { strategicInitiativeToolAllowed } from "../../routines/strategic-initiative.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { markReadOutsideContent } from "../assembly/run-context.js";
-import { noteComputerTaskStep } from "../lifecycle/run-progress.js";
+import { announceFirstStep, noteComputerTaskStep } from "../lifecycle/run-progress.js";
 import { logToolRefusal } from "../turn/tool-completion-audit.js";
 import { refusal } from "../turn/tool-refusal.js";
 import { auditToolCall } from "./run-tool-audit.js";
@@ -290,6 +290,8 @@ async function dispatchTool(
   }
   const refused = await prepareToolRequest(ctx, request);
   if (refused) return refuse(refused, request.name);
+  // A run that starts working must say so first: derived from the tool it called, not the request.
+  await announceFirstStep(ctx, request.name);
   noteComputerTaskStep(ctx.state.reply, request.name);
   const gate = await gateToolCall(ctx, request, observer);
   if ("result" in gate) {

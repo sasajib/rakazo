@@ -1,6 +1,6 @@
 import type { AgentContextStrategy } from "@rakazo/adapter-kit";
 import type { RunStatus } from "@rakazo/contracts";
-import { BACKGROUND_HELPER_TRIGGER, isTerminal } from "@rakazo/core";
+import { BACKGROUND_HELPER_TRIGGER, isTerminal, TALK_RUN_TRIGGER } from "@rakazo/core";
 import {
   accountDeactivated,
   appendEventInTransaction,
@@ -164,7 +164,10 @@ async function startClaimedAttempt(
   if (!leaseTarget.computerId) throw new Error("Bot has no computer");
   // Only takeover resumes need the computer before model work starts.
   const needsComputerNow = heldForTakeover || Boolean(takeoverResume);
-  if (leaseTarget.computerSwitching) {
+  // A talk run never uses the computer, so it neither waits for a switch nor holds the bot's next
+  // turn. That is what lets it answer beside a long computer run of the same bot in the same
+  // thread instead of queueing behind it.
+  if (leaseTarget.computerSwitching && run.trigger !== TALK_RUN_TRIGGER) {
     await requeueComputerRun(deps, runId, workerId, fence, resumeCheckpoint, heldForTakeover);
     return;
   }

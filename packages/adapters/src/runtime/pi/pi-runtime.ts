@@ -657,7 +657,7 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         const toolCallIds = runToolCallIds(history as Message[], host.providerToolCallIds);
         agent = new Agent({
-          sessionId: conversationSessionId(request.threadId, request.botId),
+          sessionId: conversationSessionId(request.threadId, request.botId, request.sessionSuffix),
           steeringMode: "all",
           streamFn: (_m, ctx, options) =>
             uniqueToolCallIdStream(

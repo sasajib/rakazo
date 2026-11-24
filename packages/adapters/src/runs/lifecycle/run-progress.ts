@@ -14,6 +14,7 @@ import {
 } from "@rakazo/core";
 import type { Run } from "@rakazo/db";
 import { storedMessageBlocks } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { USER_COMPUTER_SCREEN_TOOLS } from "../../computers/host/user-computer-tools.js";
 import { IMAGE_RETURNING_COMPUTER_TOOLS } from "../../models/model-vision.js";
 import type { ReplyState, RunContext } from "../assembly/run-context.js";
@@ -45,6 +46,7 @@ export async function createReplyState(
   deps: ExecutorDeps,
   run: Run,
   secrets: string[],
+  options: { confirmationFirst?: boolean } = {},
 ): Promise<ReplyState> {
   const reply: ReplyState = {
     assembled: "",
@@ -61,6 +63,7 @@ export async function createReplyState(
     turnStartedAtMs: run.startedAt?.getTime() ?? Date.now(),
     progressBudgetStart: 0,
     steeringReplyPending: false,
+    confirmationFirst: options.confirmationFirst ?? false,
     computerTaskStarted: false,
     steeringResets: 0,
     lastSteeringResetAt: Number.NEGATIVE_INFINITY,
@@ -102,6 +105,10 @@ export function recordExplicitNoResponse(reply: ReplyState, text: string) {
 /** Durable interim messages only on genuinely long turns, capped per run. */
 export function canPublishDurableProgress(reply: ReplyState) {
   return (
+    // On a call a run's first sentence is its confirmation: the caller is waiting on exactly that,
+    // so it is published at once instead of after the long-turn delay. It still counts against the
+    // budget. Typed chats keep the long-turn rule.
+    (reply.confirmationFirst && reply.midTurnProgressCount === 0) ||
     reply.steeringReplyPending ||
     midTurnProgressBudgetAllows(progressSinceBudgetStart(reply), Date.now() - reply.turnStartedAtMs)
   );
@@ -167,6 +174,86 @@ export async function publishInterimMessage(ctx: RunContext, text: string, markU
     void delivery?.deliverRun(run.id, { progress: true }).catch((error) => {
       delivery.reportFailure("messaging progress delivery error", error);
     });
+  }
+}
+
+/**
+ * What to say when a run starts working without saying anything first.
+ *
+ * The model often goes straight to a tool call, so the person sees nothing until the work is done —
+ * the exact complaint that kept coming back. This line is derived from the tool the run actually
+ * called, so it states a fact rather than repeating the request back.
+ */
+const FIRST_STEP_PHRASES: Record<string, string> = {
+  list_bots: "checking your bots",
+  get_bot: "looking up that bot",
+  create_bot: "creating the bot",
+  update_bot: "updating the bot",
+  archive_bot: "archiving the bot",
+  delete_bot: "deleting the bot",
+  spawn_bot: "setting the new bot up",
+  web_search: "searching the web",
+  web_fetch: "reading the page",
+  browser_navigate: "opening the browser",
+  browser_snapshot: "reading the page in the browser",
+  shell: "starting on the computer",
+  computer_act: "working on the computer",
+  computer_observe: "looking at the computer",
+  send_email: "writing the email",
+  read_email: "checking the inbox",
+  remember: "saving that to memory",
+  message_user: "writing back",
+};
+
+/** "install" -> "installing", "installed" -> "installing", "make" -> "making": never "installeding". */
+function gerund(verb: string) {
+  if (verb.endsWith("ing")) return verb;
+  if (verb.endsWith("ed")) return `${verb.slice(0, -2)}ing`;
+  if (verb.endsWith("e")) return `${verb.slice(0, -1)}ing`;
+  return `${verb}ing`;
+}
+
+/** A readable phrase for a tool nobody mapped: "list_fleet" reads as "checking your fleet". */
+function phraseForTool(toolName: string) {
+  const [verb = "", ...rest] = toolName.split("_");
+  const noun = rest.join(" ");
+  switch (verb) {
+    case "list":
+      return `checking your ${noun || "options"}`;
+    case "get":
+    case "read":
+      return `looking up the ${noun || "detail"}`;
+    case "create":
+      return `creating the ${noun || "item"}`;
+    case "update":
+    case "edit":
+      return `updating the ${noun || "item"}`;
+    case "delete":
+    case "archive":
+    case "remove":
+      return `${gerund(verb)} the ${noun || "item"}`;
+    default:
+      return noun ? `${gerund(verb)} the ${noun}` : toolName.replace(/_/g, " ");
+  }
+}
+
+const SPEAKS_FOR_ITSELF = new Set(["message_user", "message_bot"]);
+
+/** The confirmation for a run that reached for a tool before saying anything. */
+export async function announceFirstStep(ctx: RunContext, toolName: string): Promise<void> {
+  const reply = ctx.state?.reply;
+  // A context that tracks no reply (a tool call outside a conversational turn) has nothing to announce.
+  // Spoken call turns only: typed chats keep their own pacing, and a tool that speaks for itself
+  // (message_user) needs no announcement.
+  if (!reply?.confirmationFirst || SPEAKS_FOR_ITSELF.has(toolName)) return;
+  if (reply.midTurnProgressCount > 0 || reply.hasStreamedText) return;
+  if (!isConversationalRun(ctx.run.trigger) || runAllowsSilentEmpty(ctx.run.trigger)) return;
+  const phrase = FIRST_STEP_PHRASES[toolName] ?? phraseForTool(toolName);
+  // A courtesy line must never cost the tool call it announces.
+  try {
+    await publishInterimMessage(ctx, `On it — ${phrase}.`);
+  } catch (error) {
+    getLogger().error("first step announcement", error);
   }
 }
 

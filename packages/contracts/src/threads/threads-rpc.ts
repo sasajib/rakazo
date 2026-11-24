@@ -103,9 +103,24 @@ export const threadsRpc = {
           text: z.string().min(1),
           /** Carries the call id, so a turn taken mid-run stays in the call's card. */
           clientNonce: z.string().min(1).max(200).optional(),
+          /**
+           * The caller is asking something (or keeping a question going), so this turn must be
+           * answered by its own run even while the bot is working. Absent means "decide from the
+           * text", which older clients rely on.
+           */
+          answerNow: z.boolean().optional(),
         }),
       )
-      .output(z.object({ ok: z.literal(true) })),
+      .output(
+        z.object({
+          ok: z.literal(true),
+          /**
+           * The run that will answer this turn when the bot was already working: the talk run, not
+           * the busy run the message also steers. A caller has to be answered by its own run.
+           */
+          talkRunId: z.string().nullable().optional(),
+        }),
+      ),
     /** The client hung up: close the call card and let the bot finish what was asked on it. */
     endCall: oc
       // ":" separates the call id from the nonce suffix, so it can never appear inside one.
@@ -123,6 +138,28 @@ export const threadsRpc = {
             .nonnegative()
             .max(7 * 24 * 60 * 60)
             .optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    /**
+     * A sentence the call's voice agent said that no run wrote (a progress line, "back to the
+     * update on ..."). Left in the chat as a bot message so what was heard and what is written
+     * stay the same conversation. Idempotent per `noteId`.
+     */
+    callNote: oc
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+          noteId: z
+            .string()
+            .min(1)
+            .max(80)
+            .regex(/^[A-Za-z0-9_-]+$/),
+          text: z.string().min(1).max(2000),
         }),
       )
       .output(z.object({ ok: z.literal(true) })),

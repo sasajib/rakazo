@@ -1,6 +1,6 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { modelRoleConnectionId } from "@rakazo/contracts";
-import { BACKGROUND_HELPER_TRIGGER, redactSecrets } from "@rakazo/core";
+import { BACKGROUND_HELPER_TRIGGER, redactSecrets, TALK_RUN_TRIGGER } from "@rakazo/core";
 import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
@@ -26,6 +26,7 @@ import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection
 import { applyTool } from "../tools/run-tools.js";
 import { consumeRunEvents } from "./run-turn.js";
 import { claimRunSteering } from "./run-turn-images.js";
+import { continueUnfinishedTask } from "./run-unfinished-task.js";
 import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
 import { keepToolStepResult } from "./tool-step-calls.js";
@@ -70,6 +71,10 @@ export async function runModelTurn(
     if (await consumeRunEvents(ctx, runtimeEvents)) return;
     if (await interruptedByShutdown()) return;
     await completeRun(ctx);
+    // The work is only done if it was done: a run that only announced it is continued once.
+    await continueUnfinishedTask(ctx).catch((error) => {
+      getLogger().error("continuation check", error);
+    });
   } catch (turnError) {
     if (await interruptedByShutdown()) return;
     let caughtError = turnError;
@@ -177,6 +182,7 @@ function modelTurnRequest(
     threadId: thread.id,
     runId,
     usageOperationKind: run.trigger === BACKGROUND_HELPER_TRIGGER ? "subagent" : "answer",
+    ...(run.trigger === TALK_RUN_TRIGGER ? { sessionSuffix: "talk" } : {}),
     routineId: run.routineId,
     sourceMessageId: run.sourceMessageId,
     onUsage: async (event) => {

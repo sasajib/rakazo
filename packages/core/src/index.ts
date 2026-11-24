@@ -148,6 +148,7 @@ export * from "./runs/activity-sections.js";
 export * from "./runs/agent-concurrency.js";
 export * from "./runs/run-error.js";
 export * from "./runs/run-state.js";
+export * from "./runs/run-supervision.js";
 export * from "./runs/stuck-work.js";
 export * from "./runs/tool-activity.js";
 export * from "./skills/agent-skill.js";

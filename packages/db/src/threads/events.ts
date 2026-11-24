@@ -7,8 +7,10 @@ import {
   ThreadActivityPayloadSchema,
 } from "@rakazo/contracts";
 import {
+  asksForAnswer,
   BACKGROUND_HELPER_TRIGGER,
   callIdFromClientNonce,
+  isCallClientNonce,
   isConversationalRun,
   messageBypassesTakeoverWait,
   messageSteersRun,
@@ -17,6 +19,8 @@ import {
   QUEUE_HOLDING_RUN_STATUSES,
   sanitizeJsonValue,
   splitToolHistory,
+  TALK_RUN_TRIGGER,
+  talkLaneDue,
 } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import type { RosterChange } from "../bots/roster-changes.js";
@@ -216,6 +220,11 @@ export interface SendUserMessageInput {
   createRun?: boolean;
   /** When true, start a new run even if the bot is already busy (team-chat delivery). */
   allowParallelRun?: boolean;
+  /**
+   * The caller is asking something, so this turn is answered by its own run even while the bot is
+   * busy. Absent means the text decides (see `asksForAnswer`).
+   */
+  answerNow?: boolean;
   /** Model every routine in an inbound delivery agreed on. */
   modelPin?: {
     modelProvider: string;
@@ -248,6 +257,8 @@ export interface SendUserMessageResult {
   runId: string | null;
   /** A replay of a message history retention deleted: messageId no longer exists. */
   pruned?: true;
+  /** The run that answers this message beside the busy one, when a talk run was started for it. */
+  talkRunId?: string | null;
 }
 
 export function createThreadEvents(
@@ -473,6 +484,8 @@ export async function sendUserMessage(
       seq: message.seq,
       taskId: created?.taskId ?? null,
       runId: run?.id ?? null,
+      // A replay reads one run (see send-replay-source-run.postgres.test.ts); the talk run of the first send is not re-read.
+      talkRunId: null,
     };
   };
   const existing = await replay();
@@ -525,6 +538,7 @@ export async function sendUserMessage(
                 trigger: true,
                 status: true,
                 userId: true,
+                startedAt: true,
                 sourceMessage: { select: { id: true, blocks: true } },
               },
             })
@@ -555,6 +569,7 @@ export async function sendUserMessage(
         null;
       let task = null;
       let run = null;
+      let talkRun: { id: string; taskId: string; status: string } | null = null;
       if (createRun && !busy) {
         task = await tx.task.create({
           data: {
@@ -612,6 +627,49 @@ export async function sendUserMessage(
           },
         });
         await tx.message.update({ where: { id: message.id }, data: { runId: busy.id } });
+        // A caller cannot be left waiting on a run that is busy with something else: the message
+        // also steers that run, but the answer this turn gets is its own.
+        if (
+          talkLaneDue({
+            activeStartedAt: busy.startedAt,
+            activeUserId: busy.userId,
+            userId: input.userId,
+            hasLiveTalkRun: false,
+            // A caller who is not asking anything keeps hearing the work; one who asks gets an
+            // answer to that question instead of the task's report. The voice agent tags the turn
+            // from its own conversation state, which knows whether a question is still open.
+            isCallTurn:
+              isCallClientNonce(input.clientNonce) &&
+              (input.answerNow ?? asksForAnswer(input.prompt)),
+            asksAnswer: Boolean(input.answerNow ?? asksForAnswer(input.prompt)),
+            stopping: false,
+            now: new Date(),
+          })
+        ) {
+          const talkTask = await tx.task.create({
+            data: {
+              spaceId: input.spaceId,
+              botId: input.botId,
+              threadId: input.threadId,
+              userId: input.userId,
+              prompt: input.prompt,
+              status: "queued",
+            },
+          });
+          talkRun = await tx.run.create({
+            data: {
+              spaceId: input.spaceId,
+              botId: input.botId,
+              threadId: input.threadId,
+              taskId: talkTask.id,
+              userId: input.userId,
+              status: "queued",
+              trigger: TALK_RUN_TRIGGER,
+              sourceMessageId: message.id,
+            },
+            select: { id: true, taskId: true, status: true },
+          });
+        }
       }
       if (
         input.claim &&
@@ -634,7 +692,7 @@ export async function sendUserMessage(
           callId: callIdFromClientNonce(message.clientNonce),
         },
       });
-      return { message, task, run, busy, event };
+      return { message, task, run, busy, talkRun, event };
     }, THREAD_LOCK_TRANSACTION_OPTIONS);
   const committed = await commit().catch(async (error) => {
     const winner = await replay();
@@ -657,6 +715,7 @@ export async function sendUserMessage(
     seq: committed.message.seq,
     taskId: committed.task?.id ?? null,
     runId: committed.run?.id ?? committed.busy?.id ?? null,
+    talkRunId: committed.talkRun?.id ?? null,
   };
 }
 
