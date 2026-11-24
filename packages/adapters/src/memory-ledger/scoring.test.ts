@@ -202,6 +202,34 @@ describe("decide: conflicts and supersession", () => {
     });
   });
 
+  it("the model's correction flag alone does not replace a confirmed fact: both disputed", () => {
+    const old = fact({
+      status: "confirmed",
+      area: "preferences",
+      subject: "pref.meeting-time",
+      text: "Owner prefers meetings after 3pm",
+      quote: "I prefer meetings after 3pm",
+      entities: [],
+    });
+    const decision = decide({
+      candidate: candidate({
+        area: "preferences",
+        subject: "pref.meeting-time",
+        text: "Owner likes meetings before 11am",
+        quote: "I like meetings before 11am",
+        entities: [],
+        confidence: 0.95,
+        correction: true,
+        replaces: ["old"],
+      }),
+      messages: [
+        message("m1", "Book my calls with the bank in the morning, I like meetings before 11am."),
+      ],
+      existing: [old],
+    });
+    expect(decision).toMatchObject({ kind: "insert", status: "disputed", conflicts: [old] });
+  });
+
   it("an unsure correction of a confirmed fact still asks", () => {
     const old = fact({ status: "confirmed" });
     const decision = decide({

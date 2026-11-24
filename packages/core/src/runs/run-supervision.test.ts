@@ -57,6 +57,18 @@ describe("needsContinuation", () => {
     expect(needsContinuation({ ...base, replyText: "x".repeat(400) })).toBe(false);
   });
 
+  it("leaves a finished text-only job alone: the reply is the work", () => {
+    const summary = {
+      ...base,
+      request:
+        'Summarise this article in one line: "Karim Hossain, founder of BrightPay, lives in Rajshahi."',
+      replyText: "Karim Hossain is the Rajshahi-based founder of BrightPay.",
+    };
+    expect(needsContinuation(summary)).toBe(false);
+    // Cut off mid-sentence, it is still continued.
+    expect(needsContinuation({ ...summary, replyText: "Sure, first I" })).toBe(true);
+  });
+
   it("never continues a continuation: one retry, not a loop", () => {
     expect(needsContinuation({ ...base, taskPrompt: continuationPrompt(base.request) })).toBe(
       false,

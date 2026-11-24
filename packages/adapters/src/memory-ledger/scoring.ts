@@ -158,7 +158,11 @@ export function decide(input: DecisionInput): Decision {
   const obviousCorrection =
     candidate.origin === "stated" &&
     confidence >= OBVIOUS_CORRECTION &&
-    (Boolean(candidate.correction) || isCorrection(sentenceAround(source.text, quote)));
+    // The owner's own words must mark the change ("actually", "moved", "no longer"...), or they
+    // asked for it to be kept. The model's `correction` flag alone is a guess about a confirmed
+    // fact: it was replacing "meetings after 3pm" on "I like meetings before 11am".
+    (isCorrection(sentenceAround(source.text, quote)) ||
+      (Boolean(candidate.correction) && explicit));
 
   if (confirmed.length && !obviousCorrection) {
     // Never replace what the owner confirmed on a guess: both are kept as disputed until the

@@ -102,6 +102,25 @@ describe("work-start pack", () => {
     expect(home).toBeDefined();
   });
 
+  it("a recall (no core block) returns confirmed core facts it finds", async () => {
+    const store = createMemoryLedgerStore();
+    await seed(store, [["Owner's sister Nadia moved to Sylhet", "people", "confirmed"]]);
+    const pack = await assemblePack(
+      { store },
+      {
+        spaceId: SPACE,
+        query: "where does my sister live",
+        limit: 10,
+        budgetMs: 1000,
+        coreMaxBytes: 0,
+        packMaxBytes: 0,
+      },
+    );
+    expect(pack.relevant.map((fact) => fact.text)).toEqual([
+      "Owner's sister Nadia moved to Sylhet",
+    ]);
+  });
+
   it("finds paraphrases by meaning when embeddings are configured (hybrid)", async () => {
     const store = createMemoryLedgerStore();
     await seed(store, [

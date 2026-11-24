@@ -20,6 +20,30 @@ const WORK_VERBS = new Set(
   ).split(" "),
 );
 
+/**
+ * Work whose whole result is text: a reply can be the finished work. A short, complete reply to
+ * "summarise this" is the summary, not an announcement (it was being answered twice).
+ */
+const TEXT_WORK = new Set([
+  "summarise",
+  "summarize",
+  "translate",
+  "draft",
+  "write",
+  "compare",
+  "review",
+]);
+
+/** The work verbs a request names. */
+function workVerbs(text: string): string[] {
+  const said = text.trim().replace(NOISE, "").replace(GREETING, "");
+  return said
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-z]/g, ""))
+    .filter((word) => WORK_VERBS.has(word) && !INFORMATIONAL.has(word));
+}
+
 /** Asking to be told something is a question, not a task. */
 const INFORMATIONAL = new Set(["tell", "show", "describe", "explain", "list", "read", "answer"]);
 /** A turn that opens by asking to be told something is a question, whatever nouns follow. */
@@ -75,7 +99,13 @@ export function needsContinuation(input: {
   if ((input.taskPrompt ?? "").startsWith(CONTINUATION_MARKER)) return false;
   if (!requestsWork(input.request)) return false;
   if (input.toolCallCount > 0) return false;
-  return input.replyText.trim().length <= CONTINUATION_TEXT_MAX;
+  const reply = input.replyText.trim();
+  if (reply.length > CONTINUATION_TEXT_MAX) return false;
+  // Text-only work answered with complete sentences is done.
+  const verbs = workVerbs(input.request);
+  if (verbs.length && verbs.every((verb) => TEXT_WORK.has(verb)) && /[.!?"')\]]$/.test(reply))
+    return false;
+  return true;
 }
 
 /** The prompt an automatic continuation carries, so the run cannot mistake it for a new request. */

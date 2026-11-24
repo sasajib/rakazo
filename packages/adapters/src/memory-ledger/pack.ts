@@ -132,7 +132,9 @@ export async function assemblePack(
     }
   }
   const core = await corePromise;
-  const coreIds = new Set(core.map((fact) => fact.id));
+  // A recall (no core block) must return every hit: dropping the core facts made recall_memory
+  // answer "nothing" for exactly the facts the owner confirmed, and the bot then believed it.
+  const coreIds = new Set(input.coreMaxBytes > 0 ? core.map((fact) => fact.id) : []);
   const pack: MemoryPack = {
     core,
     relevant: relevant.filter((fact) => !coreIds.has(fact.id)),
