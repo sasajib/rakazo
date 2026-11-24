@@ -25,7 +25,7 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # deployment-wide disabled built-in tools: both seams (capabilities + tool selection)
            ("RAKAZO_DISABLED_BUILTIN_TOOLS", 2),
            # per-agent skills: filter in the catalog + skill_read, the run-records seam, RPC, web section
-           ("filterSkillsForBot(", 3), ("loadBotSkillSelection(", 3), ("addSkillToBotSelection(", 2),
+           ("filterSkillsForBot(", 2), ("loadBotSkillSelection(", 3), ("addSkillToBotSelection(", 2),
            ("botSkillsProcedures", 2), ("createBotSkillsService(", 2), ("BotSkillsSection", 2),
            ('"BotSkillSelection",', 1)]
 results = []
