@@ -26,6 +26,7 @@ import {
   HISTORY_WINDOW_SIZE,
   shouldEnqueueCompaction,
 } from "../../runtime/context/history-compaction.js";
+import { curateAfterRun } from "../../skill-curator/run-hooks.js";
 import { returnHelperOutcome } from "../../tasks/background-helpers.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { redactBlocks } from "../assembly/run-messages.js";
@@ -203,6 +204,8 @@ export async function completeRun(ctx: RunContext) {
   await enqueueConversationRetention(ctx, answeredMessageIds);
   // Memory ledger seam (fork): queue the writer for the owner's messages; returns at once.
   learnAfterRun(ctx);
+  // Skill curator seam (fork): may learn the owner's way of doing this as a skill; returns at once.
+  curateAfterRun(ctx);
   await enqueueHistoryCompaction(ctx);
 }
 

@@ -197,6 +197,12 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "memory_facts",
   "memory_fact_links",
   "memory_ledger_jobs",
+  // Skill curator (fork): raw-SQL tables, listed by table name.
+  "skill_learning_settings",
+  "skill_learning_jobs",
+  "skill_learning_proposals",
+  "learned_skills",
+  "skill_teaching_sessions",
 ]);
 
 /**

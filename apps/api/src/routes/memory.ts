@@ -13,6 +13,7 @@ import { isDeletableMemoryDocument } from "@rakazo/contracts";
 import { ClientError } from "@rakazo/core";
 import { findSpaceMemoryConfig, IsolationError } from "@rakazo/db";
 import { createBotSkillsService } from "../bots/bot-skills.js";
+import { createSkillLearningService } from "../bots/skill-learning.js";
 import {
   disconnectMemoryProvider,
   persistMemoryProviderConfig,
@@ -25,6 +26,11 @@ import type { RouterContext } from "./context.js";
 export function memoryRoutes(ctx: RouterContext) {
   const { deps, repos, taughtSkills, agentSkills, authed } = ctx;
   const botSkills = createBotSkillsService(deps.prisma);
+  const skillLearning = createSkillLearningService({
+    prisma: deps.prisma,
+    secretStore: deps.secrets,
+    events: deps.events,
+  });
   return {
     memory: {
       list: authed.memory.list.handler(async ({ context, input }) => {
@@ -281,6 +287,30 @@ export function memoryRoutes(ctx: RouterContext) {
       ),
       agents: authed.agentSkills.agents.handler(async ({ context }) =>
         botSkills.agents(context.actor),
+      ),
+    },
+    // Fork: auto-learned skills and chat teaching.
+    skillLearning: {
+      settings: authed.skillLearning.settings.handler(async ({ context, input }) =>
+        skillLearning.settings(context.actor, input),
+      ),
+      setMode: authed.skillLearning.setMode.handler(async ({ context, input }) =>
+        skillLearning.setMode(context.actor, input),
+      ),
+      decide: authed.skillLearning.decide.handler(async ({ context, input }) =>
+        skillLearning.decide(context.actor, input),
+      ),
+      learned: authed.skillLearning.learned.handler(async ({ context }) =>
+        skillLearning.learned(context.actor),
+      ),
+      teaching: authed.skillLearning.teaching.handler(async ({ context, input }) =>
+        skillLearning.teaching(context.actor, input),
+      ),
+      teach: authed.skillLearning.teach.handler(async ({ context, input }) =>
+        skillLearning.teach(context.actor, input),
+      ),
+      fromTaught: authed.skillLearning.fromTaught.handler(async ({ context, input }) =>
+        skillLearning.fromTaught(context.actor, input),
       ),
     },
   };

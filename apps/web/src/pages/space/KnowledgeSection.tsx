@@ -8,7 +8,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@rakazo/ui-web/componen
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { SkillAgentsLine } from "../../components/integrations/skill-agents-line";
+import {
+  LearnedSkillLine,
+  LinkedSkillOpener,
+  SkillAgentsLine,
+} from "../../components/integrations/skill-agents-line";
 import {
   AvailabilityControl,
   AvailabilityLabel,
@@ -434,6 +438,10 @@ export function AgentSkills() {
   const editorOpen = creating || open;
   return (
     <div data-testid="bot-knowledge-skills">
+      {/* Fork: "Open in Skills" on a learned-skill card links here with ?skill=<id>. */}
+      <LinkedSkillOpener
+        onOpen={(skillId) => void openSkill({ id: skillId } as AgentSkillCatalogEntry)}
+      />
       {error ? <div className="px-2.5 pb-2 text-body-sm text-destructive">{error}</div> : null}
       {loading ? <Skeleton className="h-10 w-full" /> : null}
       {!loading && skills.length === 0 && !editorOpen && !error ? (
@@ -500,6 +508,7 @@ export function AgentSkills() {
             </div>
           ) : null}
           {open ? <SkillAgentsLine skillId={open.id} /> : null}
+          {open ? <LearnedSkillLine skillId={open.id} /> : null}
           <Textarea
             aria-label="SKILL.md"
             disabled={busy}

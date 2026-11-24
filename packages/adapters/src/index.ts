@@ -304,6 +304,7 @@ export * from "./secrets/wrapped-env.js";
 export * from "./server/server-foundation.js";
 export { pollShellJob, reconcileShellJobs } from "./shell-jobs/shell-job-poll.js";
 export { stopShellJob, stopThreadShellJobs } from "./shell-jobs/shell-job-stop.js";
+export * from "./skill-curator/index.js";
 export * from "./storage/artifact-store-factory.js";
 export * from "./storage/artifacts.js";
 export * from "./storage/home.js";

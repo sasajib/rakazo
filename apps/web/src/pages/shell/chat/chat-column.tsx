@@ -14,6 +14,7 @@ export function ChatColumn({
   header,
   children,
   composer,
+  lesson,
 }: {
   /** The phone drawer is open over the chat. */
   drawerOpen: boolean;
@@ -25,6 +26,8 @@ export function ChatColumn({
   header: ReactNode;
   children: ReactNode;
   composer: ReactNode;
+  /** Fork: the open chat lesson's bar (skill curator), above the composer. */
+  lesson?: ReactNode;
 }) {
   const chatColumnRef = useRef<HTMLDivElement>(null);
   return (
@@ -66,6 +69,7 @@ export function ChatColumn({
         {header}
         {children}
       </div>
+      {lesson}
       {composer}
     </main>
   );

@@ -26,6 +26,7 @@ import {
   releaseTeachingComputerControlForBot,
   sandboxKindCapabilities,
   screenLeaseIdForRun,
+  userMachineServesScreen,
   wakeRun,
 } from "@rakazo/adapters";
 import type { Actor, MessageBlock, TaughtSkill } from "@rakazo/contracts";
@@ -118,12 +119,20 @@ async function cancelActiveRuns(
   });
 }
 
+/**
+ * A desktop host is refused, except (fork) one that serves its screen (SANDBOX_HOST_SCREEN=1):
+ * that one is driven like a sandbox through the host display (host-display.ts).
+ */
+function teachingRefuses(kind: string | null | undefined): boolean {
+  return sandboxKindCapabilities(kind).runsOnUserMachine && !userMachineServesScreen(kind);
+}
+
 async function ensureGraphicalComputer(
   deps: TaughtSkillsDeps,
   actor: Actor,
   bot: Awaited<ReturnType<ReturnType<typeof createRepos>["getBot"]>>,
 ) {
-  if (sandboxKindCapabilities(bot.computer?.kind).runsOnUserMachine) {
+  if (teachingRefuses(bot.computer?.kind)) {
     throw new ORPCError("BAD_REQUEST", {
       message: "Teaching needs a graphical sandbox computer, not a desktop host",
     });
@@ -156,7 +165,7 @@ async function ensureGraphicalComputer(
   if (!bot.computer?.providerRef || bot.computer.state !== "running") {
     throw new ORPCError("BAD_REQUEST", { message: "Computer must be running to teach" });
   }
-  if (sandboxKindCapabilities(bot.computer.kind).runsOnUserMachine) {
+  if (teachingRefuses(bot.computer.kind)) {
     throw new ORPCError("BAD_REQUEST", {
       message: "Teaching needs a graphical sandbox computer, not a desktop host",
     });

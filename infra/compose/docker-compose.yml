@@ -71,6 +71,12 @@ x-app-environment: &app-environment # Runtime
   MEMORY_LEDGER_PACK_MAX_BYTES:
   MEMORY_LEDGER_PACK_LIMIT:
   MEMORY_LEDGER_FAST_PACK_LIMIT:
+  # Optional skill curator (fork); off unless SKILL_CURATOR=1. Uses the memory ledger's model unless overridden.
+  SKILL_CURATOR:
+  SKILL_CURATOR_MIN_TOOL_CALLS:
+  SKILL_CURATOR_MODEL_URL:
+  SKILL_CURATOR_MODEL:
+  SKILL_CURATOR_MODEL_API_KEY:
   # The worker names each bot's address to it and sends its email; the API receives the mail.
   INBOUND_EMAIL_DOMAIN:
   BOT_EMAIL_SMTP_URL:

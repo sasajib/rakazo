@@ -45,6 +45,7 @@ import {
   loadRunCodeRedactions,
   loadRunLoginRedactions,
 } from "../../secrets/bot-secrets.js";
+import { skillLearningPromptState } from "../../skill-curator/seams.js";
 import { loadBotSkillSelection } from "../../tools/bot-skill-access.js";
 import { listAgentSkillRecords } from "../../tools/skill-tools.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
@@ -195,6 +196,7 @@ export async function loadRunRecords(
     savedSkills,
     agentSkills,
     botSkillSelection,
+    skillLearning,
     { env: initialBotCommandEnvironment, redactions: commandRedactions },
     savedLoginPasswordRedactions,
     purchaseRedactions,
@@ -273,6 +275,8 @@ export async function loadRunRecords(
       botId: run.botId,
     }),
     loadBotSkillSelection(deps.prisma, run.botId),
+    // Fork: skill curator mode + open chat lesson (undefined when SKILL_CURATOR is off).
+    skillLearningPromptState(deps.prisma, run),
     loadCommandVariables(deps.prisma, deps.secretStore, run),
     loadLoginPasswordRedactions(deps.prisma, deps.secretStore, run),
     deps.paymentWallet ? loadPurchaseRedactions(deps, run) : [],
@@ -358,6 +362,7 @@ export async function loadRunRecords(
     savedSkills,
     agentSkills,
     botSkillSelection,
+    skillLearning,
     nonOwnerChatRun,
     replaysToolHistory,
     ticketBoardEnabled,

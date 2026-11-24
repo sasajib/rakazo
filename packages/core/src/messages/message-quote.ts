@@ -196,6 +196,7 @@ function replyBlockText(block: MessageBlock): string {
       return block.name || block.task;
     case "child_bot":
     case "skill_draft":
+    case "learned_skill":
     case "connect":
     case "app_connect":
     case "mcp_approval":

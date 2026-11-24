@@ -39,6 +39,7 @@ import { useTeaching } from "./shell/bots/use-teaching";
 import { ChatColumn } from "./shell/chat/chat-column";
 import { useChatMenu } from "./shell/chat/chat-context-menu";
 import { ChatHeader } from "./shell/chat/chat-header";
+import { TeachingBar } from "./shell/chat/teaching-bar";
 import { Transcript } from "./shell/chat/transcript";
 import { useChatRead } from "./shell/chat/use-chat-read";
 import { useMessageActions } from "./shell/chat/use-message-actions";
@@ -759,6 +760,10 @@ function SpaceShell() {
             onTogglePanel={toggleChatPanel}
             onCall={openCall}
           />
+        }
+        // Fork: an open chat lesson (skill curator) shows above the composer.
+        lesson={
+          !inGroup ? <TeachingBar botId={active?.id} threadId={activeSnapshot?.threadId} /> : null
         }
         composer={
           <ChatComposerArea

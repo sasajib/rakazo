@@ -19,6 +19,7 @@ import { ComputerCard } from "../../../components/computers/ComputerCard";
 import { ArtifactFileCard } from "../../../components/messages/ArtifactFileCard";
 import { AskCard } from "../../../components/messages/AskCard";
 import { CloudAgentCard } from "../../../components/messages/CloudAgentCard";
+import { LearnedSkillCard } from "../../../components/messages/LearnedSkillCard";
 import { McpAppCard } from "../../../components/messages/McpAppCard";
 import { OutgoingDraftCard } from "../../../components/messages/OutgoingDraftCard";
 import { SubagentCard } from "../../../components/messages/SubagentCard";
@@ -699,6 +700,14 @@ export const MessageView = memo(function MessageView({
             return (
               <div key={i} className="flex justify-start">
                 <SkillDraftCard block={block} onRefresh={onRefresh} onAddRoutine={onAddRoutine} />
+              </div>
+            );
+          }
+          // Fork: the skill curator's Keep / Edit / Discard card.
+          if (block.kind === "learned_skill") {
+            return (
+              <div key={i} className="flex justify-start">
+                <LearnedSkillCard block={block} rpc={rpc} />
               </div>
             );
           }

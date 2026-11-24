@@ -27,7 +27,13 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # per-agent skills: filter in the catalog + skill_read, the run-records seam, RPC, web section
            ("filterSkillsForBot(", 2), ("loadBotSkillSelection(", 3), ("addSkillToBotSelection(", 2),
            ("botSkillsProcedures", 2), ("createBotSkillsService(", 2), ("BotSkillsSection", 2),
-           ('"BotSkillSelection",', 1)]
+           ('"BotSkillSelection",', 1),
+           # skill curator (auto-learned skills, chat teaching): run-finished hook, prompt seam, RPC,
+           # card block, web card + Learning section + lesson bar, desktop-host teaching gate
+           ("curateAfterRun(ctx)", 1), ("skillLearningPromptState(", 2), ("skillLearningInstruction(", 2),
+           ("skillLearningProcedures", 2), ("createSkillLearningService(", 2), ("LearnedSkillBlockSchema", 2),
+           ("LearnedSkillCard", 2), ("BotLearningSection", 2), ("TeachingBar", 2), ("teachingRefuses(", 1),
+           ('"skill_learning_proposals",', 1)]
 results = []
 
 
@@ -80,6 +86,7 @@ def migrations():
     check("memory ledger migration on disk", os.path.isdir(mdir + "/20261231235500_memory_ledger"))
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
+    check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")
 
 
 def live_queue_test():

@@ -12,6 +12,7 @@ import {
   UpdateAgentSkillInput,
 } from "./agent-skills.js";
 import { botSkillsProcedures } from "./bot-skills.js";
+import { skillLearningProcedures } from "./skill-learning.js";
 import {
   SkillPlaybookSchema,
   TaughtSkillSchema,
@@ -71,6 +72,8 @@ export const skillsRpc = {
     // Fork: per-agent skills (bot-skills.ts).
     ...botSkillsProcedures,
   },
+  // Fork: auto-learned skills and chat teaching (skill-learning.ts).
+  skillLearning: skillLearningProcedures,
   availability: {
     set: oc
       .input(z.object({ kind: AvailabilityKindSchema, id: Id }).and(SpaceAvailabilitySchema))

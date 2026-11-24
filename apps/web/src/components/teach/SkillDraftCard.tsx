@@ -192,6 +192,8 @@ export function SkillDraftCard({
         >
           <Trans>Add to routine</Trans>
         </Button>
+        {/* Fork: copy the taught playbook into a regular skill of this agent. */}
+        {saved ? <SaveAsAgentSkill taughtSkillId={block.skillId} disabled={busy} /> : null}
       </div>
       {error ? (
         <p role="alert" className="mt-2 text-label text-destructive">
@@ -199,5 +201,41 @@ export function SkillDraftCard({
         </p>
       ) : null}
     </BuiCard>
+  );
+}
+
+/** Fork: a saved taught skill as a regular agent skill (the taught one stays). */
+function SaveAsAgentSkill({
+  taughtSkillId,
+  disabled,
+}: {
+  taughtSkillId: string;
+  disabled: boolean;
+}) {
+  const { t } = useLingui();
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const [error, setError] = useState<string | null>(null);
+  async function save() {
+    setState("busy");
+    setError(null);
+    try {
+      await rpc.skillLearning.fromTaught({ taughtSkillId });
+      setState("done");
+    } catch (cause) {
+      setError(errorText(cause, t`Could not save as a skill`));
+      setState("idle");
+    }
+  }
+  return (
+    <>
+      <Button variant="outline" disabled={disabled || state !== "idle"} onClick={() => void save()}>
+        {state === "done" ? <Trans>Saved as skill</Trans> : <Trans>Save as skill</Trans>}
+      </Button>
+      {error ? (
+        <span role="alert" className="text-label text-destructive">
+          {error}
+        </span>
+      ) : null}
+    </>
   );
 }

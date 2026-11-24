@@ -278,6 +278,9 @@ function blockHistoryText(block: MessageBlock): string {
   if (block.kind === "handoff") {
     return `[handoff ${block.fromBotId} -> ${block.toBotId}] ${block.text}`;
   }
+  // Fork: the skill curator's card. The status tells a later turn whether the skill is saved,
+  // so the bot never claims a skill exists while the owner has not kept it.
+  if (block.kind === "learned_skill") return learnedSkillHistoryText(block);
   // Without the answer a later turn sees the question as still open and asks it again.
   if (block.kind === "ask") {
     // A question card keeps its draft in the detail, and a later turn still needs
@@ -524,4 +527,18 @@ export function isStaticPng(bytes: Uint8Array): boolean {
     offset = next;
   }
   return false;
+}
+
+/** "[skill "X" learned from this chat: saved]" and the like, for the bot's later turns. */
+export function learnedSkillHistoryText(block: Extract<MessageBlock, { kind: "learned_skill" }>) {
+  const what = block.action === "patch" ? "change to skill" : "new skill";
+  const state =
+    block.status === "pending"
+      ? "proposed, waiting for the owner's Keep or Discard; not saved yet"
+      : block.status === "kept" || block.status === "saved"
+        ? "saved"
+        : block.status === "failed"
+          ? "could not be saved"
+          : "not kept";
+  return `[skill curator: ${what} "${block.name}" (${block.summary}) - ${state}]`;
 }

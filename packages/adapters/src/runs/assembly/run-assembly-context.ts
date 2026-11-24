@@ -16,6 +16,7 @@ import { lateRoutineRunInstruction } from "../../routines/routine-lateness.promp
 import { routineRunInstruction } from "../../routines/routine-run.prompt.js";
 import { formatCompactedSummary } from "../../runtime/context/history-compaction.prompt.js";
 import { inferScript } from "../../runtime/scripted-runtime.js";
+import { skillLearningInstruction } from "../../skill-curator/seams.js";
 import { filterSkillsForBot } from "../../tools/bot-skill-access.js";
 import { partitionTools } from "../../tools/builtin-tool-bridge.js";
 import type { FleetRun } from "../../tools/fleet-tools.js";
@@ -283,6 +284,7 @@ export async function buildTurnPrompt(
     botSkillSelection,
     nonOwnerChatRun,
     ownerComputerRoutine,
+    skillLearning,
     savedSkills,
     task,
     thread,
@@ -321,7 +323,16 @@ export async function buildTurnPrompt(
       whenToUse: parsePlaybook(skill.playbook).whenToUse || skill.goal,
     })),
   );
-  const agentSkillsLine = formatSkillsCatalogInstruction(runAgentSkills);
+  // Fork: the skill curator's line rides with the skills catalog (skill-curator/seams.ts).
+  const agentSkillsLine =
+    [
+      formatSkillsCatalogInstruction(runAgentSkills),
+      nonOwnerChatRun || ownerComputerRoutine
+        ? undefined
+        : skillLearningInstruction(skillLearning, task.prompt),
+    ]
+      .filter(Boolean)
+      .join("\n") || undefined;
   const missingImagesInstruction = missingTurnImagesInstruction(turnBlocks, currentTurnImages);
   const taskPrompt = expandSkillReferencesInPrompt(
     [task.prompt, attachedFilesPrompt, missingImagesInstruction].filter(Boolean).join("\n\n"),

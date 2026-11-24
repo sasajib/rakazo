@@ -32,6 +32,7 @@ import { useSpaceQueries } from "../../../lib/query/query";
 import { errorText } from "../../../lib/query/user-error";
 import { ROUTINE_PREVIEW_COUNT, RoutineList } from "../../routines/RoutineList";
 import { AvatarStudioPopover } from "./avatar-studio-popover";
+import { BotLearningSection } from "./bot-learning-section";
 import {
   DescriptionGroup,
   ModelRow,
@@ -764,6 +765,9 @@ export function BotSettings({
             </ErrorBoundary>
             <ErrorBoundary fallback={<SectionLoadFailed />}>
               <BotSkillsSection key={bot.id} botId={bot.id} ids={ids} />
+            </ErrorBoundary>
+            <ErrorBoundary fallback={<SectionLoadFailed />}>
+              <BotLearningSection key={bot.id} botId={bot.id} ids={ids} />
             </ErrorBoundary>
             <DescriptionGroup
               ids={ids}

@@ -2,7 +2,7 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import type { ComputerStatus } from "@rakazo/contracts";
 import { Button, Label, Popover, PopoverContent, PopoverTrigger, Textarea } from "@rakazo/ui-web";
 import { useEffect, useRef, useState } from "react";
-import { runsOnUserMachine } from "../../lib/computers/computer-sandbox";
+import { screenlessUserMachine } from "../../lib/computers/computer-sandbox";
 import { rpc } from "../../lib/query/rpc";
 import { errorText } from "../../lib/query/user-error";
 
@@ -89,7 +89,8 @@ export function TeachComputerOverlayControl({
   }, [botId, onRefresh]); // t omitted: identity churn must not re-lock Start
 
   // Hide only for desktop-host bots. Null computer still shows the control so teaching can boot.
-  if (runsOnUserMachine(computer)) return null;
+  // Fork: a desktop host that serves its screen (bee's desktop) can be taught like a sandbox.
+  if (screenlessUserMachine(computer)) return null;
 
   async function refreshView() {
     const requestBotId = botId;

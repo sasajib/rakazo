@@ -288,6 +288,64 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `skill-tools.ts` (catalog/read functions), the Promise.all in `run-assembly-records.ts`,
   `skills-rpc.ts` `agentSkills` object, `memory.ts` handlers, the `bot-panel.tsx` section list.
 
+### 1.19 Skill curator: auto-learned skills, chat teaching, taught -> skill
+- **Purpose:** Hermes-style procedural memory. After an owner-started chat run (`user`/`follow_up`) that was non-trivial
+  (>= `SKILL_CURATOR_MIN_TOOL_CALLS` tool calls, default 6), or where the owner corrected HOW the work is done ("no, always
+  …", "next time …", "from now on …"; tool steps in the bot's last replies count too), or asked ("make this a skill",
+  "remember how to do this"), a background curator (same OmniRoute GLM as the memory ledger, max_tokens 8000) reads the
+  owner's own messages, the run's tool outline (tool, redacted + bounded args, outcome) and the agent's skills, and proposes
+  create {name, "Use when…", steps + pitfalls} / patch {full new body} / nothing. Server gates: quote gate on the owner's
+  words (skipped only for explicit asks and lessons), secret filter, only user skills the agent can see, name clash refused,
+  one open card per skill. Modes per agent + a Space default (default Ask): **Off** nothing; **Ask** a `learned_skill`
+  card (Keep / Edit = inline SKILL.md editor / Discard; patches show a +/- summary); **Auto** saves and posts a notice with
+  Undo, and may patch ONLY skills the curator learned itself (`learned_skills`); a skill the owner wrote always gets an Ask
+  card. Kept/saved skills join the agent's own list when it has one (1.17) and show provenance (agent, date, patches) in
+  the Skills window ("Open in Skills" on the card = `?skills&skill=<id>`).
+  Procedure vs fact: the curator is shown standing orders + earlier ledger lessons/preferences and skips what they cover;
+  when a skill is saved from a correction it retracts the SAME run's ledger lesson/preference fact with the same quote
+  (`skill.curator.ledger_dedup`), after waiting (<= 45 s) for that run's ledger job.
+  Chat teaching: "Let me teach you how to <task>" opens a lesson (`skill_teaching_sessions`; the prompt tells the agent to
+  follow the steps and not to skill_create itself; a bar above the composer shows it); "save as skill"/"I'm done" or the
+  bar's **Save as skill** turns the owner's messages since the start (+ the agent's replies and tool steps) into a draft
+  card (reason `teach_done`); "cancel the lesson" / **Cancel lesson** closes it. Screen teaching: upstream refuses desktop
+  hosts; the fork allows a desktop host that serves its screen (`teachingRefuses` = runsOnUserMachine && !userMachineServesScreen)
+  in the API and shows "Teach a task" via `screenlessUserMachine`; a saved taught skill gets **Save as skill**
+  (`skillLearning/fromTaught`, deterministic playbook -> SKILL.md, the taught one is kept).
+  Prompt (only when SKILL_CURATOR=1): say a skill was saved only when skill_create/update succeeded this run or a
+  `[skill curator: … - saved]` line says so; the card replays in history with its true status.
+- **Commits:** `git log --oneline --grep "skill curator"` (feature commit + docs).
+- **Files (fork):** `packages/adapters/src/skill-curator/{config,triggers,outline,model,store,curator,seams,run-hooks,index}.ts`,
+  `packages/contracts/src/skills/skill-learning.ts` (`skillLearningProcedures`, `LearnedSkillBlockSchema`),
+  `apps/api/src/bots/skill-learning.ts` (`createSkillLearningService`), web `components/messages/LearnedSkillCard.tsx`,
+  `pages/shell/bots/bot-learning-section.tsx` (`BotLearningSection`), `pages/shell/chat/teaching-bar.tsx` (`TeachingBar`).
+- **Seams:** `runs/lifecycle/run-complete.ts` (`curateAfterRun(ctx)` after `learnAfterRun`), `runs/assembly/run-assembly-records.ts`
+  (+1 Promise.all entry `skillLearningPromptState`), `runs/assembly/run-assembly-context.ts` (line joined to `agentSkillsLine`),
+  `adapters/src/index.ts`, `contracts/src/threads/message-blocks.ts` (+`learned_skill` kind), `contracts/src/skills/skills-rpc.ts`
+  (`skillLearning` group), `contracts/src/index.ts`, `core/src/messages/{attachments,message-quote}.ts`, `apps/api/src/routes/memory.ts`
+  (7 handlers), `apps/api/src/bots/taught-skills.ts` (`teachingRefuses`), web `message-view.tsx` (one branch), `bot-panel.tsx`
+  (one section), `Shell.tsx` + `chat/chat-column.tsx` (`lesson` prop), `KnowledgeSection.tsx` (`LearnedSkillLine`,
+  `LinkedSkillOpener`), `components/integrations/skill-agents-line.tsx`, `components/teach/{SkillDraftCard,TeachComputerOverlay}.tsx`,
+  `db/src/database/row-security.ts`, compose anchors.
+- **API:** `skillLearning/settings {botId?}`, `setMode {botId?, mode|null}`, `decide {proposalId, decision, content?}`, `learned`,
+  `teaching {botId, threadId}`, `teach {botId, threadId, action: start|save|cancel, task?}`, `fromTaught {taughtSkillId}`.
+- **Env:** `SKILL_CURATOR=1` (off by default), optional `SKILL_CURATOR_MIN_TOOL_CALLS`, `SKILL_CURATOR_MODEL_URL`,
+  `SKILL_CURATOR_MODEL`, `SKILL_CURATOR_MODEL_API_KEY` (default: the memory ledger's model settings).
+- **Migration:** `20270120090000_skill_learning` (raw SQL, no Prisma models: `skill_learning_settings`, `skill_learning_jobs`,
+  `skill_learning_proposals`, `learned_skills`, `skill_teaching_sessions`; RLS by `spaceId` + system bypass; cascades on
+  space/bot; `learned_skills` cascades with its skill).
+- **Logs:** `skill.curator.decided` (reason, mode, outcome, why, action, proposal, skill, ms), `skill.curator.decision`,
+  `skill.curator.teaching_started|cancelled`, `skill.curator.model_unusable|model_failed`, `skill.curator.ledger_dedup`.
+- **Tests:** `skill-curator/curator.test.ts` (triggers, gates, model I/O, outline redaction, prompt line, config),
+  `skill-curator/curator.postgres.test.ts` (Ask -> Keep -> learned + agent list; Auto patch of its own skill + Undo; owner's
+  skill -> Ask even in Auto; Off; lesson uniqueness; RLS; cascades), `apps/api/src/bots/skill-learning.postgres.test.ts`,
+  `core/src/messages/learned-skill-history.test.ts`, authorization inventory (+7 procedures), `row-security.postgres.test.ts`.
+- **Live check:** throwaway agent: multi-step task + "no, always X first" -> card -> Keep -> `learned_skills` row; a later
+  task -> `skill_read` in logs; another correction -> patch card; lesson -> draft card; Auto -> saved without a card wait;
+  Off -> nothing. Retract the throwaway agent's `memory_facts` after.
+- **Conflicts:** `run-complete.ts` hook order, the `run-assembly-records.ts` Promise.all, `agentSkillsLine` in
+  `run-assembly-context.ts`, upstream adding message block kinds (exhaustive switches in core), `taught-skills.ts` desktop gate.
+- **Mobile:** not changed; the mobile app renders nothing for a `learned_skill` block (decide on the web).
+
 ### 1.18 Merge commit
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 
@@ -300,7 +358,7 @@ Not in this fork, but a sync/deploy must keep them working:
 - **`.env` keys added for fork features** (names only): `VOICE_AGENT_URL`, `VOICE_AGENT_INTERNAL_TOKEN`,
   `RAKAZO_CSP_CONNECT_SRC`, `STANDING_EMBEDDINGS_URL`, `MEMORY_LEDGER`, `MEMORY_LEDGER_MODEL_URL`, `MEMORY_LEDGER_MODEL`,
   `MEMORY_LEDGER_MODEL_API_KEY`, `MEMORY_EMBEDDINGS_URL`, `MEMORY_EMBEDDINGS_MODEL`, `MEMORY_LEDGER_PACK_BUDGET_MS`,
-  `SHELL_BACKGROUND_JOBS`, `SANDBOX_HOST_URL`, `SANDBOX_HOST_TOKEN`, `SANDBOX_HOST_SCREEN`, `RAKAZO_DISABLED_BUILTIN_TOOLS`,
+  `SHELL_BACKGROUND_JOBS`, `SANDBOX_HOST_URL`, `SANDBOX_HOST_TOKEN`, `SANDBOX_HOST_SCREEN`, `RAKAZO_DISABLED_BUILTIN_TOOLS`, `SKILL_CURATOR`,
   `RAKAZO_IMAGE_TAG`, `RAKAZO_COMPUTER_IMAGE`, `RAKAZO_COMPUTER_IMAGE_TAG`, `POSTGRES_IMAGE` (= `rakazo/postgres-graph:16-pgv-age1.6`).
 - **Host units (user systemd):** `bee-rakazo-host-computer` (host computer + screen, 1.15), `bee-rakazo-audit`
   (`sasajib/rakazo-audit`), `bee-rakazo-watch` (`sasajib/rakazo-watch`, Watch MCP + webhooks).
@@ -366,6 +424,7 @@ their siblings and fix `index.ts` exports.
 4. **Postgres tests against pgvector:** start a scratch `rakazo/postgres-graph:16-pgv-age1.6`, then for each of
    `row-security.postgres.test.ts`, `memory-ledger/{ledger,seams}.postgres.test.ts`, `shell-jobs.postgres.test.ts`,
    `chat-wait.postgres.test.ts`, `computer-lifecycle.postgres.test.ts`, `apps/api/src/bots/bot-skills.postgres.test.ts`,
+   `skill-curator/curator.postgres.test.ts`, `apps/api/src/bots/skill-learning.postgres.test.ts`,
    `packages/testkit/src/product/authorization.test.ts`:
    `CI_POSTGRES_URL=postgresql://postgres:pw@127.0.0.1:<port>/rakazo MCP_ALLOW_PRIVATE_ENDPOINT=true pnpm test:integration --spec=<file>`;
    remove the container after. (Plain `postgres:18-alpine` lacks pgvector; the ledger migration fails there.)
