@@ -459,6 +459,7 @@ export async function rememberViaLedger(
 
   const removed: Fact[] = [];
   const replaced: Array<{ old: Fact; new?: Fact | undefined }> = [];
+  const conflicted: Fact[] = [];
   const hints: string[] = [];
   operations.forEach((operation, index) => {
     const target = targets[index];
@@ -492,6 +493,10 @@ export async function rememberViaLedger(
               model: await memoryModel(deps, run.userId, config),
               embedder: embedder(config),
               config,
+              // A conflict with a confirmed fact can only be settled by the owner's answer to a
+              // card; without one it stayed disputed for good.
+              postCard: (card) =>
+                postCard(deps, { ...card, nonce: `memory-ledger:remember:${run.runId}` }),
             },
             {
               spaceId: run.spaceId,
@@ -502,7 +507,7 @@ export async function rememberViaLedger(
               botName: run.botName,
               messages,
               hint: hints.join("\n"),
-              ask: false,
+              ask: true,
             },
           );
         })(),
@@ -521,6 +526,12 @@ export async function rememberViaLedger(
     if (operation.action !== "replace" || !target) continue;
     if (result?.superseded.some((fact) => fact.id === target.id)) {
       replaced.push({ old: target, new: fresh[0] });
+      continue;
+    }
+    // The owner confirmed the old fact: the writer kept both as disputed and asked. Never
+    // override that here.
+    if (result?.disputed.some((fact) => fact.id === target.id)) {
+      conflicted.push(target);
       continue;
     }
     const successor = fresh.find((fact) => fact.id !== target.id);
@@ -567,9 +578,13 @@ export async function rememberViaLedger(
     );
   for (const text of notFound)
     lines.push(`No shared-memory fact matches "${text.slice(0, 120)}"; that edit was not applied.`);
-  if (result?.disputed.length)
+  for (const fact of conflicted)
     lines.push(
-      `Conflict with a confirmed fact kept both as disputed: ${result.disputed.map((f) => `"${f.text}"`).join("; ")}.`,
+      `Did NOT replace "${fact.text}": the owner confirmed it earlier. Both versions are kept as disputed and a card asks the owner which is right; tell them so.`,
+    );
+  if (result?.disputed.length && !conflicted.length)
+    lines.push(
+      `Conflict with a confirmed fact: both kept as disputed, the owner is asked on a card: ${result.disputed.map((f) => `"${f.text}"`).join("; ")}.`,
     );
   return {
     ok: !keptReplaces.length,
@@ -582,6 +597,7 @@ export async function rememberViaLedger(
     removed: removed.map(describe),
     alreadyOutOfUse: alreadyRetired.map(describe),
     unchanged: keptReplaces.map((entry) => entry.old.text),
+    disputed: conflicted.map(describe),
     summary: lines.join(" "),
     note: "Report exactly what summary says. Shared memory is the Space's; every bot sees it. Superseded facts are already out of use: never tell the owner you could not remove them.",
   };

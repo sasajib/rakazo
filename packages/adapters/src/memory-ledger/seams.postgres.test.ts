@@ -58,51 +58,69 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
     const spaceId = `${id}-space`;
     const organizationId = `${id}-org`;
     const fixture = <T>(fn: () => Promise<T>) => runAsSystem("test fixture", fn);
+    const dentist = (name: string, quote: string) => ({
+      facts: [
+        {
+          area: "people",
+          subject: "person.dentist",
+          text: `Owner's dentist is Dr ${name}`,
+          quote,
+          origin: "stated",
+          confidence: 0.95,
+          correction: true,
+          entities: [name],
+        },
+      ],
+    });
     const model = await fakeModel((text) =>
-      /accountant/.test(text)
-        ? {
-            facts: [
-              {
-                area: "people",
-                subject: "person.rahim.role",
-                text: "Rahim is the owner's accountant",
-                quote: "Rahim is my accountant",
-                m: 1,
-                origin: "stated",
-                confidence: 0.9,
-                entities: ["Rahim"],
-              },
-            ],
-          }
-        : /PDF/.test(text) && !/Word/.test(text)
-          ? {
-              facts: [
-                {
-                  area: "preferences",
-                  subject: "pref.report-format",
-                  text: "Owner wants reports as PDF",
-                  quote: "remember I want reports as PDF",
-                  origin: "stated",
-                  confidence: 0.9,
-                  entities: [],
-                },
-              ],
-            }
-          : /Word/.test(text)
+      /Dr Selim/.test(text)
+        ? dentist("Selim", "my dentist is Dr Selim")
+        : /remember my dentist/i.test(text)
+          ? dentist("Rafiq", "remember my dentist is Dr Rafiq")
+          : /accountant/.test(text)
             ? {
                 facts: [
                   {
-                    area: "preferences",
-                    subject: "pref.report-format.new",
-                    text: "Owner wants reports as Word documents",
-                    quote: "send reports as Word now",
+                    area: "people",
+                    subject: "person.rahim.role",
+                    text: "Rahim is the owner's accountant",
+                    quote: "Rahim is my accountant",
+                    m: 1,
                     origin: "stated",
                     confidence: 0.9,
-                    entities: [],
+                    entities: ["Rahim"],
                   },
                 ],
               }
-            : { facts: [] },
+            : /PDF/.test(text) && !/Word/.test(text)
+              ? {
+                  facts: [
+                    {
+                      area: "preferences",
+                      subject: "pref.report-format",
+                      text: "Owner wants reports as PDF",
+                      quote: "remember I want reports as PDF",
+                      origin: "stated",
+                      confidence: 0.9,
+                      entities: [],
+                    },
+                  ],
+                }
+              : /Word/.test(text)
+                ? {
+                    facts: [
+                      {
+                        area: "preferences",
+                        subject: "pref.report-format.new",
+                        text: "Owner wants reports as Word documents",
+                        quote: "send reports as Word now",
+                        origin: "stated",
+                        confidence: 0.9,
+                        entities: [],
+                      },
+                    ],
+                  }
+                : { facts: [] },
     );
     const env = {
       MEMORY_LEDGER: "1",
@@ -289,6 +307,48 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
           (f) => f.text,
         ),
       ).toEqual(["Owner wants reports as Word documents"]);
+
+      // A bot's replace of a CONFIRMED fact on a plain new statement does not override it: both
+      // disputed, the owner asked on a card (regression: the old fact was force-superseded).
+      const seventh = await say("Please remember my dentist is Dr Rafiq.");
+      await tenant(() =>
+        rememberViaLedger(
+          { prisma, secretStore: { load: async () => "" } },
+          run(`${id}-r7`, seventh.id),
+          [{ action: "add", content: "Owner's dentist is Dr Rafiq" }],
+          env,
+        ),
+      );
+      const eighth = await say("Book a cleaning, my dentist is Dr Selim.");
+      const swapped = await tenant(() =>
+        rememberViaLedger(
+          { prisma, secretStore: { load: async () => "" } },
+          run(`${id}-r8`, eighth.id),
+          [
+            {
+              action: "replace",
+              old_text: "Owner's dentist is Dr Rafiq",
+              content: "Owner's dentist is Dr Selim",
+            },
+          ],
+          env,
+        ),
+      );
+      expect(swapped).toMatchObject({
+        replaced: [],
+        disputed: [{ text: "Owner's dentist is Dr Rafiq" }],
+      });
+      const dentists = await tenant(() =>
+        store.findLive(spaceId, { subjects: ["person.dentist"] }),
+      );
+      expect(dentists.map((fact) => fact.status).sort()).toEqual(["disputed", "disputed"]);
+      const card = await fixture(() =>
+        prisma.$queryRawUnsafe<Array<{ askedAt: Date | null }>>(
+          `SELECT "askedAt" FROM "memory_fact_links" WHERE "spaceId" = $1 AND "kind" = 'contradicts'`,
+          spaceId,
+        ),
+      );
+      expect(card[0]?.askedAt).toBeTruthy();
 
       // A remove of a live fact retracts it.
       const sixth = await say("Forget that Rahim is my accountant.");
