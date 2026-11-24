@@ -313,7 +313,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (`skillLearning/fromTaught`, deterministic playbook -> SKILL.md, the taught one is kept).
   Prompt (only when SKILL_CURATOR=1): say a skill was saved only when skill_create/update succeeded this run or a
   `[skill curator: … - saved]` line says so; the card replays in history with its true status.
-- **Commits:** `git log --oneline --grep "skill curator"` (feature commit + docs).
+- **Commits:** `c2649a799` (feature), `953624a7b` (procedure-vs-fact prompt, model reason log), `3cea8bd73` (ledger facts of the stretch being read are not rules; lesson keep retracts the ledger copies; lesson bar layout). Deployed as `main-1124r` (2026-11-25).
 - **Files (fork):** `packages/adapters/src/skill-curator/{config,triggers,outline,model,store,curator,seams,run-hooks,index}.ts`,
   `packages/contracts/src/skills/skill-learning.ts` (`skillLearningProcedures`, `LearnedSkillBlockSchema`),
   `apps/api/src/bots/skill-learning.ts` (`createSkillLearningService`), web `components/messages/LearnedSkillCard.tsx`,
@@ -341,7 +341,11 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `core/src/messages/learned-skill-history.test.ts`, authorization inventory (+7 procedures), `row-security.postgres.test.ts`.
 - **Live check:** throwaway agent: multi-step task + "no, always X first" -> card -> Keep -> `learned_skills` row; a later
   task -> `skill_read` in logs; another correction -> patch card; lesson -> draft card; Auto -> saved without a card wait;
-  Off -> nothing. Retract the throwaway agent's `memory_facts` after.
+  Off -> nothing. Retract the throwaway agent's `memory_facts` after. All five passed on bee 2026-11-25 (stack RAKAZO.md),
+  plus screen teaching on the desktop host (start -> snapshots -> stop -> save -> fromTaught).
+- **Known limits:** GLM's judgement decides create vs none (`skill.curator.model_reason` says why); the curator sees only the
+  owner's text + a tool outline, so steps can carry one-off names from the run; a taught playbook's goal text becomes
+  "Use when <goal>" verbatim; the mobile app shows no card.
 - **Conflicts:** `run-complete.ts` hook order, the `run-assembly-records.ts` Promise.all, `agentSkillsLine` in
   `run-assembly-context.ts`, upstream adding message block kinds (exhaustive switches in core), `taught-skills.ts` desktop gate.
 - **Mobile:** not changed; the mobile app renders nothing for a `learned_skill` block (decide on the web).
