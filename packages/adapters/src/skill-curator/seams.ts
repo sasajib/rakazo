@@ -246,6 +246,7 @@ export async function runCuratorJob(
       "skill.curator.mode": mode,
       "skill.curator.outcome": result.outcome,
       "skill.curator.why": result.why ?? "",
+      "skill.curator.model_reason": result.modelReason ?? "",
       "skill.curator.action": result.action ?? "",
       "skill.curator.proposal": result.proposalId ?? "",
       "skill.curator.skill": result.skillId ?? "",

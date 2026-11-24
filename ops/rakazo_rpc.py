@@ -12,6 +12,8 @@ class Rpc:
             "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "ops", "version": "1"}}})
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         self.page = page or self._find_page()
+        import atexit
+        atexit.register(self.close)
 
     def _post(self, body):
         h = dict(HDR)
@@ -25,18 +27,39 @@ class Rpc:
         _, txt = self._post({"jsonrpc": "2.0", "id": self.n, "method": "tools/call",
                              "params": {"name": "run", "arguments": {"code": code}}})
         line = [l for l in txt.split("\n") if l.startswith("data: {")][0][6:]
-        v = json.loads(json.loads(line)["result"]["structuredContent"]["value"])
+        sc = json.loads(line)["result"]["structuredContent"]
+        if "value" not in sc:
+            # e.g. the fresh tab is still redirecting /app -> /app/<bot>; one retry after a pause
+            import time
+            time.sleep(2)
+            _, txt = self._post({"jsonrpc": "2.0", "id": self.n + 1000, "method": "tools/call",
+                                 "params": {"name": "run", "arguments": {"code": code}}})
+            line = [l for l in txt.split("\n") if l.startswith("data: {")][0][6:]
+            sc = json.loads(line)["result"]["structuredContent"]
+            if "value" not in sc:
+                raise RuntimeError("neo run failed: %s" % str(sc.get("error"))[:300])
+        v = json.loads(sc["value"])
         return v.get("value", v)
 
     def _find_page(self):
-        # the open tab on agents.mindshare.website (signed in as Shakil)
+        # Open OUR OWN tab on the app (his Neo profile is signed in, so the cookie applies).
+        # Never drive his open agents.mindshare.website tab: his tabs are off limits to agents.
         _, txt = self._post({"jsonrpc": "2.0", "id": 99, "method": "tools/call",
-                             "params": {"name": "tabs", "arguments": {"action": "list"}}})
+                             "params": {"name": "tabs", "arguments": {
+                                 "action": "new", "url": "https://agents.mindshare.website/app"}}})
         import re
-        m = re.search(r"\[(\d+)\]\s+https://agents\.mindshare\.website/", txt)
+        m = re.search(r"opened page (\d+)", txt)
         if m:
-            return int(m.group(1))
-        raise RuntimeError("no agents.mindshare.website tab open in Neo")
+            self.own_page = int(m.group(1))
+            return self.own_page
+        raise RuntimeError("could not open an own agents.mindshare.website tab in Neo")
+
+    def close(self):
+        """Close the tab this client opened (call when done)."""
+        if getattr(self, "own_page", None) is not None:
+            self._post({"jsonrpc": "2.0", "id": 98, "method": "tools/call",
+                        "params": {"name": "tabs", "arguments": {"action": "close", "page": self.own_page}}})
+            self.own_page = None
 
     def call(self, path, payload):
         code = ("const p = browser.page(%d);\nconst out = await p.evaluate(async (a) => { const r = await fetch('/rpc/'+a.path, "

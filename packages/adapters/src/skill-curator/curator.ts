@@ -545,6 +545,8 @@ export interface CurateResult {
   skillId?: string;
   action?: "create" | "patch";
   usedModel: boolean;
+  /** What the model said when it chose nothing (its own words, bounded). */
+  modelReason?: string;
 }
 
 export async function curate(
@@ -586,7 +588,15 @@ export async function curate(
   const proposal = await curatorModel.propose(modelInput);
   if (!proposal) return { outcome: "failed", why: "model_unusable", usedModel: false };
   const plan = planProposal(proposal, { reason, messages: input.messages, skills });
-  if (plan.kind === "skip") return { outcome: "skipped", why: plan.why, usedModel: true };
+  if (plan.kind === "skip")
+    return {
+      outcome: "skipped",
+      why: plan.why,
+      usedModel: true,
+      ...(proposal.action === "none" && proposal.reason
+        ? { modelReason: proposal.reason.slice(0, 200) }
+        : {}),
+    };
 
   const open = await store.openProposalFor(job.spaceId, job.botId, {
     skillId: plan.kind === "patch" ? plan.skill.id : null,
