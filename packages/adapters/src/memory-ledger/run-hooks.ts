@@ -6,7 +6,7 @@ import { ledgerEnabled } from "./config.js";
 import type { FinishedRun, ToolRun } from "./seams.js";
 import { recallViaLedger, rememberViaLedger, scheduleLedgerLearning } from "./seams.js";
 
-function runFacts(ctx: RunContext): FinishedRun & ToolRun {
+export function runFacts(ctx: RunContext): FinishedRun & ToolRun {
   const { run, bot } = ctx;
   return {
     runId: ctx.runId,
@@ -17,7 +17,9 @@ function runFacts(ctx: RunContext): FinishedRun & ToolRun {
     botName: bot.name ?? null,
     trigger: run.trigger,
     sourceMessageId: run.sourceMessageId ?? null,
-    ownerStartedRun: ctx.source.ownerStartedRun && !ctx.source.meetingChat,
+    // Not `meetingChat`: upstream sets it for every owner's one-to-one bot chat (the chat a meeting
+    // transcript can be shared into), so excluding it turned learning off in exactly those chats.
+    ownerStartedRun: ctx.source.ownerStartedRun,
     messagingChannelRun: ctx.source.messagingChannelRun,
   };
 }
