@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { isIPv4 } from "node:net";
 import path from "node:path";
 import { browserReadyCommand } from "./browser-ready.js";
-import { startLoginSyncCommand } from "./login-sync.js";
 import { TERMINAL_SERVER_PROGRAM } from "./terminal-server.js";
 // Each live Chrome needs a private debugger port. This is the TCP address-space
 // boundary, not a product limit on bots or saved browser profiles.
@@ -852,8 +851,6 @@ function renderEnsureScreenCommand(
     '[[ "$desktop_view_token" =~ ^[a-zA-Z0-9_-]{1,64}$ ]] || exit 75',
     proxyEnvironmentCommand(),
     `mkdir -p /tmp/rakazo`,
-    // Fork: the bots of a team computer share their logins (login-sync.ts).
-    ...startLoginSyncCommand(),
     `printf %s ${shellQuote(browserLauncherCommand(index, screenId, env))} >${browserLauncherPath(layout.displayNumber)}`,
     `chmod 700 ${browserLauncherPath(layout.displayNumber)}`,
     ...setupDisplay,
