@@ -1536,7 +1536,7 @@ describe("threadSnapshot", () => {
           controlLeaseId: "lease-1",
         }),
       },
-      computerExecutionLease: { findUnique: vi.fn().mockResolvedValue(null) },
+      computerExecutionLease: { findFirst: vi.fn().mockResolvedValue(null) },
     };
     const prisma = {
       $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),

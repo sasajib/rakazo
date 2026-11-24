@@ -166,7 +166,7 @@ describe("resolveComputerWork", () => {
     resolveComputerWork(
       {
         computerExecutionLease: {
-          findUnique: async () =>
+          findFirst: async () =>
             lease && {
               runId: lease.runId,
               expiresAt: new Date(Date.now() + (lease.live ? 60_000 : -60_000)),

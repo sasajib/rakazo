@@ -31,6 +31,12 @@ export const InstructionVersionSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * Execution slots a bot may use at once. One is the product rule; the ceiling is there because
+ * every extra slot is another run's worth of memory on one computer.
+ */
+export const MAX_BOT_CONCURRENCY = 8;
+
 export const BotSchema = z.object({
   meetingsEnabled: z.boolean().optional(),
   id: Id,
@@ -71,6 +77,8 @@ export const BotSchema = z.object({
   dailyCheckIns: z.boolean().optional(),
   fleetManagement: z.boolean().default(true),
   replyMode: ReplyModeSchema.default("chat"),
+  /** Absent on servers and clients from before per-bot concurrency; one slot is the old behaviour. */
+  concurrency: z.number().int().min(1).max(MAX_BOT_CONCURRENCY).optional(),
   disabledBuiltinTools: z.array(z.string()).default([]),
   webhookConfigured: z.boolean(),
   /** Present when created with an idempotency key (e.g. onboarding:first). */
@@ -177,6 +185,11 @@ export const UpdateBotInput = z
     dailyCheckIns: z.boolean().optional(),
     fleetManagement: z.boolean().optional(),
     replyMode: ReplyModeSchema.optional(),
+    /**
+     * How many runs this bot may execute at once. One is the product rule: a bot answers the way
+     * a person does. Raising it lets separate threads progress in parallel, never one conversation.
+     */
+    concurrency: z.number().int().min(1).max(MAX_BOT_CONCURRENCY).optional(),
     disabledBuiltinTools: DisabledBuiltinToolsSchema.optional(),
     /** Write only while these settings still hold, as an undo does. */
     expectedSettings: BotSettingsValuesSchema.optional(),

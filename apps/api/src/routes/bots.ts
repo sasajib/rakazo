@@ -493,6 +493,7 @@ export function botsRoutes(ctx: RouterContext) {
               ? { fleetManagement: input.fleetManagement }
               : {}),
             ...(input.replyMode !== undefined ? { replyMode: input.replyMode } : {}),
+            ...(input.concurrency !== undefined ? { concurrency: input.concurrency } : {}),
             ...(input.disabledBuiltinTools !== undefined
               ? { disabledBuiltinTools: input.disabledBuiltinTools }
               : {}),

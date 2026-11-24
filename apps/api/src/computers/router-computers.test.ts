@@ -62,7 +62,10 @@ describe("computer screen url", () => {
       },
       computer: { updateMany, findUnique: vi.fn().mockResolvedValue(null) },
       $executeRaw: endRun,
-      computerExecutionLease: { findUnique: vi.fn().mockResolvedValue(null) },
+      computerExecutionLease: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
     } as unknown as PrismaClient;
     const deps = {
       prisma,
@@ -268,7 +271,10 @@ describe("computer terminal and file transfer", () => {
         findUniqueOrThrow: vi.fn(),
         findUnique: vi.fn().mockResolvedValue(null),
       },
-      computerExecutionLease: { findUnique: vi.fn().mockResolvedValue(null) },
+      computerExecutionLease: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
       run: { findFirst: vi.fn().mockResolvedValue(null) },
       taughtSkill: { findFirst: vi.fn().mockResolvedValue(null) },
     } as unknown as PrismaClient;
@@ -821,6 +827,7 @@ describe("quarantined computer stop", () => {
         computerExecutionLease: {
           updateMany: vi.fn(async () => ({ count: 0 })),
           findUnique: vi.fn(async () => null),
+          findFirst: vi.fn(async () => null),
         },
         run: { findFirst: vi.fn(async () => null) },
       } as unknown as PrismaClient;

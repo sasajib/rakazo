@@ -2320,7 +2320,9 @@ describeJourneys("required product journeys", () => {
       data: { computerUseStartedAt: new Date() },
     });
     await prisma.computerExecutionLease.upsert({
-      where: { computerId_botId: { computerId: computer.computerId!, botId: bot.id } },
+      where: {
+        computerId_botId_slot: { computerId: computer.computerId!, botId: bot.id, slot: 0 },
+      },
       create: {
         computerId: computer.computerId!,
         botId: bot.id,
@@ -2340,7 +2342,9 @@ describeJourneys("required product journeys", () => {
     expect(
       (
         await prisma.computerExecutionLease.findUniqueOrThrow({
-          where: { computerId_botId: { computerId: computer.computerId!, botId: bot.id } },
+          where: {
+            computerId_botId_slot: { computerId: computer.computerId!, botId: bot.id, slot: 0 },
+          },
         })
       ).runId,
     ).toBe(second.id);
@@ -2783,7 +2787,7 @@ describeJourneys("required product journeys", () => {
       expect(await prisma.event.count({ where: { threadId: helper.threadId } })).toBeGreaterThan(0);
       const { computerId } = await prisma.bot.findUniqueOrThrow({ where: { id: bot.id } });
       const lease = await prisma.computerExecutionLease.upsert({
-        where: { computerId_botId: { computerId: computerId!, botId: bot.id } },
+        where: { computerId_botId_slot: { computerId: computerId!, botId: bot.id, slot: 0 } },
         create: {
           computerId: computerId!,
           botId: bot.id,

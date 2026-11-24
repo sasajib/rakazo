@@ -139,8 +139,8 @@ describePostgres("subagent computer coordination", () => {
     checked.mockRestore();
     controller.abort(new Error("cancelled"));
     await rejected;
-    const lease = await prisma.computerExecutionLease.findUniqueOrThrow({
-      where: { computerId_botId: { computerId, botId: holder.botId } },
+    const lease = await prisma.computerExecutionLease.findFirstOrThrow({
+      where: { computerId, botId: holder.botId },
     });
     expect(lease.runId).toBe(holder.runId);
     expect(lease.fence).toBe(holding?.fence);

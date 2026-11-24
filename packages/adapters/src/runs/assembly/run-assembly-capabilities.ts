@@ -255,6 +255,8 @@ export async function prepareRunComputer(
             computerId: storedComputer.id,
             botId: bot.id,
             runId,
+            threadId: run.threadId,
+            maxSlots: bot.concurrency,
             workerId: hold.workerId,
             runFence: hold.fence,
           },

@@ -7,7 +7,8 @@ type RecoveryRun = {
   id: string;
   botId: string;
   trigger: string;
-  bot: { computerId: string | null };
+  /** The bot's row as the caller selected it; absent in callers that only need the lease count. */
+  bot?: { computerId: string | null; concurrency?: number };
 };
 
 /**
@@ -42,7 +43,7 @@ export async function findRunRecoveryBlockers(
     const lease = leases.find(
       (lease) =>
         lease.botId === run.botId &&
-        lease.computerId === run.bot.computerId &&
+        lease.computerId === run.bot?.computerId &&
         lease.runId !== run.id &&
         lease.expiresAt.getTime() > now.getTime() + 2 * EXECUTION_LEASE_MS &&
         !abandoned.has(lease.runId),

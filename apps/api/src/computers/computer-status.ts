@@ -19,8 +19,10 @@ export async function resolveComputerWork(
 ): Promise<ComputerWork> {
   if (!input.computerId) return { busyBotName: null, takeoverRequested: false };
   const [lease, waiting] = await Promise.all([
-    prisma.computerExecutionLease.findUnique({
-      where: { computerId_botId: { computerId: input.computerId, botId: input.botId } },
+    // A bot can hold several execution slots (bots.concurrency); the most recent lease decides.
+    prisma.computerExecutionLease.findFirst({
+      where: { computerId: input.computerId, botId: input.botId },
+      orderBy: { expiresAt: "desc" },
       select: { expiresAt: true, runId: true },
     }),
     prisma.run.findFirst({
