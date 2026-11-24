@@ -60,6 +60,8 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "schedule_cancel",
   "schedule_update",
   "bot_queue",
+  // Fork: plan confirmation; a bot that cannot find it would delegate unconfirmed (and be refused).
+  "plan_propose",
   // Background shell jobs (fork): a bot told its job id must be able to follow or stop it without find_tool.
   "job_list",
   "job_status",

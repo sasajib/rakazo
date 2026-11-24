@@ -510,6 +510,11 @@ describeWithDatabase("API authorization and resource isolation", () => {
         { botId: "missing-bot", threadId: "missing-thread", action: "start" },
       ],
       ["skillLearning/fromTaught", { taughtSkillId: "missing-skill" }],
+      ["plans/settings", { botId: "missing-bot" }],
+      ["plans/setMode", { botId: "missing-bot", mode: "always" }],
+      ["plans/decide", { planId: "missing-plan", decision: "approve" }],
+      ["plans/trust"],
+      ["plans/revokeTrust", { botId: "missing-bot", workflow: "x" }],
       ["capabilities/list"],
       ["capabilities/sourcePresets"],
       ["capabilities/install", capabilityInput("Unauthenticated")],
@@ -948,6 +953,9 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["skillLearning/teaching", { botId: ownerBot.id, threadId: ownerThread.id }],
       ["skillLearning/teach", { botId: ownerBot.id, threadId: ownerThread.id, action: "cancel" }],
       ["skillLearning/fromTaught", { taughtSkillId: ownerSkill.id }],
+      ["plans/settings", { botId: ownerBot.id }],
+      ["plans/setMode", { botId: ownerBot.id, mode: "never" }],
+      ["plans/revokeTrust", { botId: ownerBot.id, workflow: "x" }],
       ["memory/update", { documentId: ownerMemory.id, content: "stolen" }],
       ["connections/complete", { connectionId: ownerConnection.connectionId }],
     ] satisfies Array<[string, unknown]>;
@@ -975,6 +983,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
     expect(intruderSkillAgents.flatMap((entry) => entry.bots.map((bot) => bot.id))).not.toContain(
       ownerBot.id,
     );
+    // Fork: workflow trust is per Space.
+    expect(
+      (await rpc<Array<{ botId: string }>>(app, intruder, "plans/trust")).map((row) => row.botId),
+    ).not.toContain(ownerBot.id);
     expect(await rpc<Array<{ id: string }>>(app, intruder, "connections/list")).not.toContainEqual(
       expect.objectContaining({ id: ownerConnection.connectionId }),
     );

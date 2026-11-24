@@ -36,6 +36,7 @@ import {
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { HANG_UP_PROMPT } from "../bots/hidden-turns.prompt.js";
+import { createPlansService } from "../bots/plans.js";
 import { assertTeachingSendAllowed } from "../bots/taught-skills.js";
 import { answerComputerRequest } from "../computers/computer-control.js";
 import type { RouterDeps } from "../router.js";
@@ -195,7 +196,26 @@ export function threadsRoutes(ctx: RouterContext) {
       throw error;
     });
   };
+  // Fork: plan confirmation cards (bots/plans.ts); a decision is sent as the owner's message.
+  const plans = createPlansService({ prisma: deps.prisma, events: deps.events }, (actor, input) =>
+    send(actor, { botId: input.botId, text: input.text, clientNonce: input.clientNonce }),
+  );
   return {
+    plans: {
+      settings: authed.plans.settings.handler(({ context, input }) =>
+        plans.settings(context.actor, input),
+      ),
+      setMode: authed.plans.setMode.handler(({ context, input }) =>
+        plans.setMode(context.actor, input),
+      ),
+      decide: authed.plans.decide.handler(({ context, input }) =>
+        plans.decide(context.actor, input),
+      ),
+      trust: authed.plans.trust.handler(({ context }) => plans.trust(context.actor)),
+      revokeTrust: authed.plans.revokeTrust.handler(({ context, input }) =>
+        plans.revokeTrust(context.actor, input),
+      ),
+    },
     threads: {
       head: authed.threads.head.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);

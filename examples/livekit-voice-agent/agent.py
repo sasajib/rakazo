@@ -61,6 +61,7 @@ from conversation import (
     heartbeat_line,
     looks_unfinished,
     merge_held,
+    plan_reply_word,
     speakable,
     spoken_decision_action,
     wants_to_move_on,
@@ -74,6 +75,7 @@ from rakazo_client import (
     RakazoError,
     call_client_nonce,
     call_turn,
+    pending_plan_of,
     progress_text,
     text_from_blocks,
 )
@@ -175,6 +177,9 @@ class RakazoAgent(Agent):
         self._mirrors: set[asyncio.Task[None]] = set()
         # A half sentence whose turn was cut off by the caller carrying on: (text, when). The next turn starts with it.
         self._held: tuple[str, float] | None = None
+        # When the caller started speaking again after the held half sentence (None = not yet).
+        self._held_resumed_at: float | None = None
+        self._user_state = "listening"
 
     # --- Rakazo event stream ------------------------------------------------------------------
 
@@ -472,7 +477,8 @@ class RakazoAgent(Agent):
         if self._held is not None:
             held_text, held_at = self._held
             self._held = None
-            joined = merge_held(held_text, held_at, utterance, time.monotonic())
+            resumed_at, self._held_resumed_at = self._held_resumed_at, None
+            joined = merge_held(held_text, held_at, utterance, time.monotonic(), resumed_at=resumed_at)
             if joined != utterance:
                 logger.info("joined the half sentence %r with %r", held_text, utterance)
                 utterance = joined
@@ -483,6 +489,8 @@ class RakazoAgent(Agent):
                 await asyncio.sleep(UNFINISHED_HOLD_S)
             except (asyncio.CancelledError, GeneratorExit):
                 self._held = (utterance, time.monotonic())
+                # The hold is cancelled because the caller carried on: they are speaking already.
+                self._held_resumed_at = time.monotonic() if self._user_state == "speaking" else None
                 logger.info("holding a half sentence: %r", utterance)
                 raise
         t0 = time.monotonic()
@@ -501,8 +509,31 @@ class RakazoAgent(Agent):
         self.log_speech(segments)
         self._last_voiced = t0
 
+        # Fork: a plan card waits for the caller's word. "Yes" / "go ahead" approves it (recorded
+        # on the card as a spoken approval, then the words go to the agent, which carries the plan
+        # out); "change step 2 to ..." / "no" go to the agent as they are. Either way the words must
+        # not be taken for "go on" or a status question.
+        early_snapshot = None
+        plan_word = plan_reply_word(utterance)
+        pending_plan = None
+        if plan_word:
+            try:
+                early_snapshot = await self.client.threads_get(self.call.bot_id)
+                pending_plan = pending_plan_of(early_snapshot)
+            except RakazoError as exc:
+                logger.warning("could not read the chat for a pending plan: %s", exc)
+        if pending_plan is not None and plan_word == "approve":
+            try:
+                await self.client.plans_decide(str(pending_plan.get("planId")), "approve")
+                logger.info("spoken plan approval for plan %s (%r)", pending_plan.get("planId"), utterance[:60])
+            except RakazoError as exc:
+                # The server reads the caller's words too, so the approval still lands.
+                logger.warning("spoken plan approval not recorded: %s", exc)
+        elif pending_plan is not None:
+            logger.info("spoken plan %s for plan %s (%r)", plan_word, pending_plan.get("planId"), utterance[:60])
+
         # "Go on" after an interrupted update asks for the rest of that update, not for a new turn.
-        if asks_to_continue(utterance) and self.state.has_paused_report():
+        if pending_plan is None and asks_to_continue(utterance) and self.state.has_paused_report():
             rest = self.state.resume_report()
             if rest:
                 self.state.record_reply(rest)
@@ -515,7 +546,7 @@ class RakazoAgent(Agent):
 
         # "What are you working on?" is answered from what this call has seen, in one sentence,
         # instead of sending a turn that would read the whole thread's task history back.
-        if turn.kind == "status":
+        if turn.kind == "status" and pending_plan is None:
             line = self.state.task_status() or self.state.status_line(self.call.bot_name)
             if line:
                 self.state.record_reply(line)
@@ -524,10 +555,14 @@ class RakazoAgent(Agent):
                 self.state.end_turn(turn.id)
                 return
 
-        snapshot = await self.client.threads_get(self.call.bot_id)
+        snapshot = early_snapshot or await self.client.threads_get(self.call.bot_id)
         decision = call_turn(snapshot, utterance)
         leave_cards = False
         card_note = ""
+        if pending_plan is not None and decision.kind in ("approve_on_screen", "enter_code"):
+            # The plan answer is a request of its own beside any other open card.
+            leave_cards = True
+            decision = CallTurn("send")
 
         if decision.kind == "enter_code":
             # A run is parked on a secret card. A secret is never said into a call (it would pass
@@ -1132,6 +1167,9 @@ async def entrypoint(ctx: JobContext) -> None:
         # "speaking" while the agent is speaking is the moment barge-in should fire.
         logger.info("user %s -> %s (agent is %s)", ev.old_state, ev.new_state, session.agent_state)
         agent._user_changed = time.monotonic()
+        agent._user_state = str(ev.new_state)
+        if str(ev.new_state) == "speaking" and agent._held is not None and agent._held_resumed_at is None:
+            agent._held_resumed_at = agent._user_changed
 
     @session.on("speech_created")
     def _on_speech(ev):  # type: ignore[no-untyped-def]

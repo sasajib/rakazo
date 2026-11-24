@@ -33,6 +33,7 @@ import { errorText } from "../../../lib/query/user-error";
 import { ROUTINE_PREVIEW_COUNT, RoutineList } from "../../routines/RoutineList";
 import { AvatarStudioPopover } from "./avatar-studio-popover";
 import { BotLearningSection } from "./bot-learning-section";
+import { BotPlansSection } from "./bot-plans-section";
 import {
   DescriptionGroup,
   ModelRow,
@@ -768,6 +769,7 @@ export function BotSettings({
             </ErrorBoundary>
             <ErrorBoundary fallback={<SectionLoadFailed />}>
               <BotLearningSection key={bot.id} botId={bot.id} ids={ids} />
+              <BotPlansSection key={`plans-${bot.id}`} botId={bot.id} ids={ids} />
             </ErrorBoundary>
             <DescriptionGroup
               ids={ids}

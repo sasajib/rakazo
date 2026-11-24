@@ -189,6 +189,7 @@ function replyBlockText(block: MessageBlock): string {
     case "voice_call":
     case "cloud_agent":
     case "page":
+    case "plan":
       return block.title;
     case "call_request":
       return block.reason;

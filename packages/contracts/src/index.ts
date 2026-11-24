@@ -72,6 +72,8 @@ export * from "./models/voice.js";
 export * from "./models/voice-connection-ui.js";
 export * from "./models/voice-errors.js";
 export * from "./personal-calendar/personal-calendar.js";
+// Fork: plan confirmation (plans.ts).
+export * from "./plans/plans.js";
 export * from "./routines/routine.js";
 export * from "./routines/routine-watch.js";
 export * from "./rpc/app-contract.js";

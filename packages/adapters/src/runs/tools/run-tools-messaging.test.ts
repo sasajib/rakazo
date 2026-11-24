@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     botId: "bot-servo",
     name: "Servo",
     delivered: "deploy this",
+    requestId: "run-next",
     note: "Sent",
   })),
   handoffToGroupBot: vi.fn(async (..._args: unknown[]) => ({ ok: true as const })),
@@ -414,5 +415,59 @@ describe("posting into a group from outside it", () => {
     ).resolves.toEqual({ error: "you are not a member of that group. Nothing was posted." });
     expect(mocks.readWorkspaceFile).not.toHaveBeenCalled();
     expect(mocks.postToGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe("plan confirmation gate on message_bot (fork)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function ownerRun(plan: Record<string, unknown> | null) {
+    const { ctx } = context("computer-team");
+    const queryRawUnsafe = vi.fn(async (sql: string) =>
+      sql.includes('"plan_settings"') ? [] : sql.includes('"agent_plans"') && plan ? [plan] : [],
+    );
+    const owned = {
+      ...ctx,
+      deps: {
+        ...ctx.deps,
+        prisma: {
+          ...ctx.deps.prisma,
+          $queryRawUnsafe: queryRawUnsafe,
+          $executeRawUnsafe: vi.fn(async () => 1),
+        },
+      },
+      run: { ...ctx.run, botId: "bot-coder", trigger: "user", sourceMessageId: "m-1" },
+      source: { ownerStartedRun: true, messagingChannelRun: false },
+    } as unknown as RunContext;
+    return owned;
+  }
+
+  it("refuses a request to another agent until a plan is approved", async () => {
+    const result = await messagingTools.message_bot!(ownerRun(null), callWith("message_bot", {}));
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(String((result as { note: string }).note)).toContain("plan_propose");
+    expect(mocks.messageBot).not.toHaveBeenCalled();
+  });
+
+  it("sends once an approved plan is bound to this run", async () => {
+    const plan = {
+      id: "plan-1",
+      status: "approved",
+      executingRunId: "run-1",
+      steps: "[]",
+      inputs: "[]",
+      createdAt: new Date(),
+    };
+    const result = await messagingTools.message_bot!(ownerRun(plan), callWith("message_bot", {}));
+    expect(result).toMatchObject({ ok: true, requestId: "run-next" });
+    expect(mocks.messageBot).toHaveBeenCalledTimes(1);
+  });
+
+  it("never holds a result or status to another agent", async () => {
+    const result = await messagingTools.message_bot!(
+      ownerRun(null),
+      callWith("message_bot", { intent: "result" }),
+    );
+    expect(result).toMatchObject({ ok: true });
   });
 });

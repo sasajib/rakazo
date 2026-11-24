@@ -350,6 +350,71 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `run-assembly-context.ts`, upstream adding message block kinds (exhaustive switches in core), `taught-skills.ts` desktop gate.
 - **Mobile:** not changed; the mobile app renders nothing for a `learned_skill` block (decide on the web).
 
+### 1.20 Plan confirmation, superseding a request, known-workflow trust
+- **Why:** 2026-11-25 Umar got only the second half of a spoken request (the voice agent dropped the held first
+  half; fix under "Voice agent" below), delegated the wrong workflow to YouTube Specialist, and the owner's correction then
+  queued 2 min 21 s behind the wrong run in the same lane.
+- **Purpose:** (1) before an owner-started run hands work to another agent (`message_bot` intent request) or starts
+  multi-step work, the agent calls `plan_propose`: a `plan` card (numbered steps, who does each, inputs) posted with
+  the run's id, so a call speaks its short version; the run ends (nothing parks). The owner approves by **click**
+  (`plans/decide` -> his message "Approved. Go ahead…" starts the run), by **voice** (the call agent hears
+  yes/go ahead, calls `plans/decide {via: voice}` and sends his words) or by **text** (the run's assembly matches
+  his message with `planReplyIntent`: approve / change / reject / other). Change (card **Change** = edit the steps,
+  or "change step 2 to …") -> status `changes`, the prompt tells the agent to `plan_propose {revises}`; the
+  revision replaces the card. The approved plan is bound to the run that carries it out (`executingRunId`), and only
+  such a run may `message_bot` a request (`planGateForMessageBot`; refusal = `ok:false` + `PLAN_REQUIRED_NOTE`).
+  (2) `message_bot {replaces: <request id | id prefix | "latest">}`: in the delivery transaction the earlier
+  request of the SAME sender to the same recipient is cancelled (queued) or stopped (running; the run's 1 s lease
+  watch aborts it, computer work torn down after commit, like threads/stop), its auto-return is suppressed
+  (`botOutcomeReturnedAt`), and the correction is delivered with the preface "This replaces my earlier request
+  <id8> (…), which I stopped…". Nothing holds it then (gate lane free, chat-wait sees a cancelled run). Every
+  `message_bot` now returns `requestId`. (3) Known workflows: `plan_propose {workflow: <skill name>}`; a clean
+  approval (revision 1, approved as proposed) adds 1 to `plan_trust(botId, workflow)`; a change/reject resets it;
+  at `threshold` (default 3) under **Ask until trusted** the next proposal is `auto` (approved by `trust`, bound to
+  the proposing run, card shown as a notice). Owner revokes per workflow (Skills window line or agent settings).
+- **Settings:** per agent, agent settings -> **Plans** (next to Learning): Default (= Ask until trusted) / Always ask /
+  Ask until trusted / Never ask, and the approvals threshold; trusted workflows listed with counters + Revoke.
+  Skills window: under a skill, "<agent>: approved n of 3 times" / "runs it without asking" + Revoke.
+- **Files (fork):** `packages/contracts/src/plans/plans.ts` (`planProcedures`, `PlanBlockSchema`, modes),
+  `packages/adapters/src/plans/{intent,plans,index}.ts`, `packages/adapters/src/messaging/bot-supersede.ts`,
+  `apps/api/src/bots/plans.ts` (`createPlansService`), web `components/messages/PlanCard.tsx`,
+  `pages/shell/bots/bot-plans-section.tsx` (`BotPlansSection`).
+- **Seams:** `runs/assembly/run-assembly-context.ts` (`planPromptState` + `planInstruction` joined to `agentSkillsLine`),
+  `messaging/bot-messages.ts` (`replaces` input; supersede after the refusal checks, inside the tx; `requestId`),
+  `runs/tools/run-tools-messaging.ts` (`plan_propose` handler; gate in `message_bot`), `tools/builtin-conversation.tool-definition.ts`
+  (`plan_propose`), `tools/builtin-fleet.tool-definition.ts` (`replaces`), `tools/builtin-tool-bridge.ts` (pinned),
+  `runtime/pi/tools/pi-runtime-tools.ts` (label), `contracts/src/bots/builtin-tools.ts`, `contracts/src/threads/message-blocks.ts`
+  (+`plan`), `contracts/src/skills/skills-rpc.ts` (`plans` group), `contracts/src/index.ts`, `core/src/messages/{attachments,message-quote}.ts`
+  (`planHistoryText`), `core/src/runs/action-approval.ts`, `apps/api/src/routes/threads.ts` (`plans` handlers use `send`),
+  web `message-view.tsx`, `bot-panel.tsx`, `KnowledgeSection.tsx` + `skill-agents-line.tsx` (`SkillTrustLine`),
+  `db/src/database/row-security.ts`, `adapters/src/index.ts`. `ops/post-sync-check.py` live queue test sets the sender bot to Never ask.
+- **API:** `plans/settings {botId}`, `plans/setMode {botId, mode|null, threshold?}`, `plans/decide {planId, decision:
+  approve|change|reject, text?, via?: click|voice}`, `plans/trust`, `plans/revokeTrust {botId, workflow}` (owner of the bot only).
+- **Env:** none (per-agent setting; Never ask = old behaviour). **Migration:** `20270125090000_plan_confirm`
+  (`agent_plans`, `plan_settings`, `plan_trust`; raw SQL, RLS by spaceId + system bypass, cascades with space/bot/thread).
+- **Logs:** `plan.proposed`, `plan.decided` (decision, via, workflow, revision, run), `plan.gate_refused`,
+  `bot_message.superseded` (replaced run, was_running, age, new run), `plan.trust_revoked`.
+- **Voice agent (deployed copy + example):** `rakazo_client.text_from_blocks` speaks a pending/auto plan card's `spoken`
+  line; `pending_plan_of(snapshot)`; `plans_decide`; `conversation.plan_reply_word`; `llm_node` reads the chat when the
+  words look like a plan answer, so "yes" approves the plan instead of resuming a paused report or being a status turn.
+  **Half-sentence fix:** `merge_held(..., resumed_at)` measures the 10 s window to when the caller started speaking
+  again, not to the end of the rest (a 29 s continuation dropped "browse YouTube from my account … history … a video named").
+- **Tests:** `plans/plans.test.ts` (intent, prompt, trust rule), `plans/plans.postgres.test.ts` (propose -> spoken change ->
+  revision -> call-turn "yes" approves + binds -> gate refuses before/permits after -> supersede running request ->
+  3 approvals -> 4th auto -> change resets -> Always/Never; RLS), `messaging/bot-supersede.postgres.test.ts` (FAILS on
+  the pre-feature code: old run stays `running`), `builtin-tool-bridge.test.ts` (pinned + cap 47_320), prompt-surface
+  snapshots, authorization inventory (+5). Agent: `tests/test_plan_voice.py` (the incident replay FAILS on the old agent:
+  only the second half was sent).
+- **Live check:** throwaway planner A + worker B: multi-step request -> card -> Approve click -> A messages B; "change step 2"
+  -> revised card -> approve; long task to B then correction with replaces -> B's first run cancelled within seconds, new
+  run started; workflow skill approved 3x -> 4th `auto` notice and delegation without asking. Retract test bots' facts.
+- **Known limits:** the gate covers delegation only (multi-step work without delegation is asked of the model by prompt,
+  not enforced); the owner cannot supersede a bot's request directly (only its sender; he can Stop in the recipient's
+  chat); a typed reply is matched by words (a vague "ok but…" counts as change, a question leaves it pending); trust counts
+  only plans that name the workflow; mobile renders no plan card (decide on the web or say it).
+- **Conflicts:** `message_bot`/`bot-messages.ts` delivery transaction, the `agentSkillsLine` join in `run-assembly-context.ts`,
+  `run-tools-messaging.ts` handlers, upstream message block kinds (exhaustive switches), pinned tool cap.
+
 ### 1.18 Merge commit
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 
@@ -429,6 +494,7 @@ their siblings and fix `index.ts` exports.
    `row-security.postgres.test.ts`, `memory-ledger/{ledger,seams}.postgres.test.ts`, `shell-jobs.postgres.test.ts`,
    `chat-wait.postgres.test.ts`, `computer-lifecycle.postgres.test.ts`, `apps/api/src/bots/bot-skills.postgres.test.ts`,
    `skill-curator/curator.postgres.test.ts`, `apps/api/src/bots/skill-learning.postgres.test.ts`,
+   `plans/plans.postgres.test.ts`, `messaging/bot-supersede.postgres.test.ts`,
    `packages/testkit/src/product/authorization.test.ts`:
    `CI_POSTGRES_URL=postgresql://postgres:pw@127.0.0.1:<port>/rakazo MCP_ALLOW_PRIVATE_ENDPOINT=true pnpm test:integration --spec=<file>`;
    remove the container after. (Plain `postgres:18-alpine` lacks pgvector; the ledger migration fails there.)

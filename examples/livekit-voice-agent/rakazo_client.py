@@ -201,10 +201,40 @@ def activity_text(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def plan_spoken(block: dict[str, Any]) -> str:
+    """What a call says for a plan card: the agent's short version, else the steps in brief."""
+    spoken = str(block.get("spoken") or "").strip()
+    if spoken:
+        return spoken
+    steps = [str(s.get("text") or "").strip().rstrip(".") for s in block.get("steps") or [] if isinstance(s, dict)]
+    steps = [s for s in steps if s]
+    if not steps:
+        return ""
+    listed = "; ".join(f"{i + 1}, {s}" for i, s in enumerate(steps[:4]))
+    return f"My plan for {str(block.get('title') or 'this').rstrip('.')}: {listed}. Shall I go ahead?"
+
+
 def text_from_blocks(blocks: Iterable[dict[str, Any]]) -> str:
-    """The speakable text of a bot message: text blocks and the question of an ask block."""
-    parts = [b.get("text", "") for b in blocks if b.get("kind") in ("text", "ask") and b.get("text")]
+    """The speakable text of a bot message: text blocks, the question of an ask block, and the
+    short version of a plan card while it waits for approval (fork: plan confirmation)."""
+    parts: list[str] = []
+    for b in blocks:
+        kind = b.get("kind")
+        if kind in ("text", "ask") and b.get("text"):
+            parts.append(str(b.get("text", "")))
+        elif kind == "plan" and b.get("status") in ("pending", "auto"):
+            parts.append(plan_spoken(b))
     return "\n".join(p.strip() for p in parts if p.strip())
+
+
+def pending_plan_of(thread: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The newest plan card in the chat, when it still waits for the owner's approval."""
+    messages = list((thread or {}).get("messages") or [])
+    for message in reversed(messages[-30:]):
+        for block in message.get("blocks") or []:
+            if isinstance(block, dict) and block.get("kind") == "plan":
+                return block if block.get("status") == "pending" else None
+    return None
 
 
 def parse_sse(lines: Iterable[str]) -> Iterable[dict[str, Any]]:
@@ -365,6 +395,10 @@ class RakazoClient:
             "threads/answer",
             {"botId": bot_id, "runId": run_id, "messageId": message_id, "answer": answer, "clientNonce": client_nonce},
         )
+
+    async def plans_decide(self, plan_id: str, decision: str) -> dict[str, Any]:
+        """Approve / reject a plan card heard on the call; the caller's words are sent separately."""
+        return await self.rpc("plans/decide", {"planId": plan_id, "decision": decision, "via": "voice"})
 
     async def threads_stop(self, bot_id: str) -> dict[str, Any]:
         return await self.rpc("threads/stop", {"botId": bot_id})

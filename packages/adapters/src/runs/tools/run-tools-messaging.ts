@@ -29,8 +29,10 @@ import {
 } from "../../memory/notice-ledger.js";
 import { messageBot, unresolvedBotError } from "../../messaging/bot-messages.js";
 import { describeQueueItem, loadBotQueue } from "../../messaging/bot-queue.js";
+import { planGateForMessageBot, proposePlan } from "../../plans/plans.js";
 import { startBackgroundHelper } from "../../tasks/background-helpers.js";
 import type { RunContext } from "../assembly/run-context.js";
+import { runLeaseFor } from "../assembly/run-messages.js";
 import {
   canPostLongTaskHeadsUp,
   canPublishDurableProgress,
@@ -390,11 +392,52 @@ export const messagingTools: ToolHandlers = {
     }
     return call.finish(result);
   },
+  async plan_propose(ctx, call) {
+    const { deps, run } = ctx;
+    const { args } = call;
+    return call.finish(
+      await proposePlan(
+        { prisma: deps.prisma, events: deps.events },
+        {
+          id: run.id,
+          spaceId: run.spaceId,
+          threadId: run.threadId,
+          botId: run.botId,
+          userId: run.userId,
+          trigger: run.trigger,
+          sourceMessageId: run.sourceMessageId ?? null,
+          lease: runLeaseFor(deps, run.id),
+        },
+        args,
+      ),
+    );
+  },
   async message_bot(ctx, call) {
     const { deps, run, bot } = ctx;
     const { args, effectKey } = call;
     const invalid = messageError(ctx, args.message);
     if (invalid) return call.finish({ error: invalid });
+    // Fork: an owner-started run delegates only an approved plan (plans/plans.ts).
+    const planRefused = await planGateForMessageBot(
+      deps.prisma,
+      {
+        id: run.id,
+        spaceId: run.spaceId,
+        threadId: run.threadId,
+        botId: run.botId,
+        userId: run.userId,
+        trigger: run.trigger,
+        sourceMessageId: run.sourceMessageId ?? null,
+      },
+      {
+        // Hand-rolled test contexts carry no source: nothing to gate then.
+        ownerStartedRun: ctx.source?.ownerStartedRun === true,
+        messagingChannelRun: ctx.source?.messagingChannelRun === true,
+        intent: args.intent ? String(args.intent) : undefined,
+        replaces: args.replaces ? String(args.replaces) : undefined,
+      },
+    );
+    if (planRefused) return call.finish({ ok: false, sent: false, note: planRefused });
     const stored = await prepareSentFiles(ctx, call, {
       botId: args.bot_id ? String(args.bot_id) : undefined,
       name: args.confirm_name ? String(args.confirm_name) : undefined,
@@ -419,6 +462,7 @@ export const messagingTools: ToolHandlers = {
         files: stored.files,
         lane: args.lane ? String(args.lane) : undefined,
         force: args.force === true,
+        replaces: args.replaces ? String(args.replaces) : undefined,
       },
     );
     if (!sent.ok) return call.finish({ error: sent.error });
@@ -427,6 +471,8 @@ export const messagingTools: ToolHandlers = {
       botId: sent.botId,
       name: sent.name,
       ...("duplicate" in sent ? { sent: false } : {}),
+      ...("requestId" in sent ? { requestId: sent.requestId } : {}),
+      ...("replaced" in sent && sent.replaced ? { replaced: sent.replaced } : {}),
       note: sent.note,
     });
   },

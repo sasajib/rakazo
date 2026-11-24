@@ -281,6 +281,8 @@ function blockHistoryText(block: MessageBlock): string {
   // Fork: the skill curator's card. The status tells a later turn whether the skill is saved,
   // so the bot never claims a skill exists while the owner has not kept it.
   if (block.kind === "learned_skill") return learnedSkillHistoryText(block);
+  // Fork: a plan card; its status tells a later turn whether it may carry the plan out.
+  if (block.kind === "plan") return planHistoryText(block);
   // Without the answer a later turn sees the question as still open and asks it again.
   if (block.kind === "ask") {
     // A question card keeps its draft in the detail, and a later turn still needs
@@ -527,6 +529,26 @@ export function isStaticPng(bytes: Uint8Array): boolean {
     offset = next;
   }
   return false;
+}
+
+/** "[plan P (rev 2) ... - approved]", for the bot's later turns. */
+export function planHistoryText(block: Extract<MessageBlock, { kind: "plan" }>) {
+  const state =
+    block.status === "pending"
+      ? "waiting for the owner's approval; do not carry it out yet"
+      : block.status === "approved"
+        ? `approved by the owner${block.decidedVia ? ` (${block.decidedVia})` : ""}`
+        : block.status === "auto"
+          ? "run without asking (trusted workflow)"
+          : block.status === "changes"
+            ? "the owner asked for changes"
+            : block.status === "replaced"
+              ? "replaced by a newer revision"
+              : "rejected by the owner";
+  const steps = block.steps
+    .map((step, i) => `${i + 1}. ${step.agent ? `${step.agent}: ` : ""}${step.text}`)
+    .join(" ");
+  return `[plan ${block.planId} rev ${block.revision} "${block.title}"${block.workflow ? ` (workflow ${block.workflow.name})` : ""}: ${steps} - ${state}]`;
 }
 
 /** "[skill "X" learned from this chat: saved]" and the like, for the bot's later turns. */

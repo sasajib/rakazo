@@ -33,7 +33,13 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("curateAfterRun(ctx)", 1), ("skillLearningPromptState(", 2), ("skillLearningInstruction(", 2),
            ("skillLearningProcedures", 2), ("createSkillLearningService(", 2), ("LearnedSkillBlockSchema", 2),
            ("LearnedSkillCard", 2), ("BotLearningSection", 2), ("TeachingBar", 2), ("teachingRefuses(", 1),
-           ('"skill_learning_proposals",', 1)]
+           ('"skill_learning_proposals",', 1),
+           # plan confirmation + superseding requests + workflow trust: prompt seam, tool, message_bot gate,
+           # supersede in the delivery transaction, RPC, card block, web card + Plans section + Skills line
+           ("planPromptState(", 2), ("planInstruction(", 2), ("planGateForMessageBot(", 2), ('"plan_propose"', 4),
+           ("findReplaceableRequest(", 2), ("cancelReplacedRequest(", 2), ("planProcedures", 2),
+           ("createPlansService(", 2), ("PlanBlockSchema", 2), ("PlanCard", 2), ("BotPlansSection", 2),
+           ("SkillTrustLine", 2), ('"agent_plans",', 1)]
 results = []
 
 
@@ -87,6 +93,7 @@ def migrations():
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
     check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")
+    check("plan confirmation tables exist with row security", psql("select count(*) from pg_class where relname in ('agent_plans','plan_settings','plan_trust') and relrowsecurity") == "3")
 
 
 def live_queue_test():
@@ -100,6 +107,8 @@ def live_queue_test():
         s = rpc.call("bots/create", {"name": "Chk Sender", "spawnKey": "chk-s-" + tag, "instructions": "Sender test bot. Do exactly what the user says, using message_bot with the exact arguments given. Reply in one short sentence.", "description": "post-sync check"})["json"]["id"]
         ids = [w, s]
         rpc.call("bots/update", {"botId": w, "concurrency": 4})
+        # plan confirmation would hold the sender's message_bot calls for a plan card; this test is about lanes
+        rpc.call("plans/setMode", {"botId": s, "mode": "never"})
         for b in ids:
             rpc.call("threads/send", {"botId": b, "text": "ok, ready.", "clientNonce": "i-" + b[:6]})
         time.sleep(30)

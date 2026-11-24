@@ -29,6 +29,13 @@ import type { ExecutorDeps } from "../runs/executor/executor-deps.js";
 import { normalizeLane } from "../runs/lifecycle/run-gate.js";
 import { wakeRun } from "../runs/wakeups/wake-run.js";
 import { describeQueueItem, findQueuedDuplicate, loadBotQueue } from "./bot-queue.js";
+import type { SupersededRequest } from "./bot-supersede.js";
+import {
+  cancelReplacedRequest,
+  findReplaceableRequest,
+  finishReplacedRequest,
+  replacesPreface,
+} from "./bot-supersede.js";
 
 /**
  * The hop the current run sits at, read back from the message that woke this
@@ -132,7 +139,8 @@ export async function threadHasLiveCall(
 }
 
 export async function messageBot(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
+  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease"> &
+    Partial<Pick<ExecutorDeps, "sandbox">>,
   run: {
     id: string;
     spaceId: string;
@@ -151,6 +159,12 @@ export async function messageBot(
     lane?: string | null;
     /** Send even when the same request is already open in the recipient's queue. */
     force?: boolean;
+    /**
+     * Fork: an earlier request of this bot to the same recipient that this one corrects (its
+     * request id, an id prefix of 6+ characters, or "latest"). It is cancelled, or stopped when it
+     * is already working, and this one starts at once in its place.
+     */
+    replaces?: string;
     deliveryKey?: string;
     /** Attachments filed under the recipient's chat, shown there and copied to its computer. */
     files?: Array<Extract<MessageBlock, { kind: "image" | "file" }>>;
@@ -214,15 +228,9 @@ export async function messageBot(
     }) as const;
 
   const onCall = await threadHasLiveCall(deps.prisma, targetThreadId);
-  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent, onCall });
-  const outboundBlock: MessageBlock = {
-    kind: "bot_message_sent",
-    toBotId: target.id,
-    toBotName: target.name,
-    text: message,
-    intent,
-  };
   const files = input.files ?? [];
+  const replacesRef = String(input.replaces ?? "").trim();
+  let superseded: SupersededRequest | undefined;
 
   let committed:
     | {
@@ -230,6 +238,7 @@ export async function messageBot(
         runId: string;
         targetEventSeq: number;
         senderEventSeq: number;
+        delivered: string;
       }
     | {
         ok: false;
@@ -247,6 +256,7 @@ export async function messageBot(
   try {
     committed = await withTransactionRetry(() =>
       deps.prisma.$transaction(async (tx) => {
+        superseded = undefined;
         if (!(await spaceTakesWork(tx, run.spaceId)))
           return { ok: false as const, error: "this Space is being deleted" };
         for (const threadId of [run.threadId, targetThreadId].sort()) {
@@ -264,7 +274,7 @@ export async function messageBot(
 
         // The recipient's queue, read under the target thread's lock: concurrent sends of the same
         // request see each other, so a request that is already open is not queued twice.
-        if (!input.force) {
+        if (!input.force && !replacesRef) {
           const queue = await loadBotQueue(tx, { botId: target.id, now: new Date() });
           const same = findQueuedDuplicate(message, queue, normalizeLane(input.lane));
           if (same)
@@ -303,6 +313,40 @@ export async function messageBot(
         if (!stillAddressable)
           return { ok: false as const, error: `${target.name} is no longer available` };
 
+        // Fork: a correction replaces the request it corrects, under the same lock, after every check
+        // that can still refuse the send (an early return commits the transaction).
+        let text = message;
+        if (replacesRef) {
+          const found = await findReplaceableRequest(tx, {
+            targetBotId: target.id,
+            senderId: sender.id,
+            ref: replacesRef,
+          });
+          if (!found.ok) return { ok: false as const, error: found.error };
+          superseded = await cancelReplacedRequest(tx, {
+            spaceId: run.spaceId,
+            targetThreadId,
+            targetBotId: target.id,
+            run: found.run,
+            summary: found.summary,
+          });
+          if (!superseded)
+            return {
+              ok: false as const,
+              error:
+                "Not replaced: that request has just finished. Send the correction as a new request.",
+            };
+          text = `${replacesPreface(superseded)}\n\n${message}`;
+        }
+        const wakePrompt = buildBotMessageWakePrompt({ from: sender, text, intent, onCall });
+        const outboundBlock: MessageBlock = {
+          kind: "bot_message_sent",
+          toBotId: target.id,
+          toBotName: target.name,
+          text,
+          intent,
+        };
+
         // Echo into the sender's chat in the same transaction so a failed notify
         // cannot leave one side delivered and the other blank.
         const outbound = await createThreadMessageInTransaction(tx, {
@@ -319,7 +363,7 @@ export async function messageBot(
           kind: "bot_message_received",
           fromBotId: sender.id,
           fromBotName: sender.name,
-          text: message,
+          text,
           hop,
           intent,
           returnToMessageId: outbound.id,
@@ -383,6 +427,7 @@ export async function messageBot(
           runId: nextRun.id,
           targetEventSeq: inboundEvent.seq,
           senderEventSeq: outboundEvent.seq,
+          delivered: text,
         };
       }, THREAD_LOCK_TRANSACTION_OPTIONS),
     );
@@ -413,13 +458,30 @@ export async function messageBot(
 
   await deps.events.notify(targetThreadId, committed.targetEventSeq);
   await deps.events.notify(run.threadId, committed.senderEventSeq);
+  if (superseded) {
+    await finishReplacedRequest(deps, run, superseded);
+    getLogger().info("bot_message.superseded", {
+      "run.id": run.id,
+      "bot_message.replaced_run": superseded.runId,
+      "bot_message.replaced_was_running": superseded.wasRunning,
+      "bot_message.replaced_age_s": superseded.ageSeconds,
+      "bot_message.new_run": committed.runId,
+      "bot.id": target.id,
+    });
+  }
   await wakeRun(deps.jobs, committed.runId);
   return {
     ok: true as const,
     botId: target.id,
     name: target.name,
-    delivered: message,
-    note: `Sent to ${target.name}. Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
+    delivered: committed.delivered,
+    requestId: committed.runId,
+    ...(superseded
+      ? { replaced: { requestId: superseded.runId, stopped: superseded.wasRunning } }
+      : {}),
+    note: superseded
+      ? `Sent to ${target.name}; it replaces request ${superseded.runId.slice(0, 8)}, which was ${superseded.wasRunning ? "stopped" : "cancelled"}. The correction starts now. A reply wakes you later as a new message.`
+      : `Sent to ${target.name} (request id ${committed.runId}; to correct it later, send message_bot with replaces set to that id). Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
   };
 }
 

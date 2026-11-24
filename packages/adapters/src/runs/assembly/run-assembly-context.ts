@@ -12,6 +12,7 @@ import { bestEffort } from "@rakazo/logging";
 import { loadBotGroupDirectory } from "../../bots/group-handoff.js";
 import { parsePlaybook } from "../../bots/teaching-session.js";
 import type { RunMediaSources } from "../../media/media-sources.js";
+import { planInstruction, planPromptState } from "../../plans/plans.js";
 import { lateRoutineRunInstruction } from "../../routines/routine-lateness.prompt.js";
 import { routineRunInstruction } from "../../routines/routine-run.prompt.js";
 import { formatCompactedSummary } from "../../runtime/context/history-compaction.prompt.js";
@@ -323,6 +324,24 @@ export async function buildTurnPrompt(
       whenToUse: parsePlaybook(skill.playbook).whenToUse || skill.goal,
     })),
   );
+  // Fork: plan confirmation (plans/plans.ts): settles the chat's pending plan from the owner's
+  // message and says what the run may do. Only runs that can hand work on read it.
+  const planState =
+    nonOwnerChatRun || ownerComputerRoutine || callEndRun
+      ? undefined
+      : await planPromptState(
+          deps.prisma,
+          {
+            id: run.id,
+            spaceId: run.spaceId,
+            threadId: run.threadId,
+            botId: run.botId,
+            userId: run.userId,
+            trigger: run.trigger,
+            sourceMessageId: run.sourceMessageId ?? null,
+          },
+          { ownerStartedRun, events: deps.events },
+        );
   // Fork: the skill curator's line rides with the skills catalog (skill-curator/seams.ts).
   const agentSkillsLine =
     [
@@ -330,6 +349,7 @@ export async function buildTurnPrompt(
       nonOwnerChatRun || ownerComputerRoutine
         ? undefined
         : skillLearningInstruction(skillLearning, task.prompt),
+      planInstruction(planState),
     ]
       .filter(Boolean)
       .join("\n") || undefined;

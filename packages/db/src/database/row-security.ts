@@ -203,6 +203,10 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "skill_learning_proposals",
   "learned_skills",
   "skill_teaching_sessions",
+  // Plan confirmation (fork): raw-SQL tables, listed by table name.
+  "agent_plans",
+  "plan_settings",
+  "plan_trust",
 ]);
 
 /**

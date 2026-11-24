@@ -11,6 +11,7 @@ import { McpTransportSchema } from "../integrations/mcp.js";
 import { McpAppCspSchema } from "../integrations/mcp-app.js";
 import { OutgoingDraft } from "../integrations/outgoing-draft.js";
 import { ToolQuestionSchema } from "../integrations/tool-question.js";
+import { PlanBlockSchema } from "../plans/plans.js";
 import { LearnedSkillBlockSchema } from "../skills/skill-learning.js";
 
 export const MessageRole = z.enum(["user", "bot", "system"]);
@@ -297,6 +298,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
   }),
   // Fork: a skill the curator learned (skill-learning.ts).
   LearnedSkillBlockSchema,
+  // Fork: a plan card waiting for the owner's approval (plans.ts).
+  PlanBlockSchema,
   ChartBlock,
   z.object({
     /** Approval card for an agent-created MCP server. The user completes the

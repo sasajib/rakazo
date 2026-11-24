@@ -1,8 +1,9 @@
 import { Trans } from "@lingui/react/macro";
 import { skipToken, useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useInRouterContext, useSearchParams } from "react-router-dom";
 import { useSpaceQueries } from "../../lib/query/query";
+import { useSpaceRpc } from "../../lib/query/space-rpc";
 
 /** Fork: under a skill in the Skills window, the agents that can use it (per-agent skills). */
 export function SkillAgentsLine({ skillId }: { skillId: string }) {
@@ -98,4 +99,71 @@ function LinkedSkillParam({ onOpen }: { onOpen: (skillId: string) => void }) {
     onOpen(skillId);
   }, [skillId]);
   return null;
+}
+
+/**
+ * Fork: under a skill, how far each agent is from running it as a known workflow without asking
+ * (plan confirmation), with Revoke to make it ask again.
+ */
+export function SkillTrustLine({ skillName }: { skillName: string }) {
+  const queries = useSpaceQueries();
+  const rpc = useSpaceRpc();
+  const [busy, setBusy] = useState(false);
+  const procedure = queries.plans?.trust as typeof queries.plans.trust | undefined;
+  const query = useQuery(
+    procedure
+      ? { ...procedure.queryOptions(), refetchOnMount: "always" }
+      : { queryKey: ["plan-trust-unavailable"], queryFn: skipToken },
+  );
+  const rows = (
+    query.data as
+      | Array<{
+          botId: string;
+          botName: string | null;
+          workflow: string;
+          approvals: number;
+          threshold: number;
+          trusted: boolean;
+        }>
+      | undefined
+  )?.filter((row) => row.workflow.toLowerCase() === skillName.trim().toLowerCase());
+  if (!rows?.length) return null;
+  return (
+    <div className="mt-1 space-y-0.5 text-body-sm text-muted-foreground" data-testid="skill-trust">
+      {rows.map((row) => {
+        const who = row.botName ?? "an agent";
+        return (
+          <div key={row.botId} className="flex items-center gap-2" dir="auto">
+            <span>
+              {row.trusted ? (
+                <Trans>
+                  {who} runs it without asking (approved {row.approvals} times)
+                </Trans>
+              ) : (
+                <Trans>
+                  {who}: approved {row.approvals} of {row.threshold} times
+                </Trans>
+              )}
+            </span>
+            {row.approvals > 0 ? (
+              <button
+                type="button"
+                className="underline disabled:opacity-50"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  void rpc.plans
+                    .revokeTrust({ botId: row.botId, workflow: row.workflow })
+                    .then(() => query.refetch())
+                    .finally(() => setBusy(false));
+                }}
+              >
+                <Trans>Revoke</Trans>
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }

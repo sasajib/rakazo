@@ -28,6 +28,8 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
   "remember",
   "standing_set",
   "bot_queue",
+  // The plan card IS the owner's approval step; it changes nothing by itself.
+  "plan_propose",
   "request_takeover",
   "request_secret",
   "generate_secret",

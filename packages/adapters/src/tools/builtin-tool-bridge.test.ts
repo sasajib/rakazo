@@ -41,6 +41,7 @@ describe("built-in tool bridge", () => {
       "list_files",
       "message_bot",
       "message_user",
+      "plan_propose",
       "read_file",
       "read_history",
       "remember",
@@ -80,8 +81,9 @@ describe("built-in tool bridge", () => {
     // Fork: standing_set, bot_queue, call_user, schedule_cancel, schedule_update and the five
     // scratchpad tools are listed on every run, and message_bot takes lane and force
     // (measured 44_052). Fork background shell jobs: shell's job wording and background flag plus
-    // the four pinned job tools (measured 45_633).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(45_680);
+    // the four pinned job tools (measured 45_633). Fork plan confirmation: plan_propose pinned and
+    // message_bot's replaces (measured 47_265).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(47_320);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

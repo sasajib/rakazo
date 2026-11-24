@@ -51,6 +51,17 @@ class Rpc:
         m = re.search(r"opened page (\d+)", txt)
         if m:
             self.own_page = int(m.group(1))
+            # A fresh tab can still be about:blank, where a relative fetch('/rpc/...') fails to parse: wait for the app.
+            import time
+            for _ in range(20):
+                try:
+                    href = self._run("const p = browser.page(%d); return JSON.stringify(await p.evaluate(() => location.href));"
+                                     % self.own_page)
+                except Exception:
+                    href = ""
+                if str(href).startswith("https://"):
+                    break
+                time.sleep(1)
             return self.own_page
         raise RuntimeError("could not open an own agents.mindshare.website tab in Neo")
 

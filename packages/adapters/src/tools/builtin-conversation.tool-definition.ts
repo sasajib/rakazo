@@ -330,6 +330,57 @@ export const conversationTools: ConnectorTool[] = [
     },
   },
   {
+    // Fork: plan confirmation (plans/plans.ts).
+    name: "plan_propose",
+    description:
+      "Show the owner your plan before you hand work to another agent or start a task of several steps: a card with numbered steps (who does each) and the inputs he gave. He approves on the card or by saying yes; then you carry it out. After calling it, end your turn with one short question.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "What the plan does, a few words." },
+        steps: {
+          type: "array",
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              text: { type: "string", description: "One step, in plain words." },
+              agent: {
+                type: "string",
+                description: "Who does it: you, or the agent you hand it to.",
+              },
+            },
+            required: ["text"],
+          },
+        },
+        inputs: {
+          type: "array",
+          maxItems: 10,
+          description:
+            "What the owner gave, exactly as he said it (title, author, link, where to look).",
+          items: {
+            type: "object",
+            properties: { label: { type: "string" }, value: { type: "string" } },
+            required: ["label", "value"],
+          },
+        },
+        workflow: {
+          type: "string",
+          description: "Name of the skill (known workflow) this plan follows, if one matches.",
+        },
+        spoken: {
+          type: "string",
+          description: "One or two sentences said aloud on a call, ending with a question.",
+        },
+        revises: {
+          type: "string",
+          description: "Plan id this revises after the owner asked for changes.",
+        },
+      },
+      required: ["title", "steps"],
+    },
+  },
+  {
     name: "standing_set",
     description:
       "Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry; omit text to change only tier or links. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.",

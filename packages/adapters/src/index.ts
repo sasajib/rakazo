@@ -160,6 +160,8 @@ export * from "./payments/payment-wallets.js";
 export * from "./payments/purchase-poll.js";
 export * from "./payments/purchase-service.js";
 export * from "./personal-calendar/native-calendar.js";
+// Fork: plan confirmation cards and workflow trust.
+export * from "./plans/index.js";
 export * from "./providers/billing/stripe/stripe-billing.js";
 export * from "./providers/cloud-agent/cursor/cursor-cloud-agent.js";
 export { T3CodeConnections } from "./providers/cloud-agent/t3code/t3code-connections.js";

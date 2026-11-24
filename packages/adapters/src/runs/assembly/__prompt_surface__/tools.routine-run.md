@@ -1,5 +1,5 @@
 # Tool surface: routine-run
-62 tools, 77106 bytes of definitions
+63 tools, 78738 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -95,7 +95,7 @@ schema 8243f0af367f (33 bytes)
 
 ## message_bot
 Send an update, question or result to another of the user's bots. Only this tool delivers it: a message written in your reply, such as "[to Comms] …", never reaches them. Delivery is async, so keep working; send no acknowledgements or repeats.
-schema 38bcce192dcb (1082 bytes)
+schema d18ce0386dbc (1397 bytes)
 
 ## message_user
 Post a short progress update to the user in this chat immediately. Does not end your turn. Use sparingly during long work for high-signal beats (what you are checking, then a result). Do not dump tool logs, thinking, or a play-by-play of every call. HARD LIMIT: cut off silently at 500 characters, so never put your final answer, a report, or any long-form content here — it will arrive mangled and the user will never see the rest. Always write your complete final answer in your normal reply, not here.
@@ -104,6 +104,10 @@ schema c0bc0e98cff8 (202 bytes)
 ## organize_bot
 Move a bot or group into a sidebar section, clear its section, or pin and unpin it. Works on any bot or group of this user, not only ones you created. Identify it by bot_id, bot_name, group_id or group_name (exact). section is a section name; clear_section: true takes it out of its section.
 schema 0bfe0c4dc209 (500 bytes)
+
+## plan_propose
+Show the owner your plan before you hand work to another agent or start a task of several steps: a card with numbered steps (who does each) and the inputs he gave. He approves on the card or by saying yes; then you carry it out. After calling it, end your turn with one short question.
+schema 8b1776f9e1c6 (976 bytes)
 
 ## read_file
 Read a UTF-8 text file or an image from this bot's home. On a Team Computer, relative paths use the bot folder and shared/... accesses shared work. Open other binary files with open_path. Long text comes in line ranges; follow nextOffset. Text over 250 KB: use shell.

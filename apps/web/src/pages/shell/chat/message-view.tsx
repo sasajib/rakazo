@@ -22,6 +22,7 @@ import { CloudAgentCard } from "../../../components/messages/CloudAgentCard";
 import { LearnedSkillCard } from "../../../components/messages/LearnedSkillCard";
 import { McpAppCard } from "../../../components/messages/McpAppCard";
 import { OutgoingDraftCard } from "../../../components/messages/OutgoingDraftCard";
+import { PlanCard } from "../../../components/messages/PlanCard";
 import { SubagentCard } from "../../../components/messages/SubagentCard";
 import {
   LIVE_TOOL_STEP_WINDOW,
@@ -708,6 +709,14 @@ export const MessageView = memo(function MessageView({
             return (
               <div key={i} className="flex justify-start">
                 <LearnedSkillCard block={block} rpc={rpc} />
+              </div>
+            );
+          }
+          // Fork: a plan waiting for the owner's approval (Approve / Change / Reject).
+          if (block.kind === "plan") {
+            return (
+              <div key={i} className="flex justify-start">
+                <PlanCard block={block} rpc={rpc} />
               </div>
             );
           }

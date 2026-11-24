@@ -436,6 +436,11 @@ export const fleetTools: ConnectorTool[] = [
           description:
             "Send even if the recipient already has the same request open (see bot_queue). Only for genuinely new work.",
         },
+        replaces: {
+          type: "string",
+          description:
+            'Correcting a request you sent this bot earlier: its request id (from message_bot or bot_queue) or "latest". The old request is cancelled, or stopped if it is already running, and this one starts at once in its place; the recipient is told it replaces the earlier one.',
+        },
       },
       required: ["message"],
     },

@@ -2,6 +2,7 @@ import { oc } from "@orpc/contract";
 import * as z from "zod";
 import { SpaceAvailabilitySchema } from "../account/space-availability.js";
 import { Id } from "../ids.js";
+import { planProcedures } from "../plans/plans.js";
 import { botId } from "../rpc/inputs.js";
 import {
   AccountItemSchema,
@@ -74,6 +75,8 @@ export const skillsRpc = {
   },
   // Fork: auto-learned skills and chat teaching (skill-learning.ts).
   skillLearning: skillLearningProcedures,
+  // Fork: plan confirmation cards, workflow trust (plans.ts).
+  plans: planProcedures,
   availability: {
     set: oc
       .input(z.object({ kind: AvailabilityKindSchema, id: Id }).and(SpaceAvailabilitySchema))

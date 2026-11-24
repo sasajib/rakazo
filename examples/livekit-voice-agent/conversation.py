@@ -757,9 +757,67 @@ def looks_unfinished(text: str) -> bool:
     return not said.endswith((".", "?", "!", "\u2026", '"'))
 
 
-def merge_held(held: str, held_at: float, utterance: str, now: float, window: float = UNFINISHED_MERGE_WINDOW_S) -> str:
-    """The caller's half sentence plus the rest, when the rest arrives soon enough to be the same thought."""
+def merge_held(
+    held: str,
+    held_at: float,
+    utterance: str,
+    now: float,
+    window: float = UNFINISHED_MERGE_WINDOW_S,
+    resumed_at: float | None = None,
+) -> str:
+    """The caller's half sentence plus the rest, when the rest is the same thought.
+
+    `resumed_at` is when the caller started speaking again after the half sentence (or None when
+    unknown). The window is measured to that moment, not to the end of the rest: a caller who
+    carries straight on and talks for half a minute is finishing the same sentence. Measured to the
+    end (2026-11-25), a 29 s continuation dropped the first half of a request ("browse YouTube from
+    my account ... history ... a video named") and the bot did the wrong workflow.
+    """
     held = (held or "").strip()
-    if held and (now - held_at) <= window:
+    if not held:
+        return utterance
+    gap = (resumed_at - held_at) if resumed_at is not None else (now - held_at)
+    if gap <= window:
         return f"{held} {utterance.strip()}".strip()
     return utterance
+
+
+# --- plan cards (fork: plan confirmation) ------------------------------------------------------
+# Same rule as the server's planReplyIntent (packages/adapters/src/plans/intent.ts): an explicit
+# word decides a plan, anything else leaves it waiting.
+_PLAN_APPROVE = re.compile(
+    r"^(?:(?:yes|yeah|yep|ok(?:ay)?|sure|alright|fine|great|perfect|good)\b[\s,.!]*)*"
+    r"(?:yes|yeah|yep|yup|ok(?:ay)?|sure|alright|fine|great|perfect|go(?: ahead)?|go for it|do it|approved?|"
+    r"proceed|confirm(?:ed)?|sounds good|looks good|that'?s (?:right|correct|fine|good)|carry on|start|"
+    r"let'?s go|send it|please do|please go ahead)\b",
+    re.I,
+)
+_PLAN_CHANGE = re.compile(
+    r"\b(?:change|instead|rather|replace|swap|edit|modify|add (?:a )?step|remove (?:the )?step|"
+    r"step (?:\d+|one|two|three|four|five|six)|before that|after that|but|except|actually|not that|wrong|"
+    r"you should|tell (?:him|her|them) to)\b",
+    re.I,
+)
+_PLAN_REJECT = re.compile(
+    r"^(?:no|nope|nah|cancel(?: it| that)?|stop|don'?t(?: do (?:it|that))?|forget it|never ?mind|"
+    r"reject(?:ed)?|not now|scrap (?:it|that))\b[\s,.!]*$",
+    re.I,
+)
+_PLAN_NOISE = re.compile(r"^(?:(?:uh+|um+|er+|erm|hmm+|so|well|oh)\b[\s,.]*)+", re.I)
+
+
+def plan_reply_word(text: str) -> str | None:
+    """"approve" / "change" / "reject" when the caller answered a plan card, else None."""
+    said = _PLAN_NOISE.sub("", (text or "").strip()).strip()
+    if not said:
+        return None
+    if _PLAN_REJECT.match(said):
+        return "reject"
+    words = len(said.split())
+    if _PLAN_CHANGE.search(said) and words >= 3:
+        return "change"
+    if re.match(r"^(?:no|nope|nah)\b", said, re.I) and words >= 3:
+        return "change"
+    if _PLAN_APPROVE.match(said) and words <= 12 and not said.rstrip().endswith("?"):
+        return "approve"
+    return None

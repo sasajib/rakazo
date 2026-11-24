@@ -12,6 +12,7 @@ import {
   LearnedSkillLine,
   LinkedSkillOpener,
   SkillAgentsLine,
+  SkillTrustLine,
 } from "../../components/integrations/skill-agents-line";
 import {
   AvailabilityControl,
@@ -509,6 +510,7 @@ export function AgentSkills() {
           ) : null}
           {open ? <SkillAgentsLine skillId={open.id} /> : null}
           {open ? <LearnedSkillLine skillId={open.id} /> : null}
+          {open ? <SkillTrustLine skillName={open.name} /> : null}
           <Textarea
             aria-label="SKILL.md"
             disabled={busy}
