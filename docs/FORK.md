@@ -281,6 +281,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Tests:** `adapters/src/tools/bot-skill-access.test.ts` (unit; fails on the pre-feature code),
   `apps/api/src/bots/bot-skills.postgres.test.ts` (RLS, prompt catalog, skill_read refusal, cascades, validation),
   `packages/testkit/src/product/authorization.test.ts` (inventory + cross-space), `row-security.postgres.test.ts` (table list).
+- **Caveat:** a run assembled before a selection change keeps its old catalog for that run (skill_read checks live). `bots/create` starts an intro run at once, so in a test set the selection, then judge from the *next* run.
 - **Live check:** two throwaway skills/bots; assign X to A only; A's `run.prompt_manifest`/answer lists X, B's does not;
   B's `skill_read X` returns the refusal. Markers in `post-sync-check.py`. Web: agent settings -> "Skills" section.
 - **Mobile:** not changed (the mobile bot settings screen has no skills list; all-skills default applies).
