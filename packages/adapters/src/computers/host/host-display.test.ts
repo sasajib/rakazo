@@ -122,6 +122,7 @@ describe("host display screen", () => {
       stateDir,
       run,
       start: processes.start,
+      probe: async () => processes.started.some((s) => s.file === "websockify"),
     });
   }
 

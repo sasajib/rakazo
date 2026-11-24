@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import path from "node:path";
 import type { ComputerAction, ComputerInput } from "@rakazo/adapter-kit";
 import { desktopUrl } from "@rakazo/core/node/desktop-runtime";
@@ -31,6 +32,8 @@ export interface HostDisplayOptions {
   maxImage?: { width: number; height: number };
   /** Command runner, replaceable in tests. */
   run?: HostDisplayRunner;
+  /** Whether the gateway accepts connections, replaceable in tests. */
+  probe?: () => Promise<boolean>;
   /** Long-running process starter, replaceable in tests. */
   start?: (file: string, args: string[]) => ChildProcess;
 }
@@ -315,10 +318,26 @@ export class HostDisplay {
         `--token-source=${this.targets}`,
         `${this.options.bindHost}:${this.options.port}`,
       ]);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      if (this.gateway.exitCode !== null)
-        throw new HostScreenError("The screen gateway did not start.");
     }
+    // websockify takes a moment to bind; a URL handed out before that fails to load.
+    for (let i = 0; i < 100; i += 1) {
+      if (await this.listening()) return;
+      if (this.gateway.exitCode !== null) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new HostScreenError("The screen gateway did not start.");
+  }
+
+  private listening() {
+    if (this.options.probe) return this.options.probe();
+    return new Promise<boolean>((resolve) => {
+      const socket = connect({ host: this.options.bindHost, port: this.options.port });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+    });
   }
 
   private async stopControl() {
