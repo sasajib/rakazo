@@ -41,6 +41,9 @@ export interface PreparedShellJob {
   settle: (observed: Observed, io: ShellJobIo) => Promise<unknown>;
 }
 
+/** Computer kinds whose provider cancels a run's work itself (desktop is excluded below too). */
+const OWN_RUN_CANCEL_KINDS: ReadonlySet<string> = new Set(["wuying", "desktop"]);
+
 /** Whether this computer runs `shell` through the Linux launcher, where jobs can live. */
 export function linuxJobComputer(
   ctx: Pick<RunContext, "computer" | "deps">,
@@ -48,7 +51,9 @@ export function linuxJobComputer(
   config: { allowFake?: boolean } = {},
 ): boolean {
   if (ctx.computer.hostEnvironment) return false;
-  if (ctx.deps.sandbox.cancelRunWork) return false;
+  // The run's sandbox is a routing wrapper that always exposes cancelRunWork, so the providers that
+  // cancel run work their own way (and could take a detached job with it) are named by kind.
+  if (OWN_RUN_CANCEL_KINDS.has(computer.kind)) return false;
   const capabilities = sandboxKindCapabilities(computer.kind);
   if (capabilities.nativeShell || capabilities.runsOnUserMachine) return false;
   if (computer.kind === "none" || computer.kind === "desktop") return false;
