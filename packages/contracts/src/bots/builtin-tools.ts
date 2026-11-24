@@ -56,6 +56,7 @@ export const BUILTIN_TOOL_NAMES = [
   "save_shared_memory",
   "delete_shared_memory",
   "standing_set",
+  "bot_queue",
   "web_search",
   "web_fetch",
   "service_search",

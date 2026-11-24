@@ -27,6 +27,7 @@ function deps(
     hopBlocks?: unknown[];
     senderRunning?: boolean;
     alreadyDelivered?: unknown;
+    queue?: unknown[];
     targetArchived?: boolean;
     requesterArchived?: boolean;
     /** Simulate a unique (threadId, clientNonce) race after both retries miss. */
@@ -57,6 +58,7 @@ function deps(
         .fn()
         .mockResolvedValue(options.senderRunning === false ? null : { id: "run-1" }),
       findUnique: vi.fn().mockResolvedValue({ status: "running" }),
+      findMany: vi.fn().mockResolvedValue(options.queue ?? []),
       create: vi.fn().mockResolvedValue({ id: "run-2" }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
@@ -145,6 +147,40 @@ describe("messaging another bot", () => {
     expect(harness.tx.run.create).not.toHaveBeenCalled();
     expect(harness.enqueue).not.toHaveBeenCalled();
     expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it("does not queue a request the recipient already has open, unless forced", async () => {
+    const queue = [
+      {
+        id: "run-open",
+        status: "queued",
+        trigger: "bot_message",
+        lane: "indeed",
+        createdAt: new Date(Date.now() - 120_000),
+        sourceMessage: {
+          id: "m0",
+          role: "user",
+          blocks: [
+            { kind: "bot_message_received", text: "chart the q3 numbers", fromBotName: "Chief" },
+          ],
+        },
+      },
+    ];
+    const harness = deps({ queue });
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "chart the q3 numbers",
+    });
+    expect(sent).toMatchObject({ ok: true, duplicate: true });
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+
+    const forced = deps({ queue });
+    await messageBot(forced.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "chart the q3 numbers",
+      force: true,
+    });
+    expect(forced.tx.run.create).toHaveBeenCalled();
   });
 
   it("delivers into the target's own chat without marking either thread unread", async () => {

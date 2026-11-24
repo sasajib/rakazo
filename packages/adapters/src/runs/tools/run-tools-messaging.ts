@@ -28,6 +28,7 @@ import {
   loadRecentNotices,
 } from "../../memory/notice-ledger.js";
 import { messageBot, unresolvedBotError } from "../../messaging/bot-messages.js";
+import { describeQueueItem, loadBotQueue } from "../../messaging/bot-queue.js";
 import { startBackgroundHelper } from "../../tasks/background-helpers.js";
 import type { RunContext } from "../assembly/run-context.js";
 import {
@@ -250,6 +251,34 @@ export const messagingTools: ToolHandlers = {
       }),
     );
   },
+  async bot_queue(ctx, call) {
+    const { deps, run, bot } = ctx;
+    const { args } = call;
+    const wanted = args.bot_id
+      ? { id: String(args.bot_id) }
+      : args.confirm_name
+        ? { name: { equals: String(args.confirm_name), mode: "insensitive" as const } }
+        : { id: bot.id };
+    const target = await deps.prisma.bot.findFirst({
+      where: { spaceId: run.spaceId, archivedAt: null, ...wanted },
+      select: { id: true, name: true, concurrency: true },
+    });
+    if (!target) return call.finish({ error: "No such bot in this Space." });
+    const queue = await loadBotQueue(deps.prisma, { botId: target.id, now: new Date() });
+    const row = (item: (typeof queue)[number]) => ({
+      id: item.id.slice(0, 8),
+      state: describeQueueItem(item),
+      request: item.summary,
+    });
+    return call.finish({
+      untrusted: true,
+      bot: target.name,
+      slots: target.concurrency,
+      working: queue.filter((i) => i.status === "leased" || i.status === "running").map(row),
+      waiting: queue.filter((i) => i.status === "queued").map(row),
+      waitingOnPerson: queue.filter((i) => i.status.startsWith("waiting_")).length,
+    });
+  },
   async end_call(ctx, call) {
     const { deps, run, bot, thread } = ctx;
     const { args } = call;
@@ -388,6 +417,8 @@ export const messagingTools: ToolHandlers = {
         intent: args.intent as "request" | "result" | "question" | "status" | "fyi" | undefined,
         deliveryKey: effectKey,
         files: stored.files,
+        lane: args.lane ? String(args.lane) : undefined,
+        force: args.force === true,
       },
     );
     if (!sent.ok) return call.finish({ error: sent.error });
@@ -395,6 +426,7 @@ export const messagingTools: ToolHandlers = {
       ok: true,
       botId: sent.botId,
       name: sent.name,
+      ...("duplicate" in sent ? { sent: false } : {}),
       note: sent.note,
     });
   },

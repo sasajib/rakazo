@@ -6,6 +6,7 @@ import {
   botMessageHopExhausted,
   botMessageWaitingText,
   buildBotMessageWakePrompt,
+  callIdFromClientNonce,
   clampBotMessage,
   nextBotMessageHop,
   resolveBotAddress,
@@ -25,7 +26,9 @@ import {
 import { bestEffort, getLogger } from "@rakazo/logging";
 import { runLeaseFor } from "../runs/assembly/run-messages.js";
 import type { ExecutorDeps } from "../runs/executor/executor-deps.js";
+import { normalizeLane } from "../runs/lifecycle/run-gate.js";
 import { wakeRun } from "../runs/wakeups/wake-run.js";
+import { describeQueueItem, findQueuedDuplicate, loadBotQueue } from "./bot-queue.js";
 
 /**
  * The hop the current run sits at, read back from the message that woke this
@@ -95,6 +98,39 @@ export function unresolvedBotError(
   }`;
 }
 
+const LIVE_CALL_WINDOW_MS = 5 * 60_000;
+
+/**
+ * A call has no row of its own: it is the "call:<id>:" nonce on its messages, ended by a call_end
+ * run. A call counts as live while its latest message is recent and no call_end followed it.
+ */
+export async function threadHasLiveCall(
+  prisma: Pick<ExecutorDeps["prisma"], "message" | "run">,
+  threadId: string,
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    const last = await prisma.message.findFirst({
+      where: {
+        threadId,
+        clientNonce: { startsWith: "call:" },
+        createdAt: { gt: new Date(now.getTime() - LIVE_CALL_WINDOW_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { clientNonce: true },
+    });
+    const callId = callIdFromClientNonce(last?.clientNonce);
+    if (!callId) return false;
+    const ended = await prisma.run.findFirst({
+      where: { threadId, trigger: "call_end", clientNonce: { startsWith: `call:${callId}:` } },
+      select: { id: true },
+    });
+    return !ended;
+  } catch {
+    return false;
+  }
+}
+
 export async function messageBot(
   deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
   run: {
@@ -111,6 +147,10 @@ export async function messageBot(
     confirm_name?: string;
     message: string;
     intent?: BotMessageIntent;
+    /** Work lane (a site or topic): one active request per lane; none = the conversation. */
+    lane?: string | null;
+    /** Send even when the same request is already open in the recipient's queue. */
+    force?: boolean;
     deliveryKey?: string;
     /** Attachments filed under the recipient's chat, shown there and copied to its computer. */
     files?: Array<Extract<MessageBlock, { kind: "image" | "file" }>>;
@@ -173,7 +213,8 @@ export async function messageBot(
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
 
-  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent });
+  const onCall = await threadHasLiveCall(deps.prisma, targetThreadId);
+  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent, onCall });
   const outboundBlock: MessageBlock = {
     kind: "bot_message_sent",
     toBotId: target.id,
@@ -197,6 +238,11 @@ export async function messageBot(
     | {
         ok: true;
         replayed: true;
+      }
+    | {
+        ok: true;
+        duplicate: true;
+        of: string;
       };
   try {
     committed = await withTransactionRetry(() =>
@@ -214,6 +260,15 @@ export async function messageBot(
             select: { id: true },
           });
           if (already) return { ok: true as const, replayed: true as const };
+        }
+
+        // The recipient's queue, read under the target thread's lock: concurrent sends of the same
+        // request see each other, so a request that is already open is not queued twice.
+        if (!input.force) {
+          const queue = await loadBotQueue(tx, { botId: target.id, now: new Date() });
+          const same = findQueuedDuplicate(message, queue, normalizeLane(input.lane));
+          if (same)
+            return { ok: true as const, duplicate: true as const, of: describeQueueItem(same) };
         }
 
         const senderStillRunning = await tx.run.findFirst({
@@ -299,6 +354,7 @@ export async function messageBot(
             userId: run.userId,
             status: "queued",
             trigger: "bot_message",
+            lane: normalizeLane(input.lane),
             sourceMessageId: inbound.id,
           },
           select: { id: true },
@@ -343,6 +399,16 @@ export async function messageBot(
     throw error;
   }
   if ("replayed" in committed) return replayed();
+  if ("duplicate" in committed) {
+    return {
+      ok: true as const,
+      botId: target.id,
+      name: target.name,
+      delivered: message,
+      duplicate: true as const,
+      note: `Not sent: ${target.name} already has this request (${committed.of}). Do not send it again. Look at the queue with bot_queue; add force:true only if it is genuinely new work.`,
+    } as const;
+  }
   if (!committed.ok) return committed;
 
   await deps.events.notify(targetThreadId, committed.targetEventSeq);
