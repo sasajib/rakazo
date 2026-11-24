@@ -165,7 +165,9 @@ export function createOpenAiMemoryModel(
           body: JSON.stringify({
             model: endpoint.model,
             temperature: 0,
-            max_tokens: 2000,
+            // Reasoning models (GLM) spend completion tokens thinking first; 2000 ran out on longer
+            // chats and returned an empty answer, which read as "nothing to learn".
+            max_tokens: 8000,
             messages: [
               { role: "system", content: EXTRACTION_INSTRUCTIONS },
               { role: "user", content: JSON.stringify(payload) },
@@ -178,10 +180,17 @@ export function createOpenAiMemoryModel(
           return undefined;
         }
         const body = (await response.json()) as {
-          choices?: Array<{ message?: { content?: unknown } }>;
+          choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
         };
-        const content = body.choices?.[0]?.message?.content;
-        return typeof content === "string" ? parseExtraction(content, idOf) : undefined;
+        const choice = body.choices?.[0];
+        const content = choice?.message?.content;
+        const parsed = typeof content === "string" ? parseExtraction(content, idOf) : undefined;
+        if (!parsed)
+          getLogger().warn("memory.ledger.model_unusable", {
+            "llm.finish_reason": String(choice?.finish_reason ?? "none"),
+            "llm.content_length": typeof content === "string" ? content.length : -1,
+          });
+        return parsed;
       } catch (error) {
         getLogger().warn("memory.ledger.model_failed", {
           "error.type": error instanceof Error ? error.name : "unknown",

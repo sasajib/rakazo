@@ -30,9 +30,17 @@ async function fakeModel(reply: (ownerText: string) => object) {
       const owner = payload.owner_messages.filter((m) => m.current).map((m) => m.text);
       requests.push({ model: parsed.model, owner });
       response.setHeader("content-type", "application/json");
+      const said = owner.join("\n");
+      // A reasoning model that ran out of tokens: an empty answer.
+      if (/EMPTY-ANSWER/.test(said)) {
+        response.end(
+          JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "length" }] }),
+        );
+        return;
+      }
       response.end(
         JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(reply(owner.join("\n"))) } }],
+          choices: [{ message: { content: JSON.stringify(reply(said)) } }],
         }),
       );
     });
@@ -167,6 +175,30 @@ postgres("memory ledger seams (PostgreSQL + fake model endpoint)", () => {
         model: "glm/glm-5.3-flash",
         owner: ["Rahim is my accountant, he does my taxes."],
       });
+
+      // An empty model answer is not "nothing to learn": the job stays open for a retry.
+      const blank = await say("EMPTY-ANSWER my dentist is Dr Rafiq.");
+      scheduleLedgerLearning(
+        { prisma, secretStore: { load: async () => "" } },
+        run(`${id}-blank`, blank.id),
+        env,
+      );
+      let jobStatus: string | undefined;
+      for (
+        let attempt = 0;
+        attempt < 50 && !["done", "failed"].includes(jobStatus ?? "");
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const rows = await fixture(() =>
+          prisma.$queryRawUnsafe<Array<{ status: string }>>(
+            `SELECT "status" FROM "memory_ledger_jobs" WHERE "runId" = $1`,
+            `${id}-blank`,
+          ),
+        );
+        jobStatus = rows[0]?.status;
+      }
+      expect(jobStatus).toBe("failed");
 
       // The remember tool is answered by the ledger.
       const second = await say("Please remember I want reports as PDF.");

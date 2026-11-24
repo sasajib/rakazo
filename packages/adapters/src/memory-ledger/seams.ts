@@ -275,10 +275,11 @@ async function runLedgerJob(
       userId: job.userId,
       sourceMessageId,
     });
+    const model = await memoryModel(deps, job.userId, config);
     const result = await learnFromMessages(
       {
         store,
-        model: await memoryModel(deps, job.userId, config),
+        model,
         embedder: embedder(config),
         config,
         postCard: (card) => postCard(deps, { ...card, nonce: `memory-ledger:${job.runId}` }),
@@ -293,7 +294,15 @@ async function runLedgerJob(
         messages,
       },
     );
-    await store.finishJob(job.spaceId, job.runId, "done");
+    // A configured model that gave no usable answer is retried by the catch-up pass (up to 3
+    // attempts) instead of being recorded as "nothing to learn".
+    const modelMissed = model !== undefined && !result.usedModel;
+    await store.finishJob(
+      job.spaceId,
+      job.runId,
+      modelMissed ? "failed" : "done",
+      modelMissed ? "memory model gave no usable answer" : undefined,
+    );
     logLearned(job.runId, result, Date.now() - started);
     return result;
   } catch (error) {
