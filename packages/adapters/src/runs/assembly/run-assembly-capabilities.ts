@@ -97,6 +97,19 @@ import { runReplyMode } from "./run-replies.prompt.js";
 import { createRunTrustLoaders } from "./run-trust.js";
 
 /** Undefined when the run cannot start its model: it was failed instead of starting a turn. */
+/**
+ * Fork: built-in tools switched off for every bot of this deployment (comma list in
+ * RAKAZO_DISABLED_BUILTIN_TOOLS). On bee the bots share the owner's own desktop and browse
+ * through BrowserOS's MCP, so the page-browser and app-launch tools must be off for bots created
+ * later too, not only for the ones set up by hand.
+ */
+export function deploymentDisabledBuiltinTools(env: Record<string, string | undefined>): string[] {
+  return (env.RAKAZO_DISABLED_BUILTIN_TOOLS ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
 export async function startTurnModel(
   hold: RunHold,
   parts: { saved: SavedTurn; records: RunRecords },
@@ -551,7 +564,10 @@ export async function resolveRunCapabilities(
   // beside stays the only writer of the bot's state. Its answer is its text.
   const disabledBuiltinTools = talkRun
     ? new Set<string>(BUILTIN_TOOL_NAMES)
-    : disabledBuiltinToolSet(bot.disabledBuiltinTools);
+    : disabledBuiltinToolSet([
+        ...(bot.disabledBuiltinTools ?? []),
+        ...deploymentDisabledBuiltinTools(process.env),
+      ]);
   const replyMode = runReplyMode(run.trigger, bot.replyMode, disabledBuiltinTools);
   const emailName = deps.inboundEmailDomain
     ? await deps.prisma.botEmailAddress.findUnique({
