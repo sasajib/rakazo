@@ -19,7 +19,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # and the deleted-bot path that no longer re-files MEMORY.md while the ledger is on
            ("withLedgerMemory(", 2), ("placeLedgerBlock(", 2), ("learnAfterRun(ctx)", 1),
            ("rememberToolViaLedger(", 2), ("recallToolViaLedger(", 2), ('"memory_facts",', 1),
-           ("!deleteMemories && !ledgerEnabled()", 1)]
+           ("!deleteMemories && !ledgerEnabled()", 1),
+           # host computer serves bee's display :1 (live screen, take over, computer_observe/act)
+           ("userMachineServesScreen(", 3), ("displayConnect", 3), ("screenlessUserMachine(", 3)]
 results = []
 
 
