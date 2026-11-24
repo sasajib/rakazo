@@ -760,6 +760,7 @@ model Space {
   agentSkillSpaces            AgentSkillSpace[]
   mcpServerSpaces             McpServerSpace[]
   capabilityInstallSpaces     CapabilityInstallSpace[]
+  shellJobs                   ShellJob[]
 
   @@unique([id, organizationId])
   @@index([organizationId, createdAt])
@@ -1106,6 +1107,7 @@ model Bot {
   externalConversations ExternalConversation[]
   emailAddress      BotEmailAddress?
   emailMessages     BotEmailMessage[]
+  shellJobs        ShellJob[]
 
   @@unique([spaceId, spawnKey])
   @@index([spaceId, userId, archivedAt, pinned, updatedAt])
@@ -1212,6 +1214,7 @@ model Thread {
   tasks                       Task[]
   runs                        Run[]
   routines                    Routine[]
+  shellJobs        ShellJob[]
 
   @@index([spaceId])
   @@index([spaceId, userId])
@@ -3223,4 +3226,48 @@ model StandingEmbedding {
 
   @@unique([spaceId, key])
   @@map("standing_embeddings")
+}
+
+/// A detached shell command on a bot's computer (fork: background shell jobs). The command and its
+/// full output stay on the computer under `jobDir`; only a redacted preview of the command is kept
+/// here. Polled by `shell_job.poll`; the result comes back once (`returnedAt`), as steering into a
+/// run of the same bot and thread that is still working, or as a `job_result` run.
+model ShellJob {
+  id              String    @id @default(cuid())
+  spaceId         String
+  space           Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  botId           String
+  bot             Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  threadId        String
+  thread          Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId          String
+  originRunId     String
+  /// The computer's database id (the background-work marker uses it, not the provider ref).
+  computerId      String
+  /// At most 300 characters of the command with the run's secrets redacted.
+  commandPreview  String
+  cwd             String?
+  jobDir          String
+  /// running | completed | failed | killed | timed_out | lost
+  status          String    @default("running")
+  exitCode        Int?
+  pid             Int?
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  deadlineAt      DateTime
+  nextPollAt      DateTime? @default(now())
+  pollErrors      Int       @default(0)
+  cancelRequested Boolean   @default(false)
+  /// Claimed once by whoever hands the result back.
+  returnedAt      DateTime?
+  /// foreground | steered | wake | budget | none
+  deliveredAs     String?
+  wakeRunId       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, nextPollAt])
+  @@index([threadId, status])
+  @@index([botId, status])
+  @@map("shell_jobs")
 }

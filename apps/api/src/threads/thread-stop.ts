@@ -3,6 +3,7 @@ import {
   cancelComputerRunWork,
   returnHelperOutcome,
   screenLeaseIdForRun,
+  stopThreadShellJobs,
   toComputerRef,
 } from "@rakazo/adapters";
 import type { Actor, MessageBlock } from "@rakazo/contracts";
@@ -51,6 +52,17 @@ export async function stopThreadRuns(
     THREAD_LOCK_TRANSACTION_OPTIONS,
   );
   await finishThreadStop(deps, actor, target, stop);
+  if (!helperMessageId) await stopThreadJobs(deps, target.threadId);
+}
+
+/** Fork: the owner's Stop also stops the thread's background shell jobs ("stop everything"). */
+export async function stopThreadJobs(
+  deps: { prisma: PrismaClient; sandbox: SandboxProvider },
+  threadId: string,
+) {
+  await stopThreadShellJobs(deps, threadId).catch((error) => {
+    getLogger().error("stop thread shell jobs", error);
+  });
 }
 
 /**

@@ -18,6 +18,11 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
   "search_history",
   "write_file",
   "shell",
+  // Background shell jobs: the shell already ran without asking; following or stopping it is the same work.
+  "job_list",
+  "job_status",
+  "job_output",
+  "job_stop",
   "open_path",
   "launch_app",
   "remember",
@@ -309,6 +314,9 @@ const OWN_STATE_RESULT_TOOLS = new Set([
   "reflect_memory",
   "remember",
   "standing_set",
+  // Only the bot's own jobs: ids, states and the command preview it wrote, never their output.
+  "job_list",
+  "job_stop",
   "render_plot",
   "request_secret",
   "save_memory",

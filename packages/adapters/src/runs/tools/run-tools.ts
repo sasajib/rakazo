@@ -15,6 +15,7 @@ import { MODEL_CANNOT_SEE_MESSAGE } from "../../models/model-vision.prompt.js";
 import { personalCalendarTools } from "../../personal-calendar/personal-calendar.tool-definition.js";
 import { calendarTool } from "../../personal-calendar/run-calendar-tool.js";
 import { strategicInitiativeToolAllowed } from "../../routines/strategic-initiative.js";
+import { shellJobToolHandlers } from "../../shell-jobs/shell-job-tools.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { markReadOutsideContent } from "../assembly/run-context.js";
 import { announceFirstStep, noteComputerTaskStep } from "../lifecycle/run-progress.js";
@@ -60,6 +61,7 @@ const ownComputerResult = (tool: string) =>
 
 const TOOL_HANDLERS = new Map<string, ToolHandler>([
   ...Object.entries(computerTools),
+  ...Object.entries(shellJobToolHandlers),
   ...Object.entries(fileTools),
   ...Object.entries(pageTools),
   ...Object.entries(memoryTools),

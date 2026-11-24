@@ -91,6 +91,14 @@ function builtinParameters(tool: ConnectorTool) {
       ...(tool.name === "user_computer_shell"
         ? { computerId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })) }
         : {}),
+      // Fork: background shell jobs.
+      ...(tool.name === "shell"
+        ? {
+            background: Type.Optional(
+              Type.Boolean({ description: "Start as a background job at once." }),
+            ),
+          }
+        : {}),
     });
   }
   if (tool.name === "run_subagent") {

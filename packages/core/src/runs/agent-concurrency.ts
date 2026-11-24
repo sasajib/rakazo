@@ -37,6 +37,8 @@ export const RUN_PRIORITY: Record<RunTrigger, number> = {
   // Work a run asked for and is waiting on.
   helper_result: 40,
   cloud_agent: 40,
+  // A background shell job the person's run started has finished (fork).
+  job_result: 40,
   spawn: 35,
   helper: 30,
   // The person's message answered beside the bot's own run: it is a person turn, but the run it

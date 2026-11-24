@@ -611,7 +611,7 @@ export interface AgentSteeringMessage {
    * Who sent it. Only the run's own person ("user") is framed as a message to answer; anything
    * else, or no origin, is passed on as a neutral note.
    */
-  origin?: "user" | "member" | "messaging" | "webhook" | "routine";
+  origin?: "user" | "member" | "messaging" | "webhook" | "routine" | "job";
   /** Persisted history text before attachment paths are appended. */
   historyText?: string;
   images?: AgentInputImage[];
@@ -1132,6 +1132,7 @@ export interface BackgroundJobPayloads {
   "team_chat.ambient": { conversationId: string };
   /** Reconcile durable remote-agent intent; scope is loaded from the database. */
   "cloud_agent.poll": { agentId: string };
+  "shell_job.poll": { jobId: string };
   "meeting.calendar-sync": { connectionId: string };
   "meeting.work": {
     sessionId: string;

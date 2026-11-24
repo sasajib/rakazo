@@ -5,6 +5,7 @@ import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
 import { personSpeaker } from "../../runtime/context/history-speakers.js";
+import { withShellJobSteering } from "../../shell-jobs/shell-job-steering.js";
 import { backgroundHelpersAllowed } from "../../tasks/background-helpers.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
 import { deferredToolCount } from "../../tools/lazy-tool-catalog.js";
@@ -424,24 +425,28 @@ function modelTurnRequest(
       );
       return audited;
     },
-    claimSteering: (seenIds) =>
-      claimRunSteering(
-        deps,
-        {
-          threadId: thread.id,
-          botId: bot.id,
-          runId,
-          leaseOwner: workerId,
-          leaseFence: fence,
-        },
-        seenIds,
-        context,
-        pendingTurnFiles,
-        {
-          messageId: currentTurnMessage?.id,
-          hasImages: Boolean(currentTurnImages?.length),
-          resumeAnswerReplyContexts,
-        },
-      ),
+    claimSteering: withShellJobSteering(
+      deps,
+      { runId, trigger: run.trigger, threadId: thread.id, botId: bot.id, secrets: runSecrets },
+      (seenIds) =>
+        claimRunSteering(
+          deps,
+          {
+            threadId: thread.id,
+            botId: bot.id,
+            runId,
+            leaseOwner: workerId,
+            leaseFence: fence,
+          },
+          seenIds,
+          context,
+          pendingTurnFiles,
+          {
+            messageId: currentTurnMessage?.id,
+            hasImages: Boolean(currentTurnImages?.length),
+            resumeAnswerReplyContexts,
+          },
+        ),
+    ),
   };
 }

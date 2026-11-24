@@ -64,6 +64,7 @@ import {
   vaultCardUseOf,
   vaultLoginUseOf,
 } from "../../secrets/vault/vault-card-use.js";
+import { prepareShellJob, SHELL_JOB_FALLBACK } from "../../shell-jobs/shell-job-launch.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { addRunSecrets, recordVaultUse } from "../assembly/run-context.js";
 import { builtinOffered } from "../assembly/run-instructions.prompt.js";
@@ -618,44 +619,77 @@ export const computerTools: ToolHandlers = {
         (sandboxKindCapabilities(computer.kind).nativeShell
           ? await deps.sandbox.environment?.(computer, context)
           : undefined);
+      // Fork: on a Linux computer the command starts as a background job and the call waits for
+      // it only a short while (see shell-jobs/). Undefined runs it as before.
+      const job = shellEnvironment
+        ? undefined
+        : await prepareShellJob(ctx, {
+            command,
+            cwd,
+            background: args.background === true,
+            computer,
+          });
       // The computer is sent the command with its variables here, so each is a use from then on,
       // recorded once the command answers, fails or runs on. One stopped before this got none.
-      const observed = await observeShellCommand(
-        deps.sandbox.execute(
-          computer,
+      const observe = (jobArgv?: string[], jobTimeoutMs?: number) =>
+        observeShellCommand(
+          deps.sandbox.execute(
+            computer,
+            {
+              argv:
+                jobArgv ??
+                (shellEnvironment
+                  ? nativeShellCommandArgv(command, shellEnvironment)
+                  : [
+                      "bash",
+                      "-c",
+                      BACKGROUND_WORK_LAUNCH,
+                      "rakazo-background-launch",
+                      // Marker id must match sleepComputerIfIdle's probe (DB id), not ComputerRef.id
+                      // (providerRef via toComputerRef). Scope launches to this run for cancel teardown.
+                      ctx.computer.stored.id,
+                      runId,
+                      randomUUID(),
+                      command,
+                    ]),
+              cwd,
+              env:
+                Object.keys(commandEnvironment.env).length > 0 ? commandEnvironment.env : undefined,
+              unsetEnv: commandEnvironment.unsetEnv,
+              timeoutMs: jobTimeoutMs ?? sandboxCommandTimeoutMs(),
+            },
+            context,
+          ),
           {
-            argv: shellEnvironment
-              ? nativeShellCommandArgv(command, shellEnvironment)
-              : [
-                  "bash",
-                  "-c",
-                  BACKGROUND_WORK_LAUNCH,
-                  "rakazo-background-launch",
-                  // Marker id must match sleepComputerIfIdle's probe (DB id), not ComputerRef.id
-                  // (providerRef via toComputerRef). Scope launches to this run for cancel teardown.
-                  ctx.computer.stored.id,
-                  runId,
-                  randomUUID(),
-                  command,
-                ],
-            cwd,
-            env:
-              Object.keys(commandEnvironment.env).length > 0 ? commandEnvironment.env : undefined,
-            unsetEnv: commandEnvironment.unsetEnv,
-            timeoutMs: sandboxCommandTimeoutMs(),
+            secrets: ctx.secrets,
+            // A job's output can arrive in its first second; it waits the job window instead.
+            ...(jobArgv ? { quietMs: 600_000 } : {}),
+            onOutput: (snapshot) => {
+              const output = commandOutput(snapshot, true);
+              if (output) publishRunning(output);
+            },
           },
-          context,
-        ),
-        {
-          secrets: ctx.secrets,
-          onOutput: (snapshot) => {
-            const output = commandOutput(snapshot, true);
-            if (output) publishRunning(output);
+        ).finally(async () => {
+          for (const item of commandEnvironment.used) await recordVaultUse(ctx, name, item);
+        });
+      if (job && "argv" in job) {
+        const settled = await job.settle(await observe(job.argv, job.execTimeoutMs), {
+          finish: call.finish,
+          record: async (exitCode, output) => {
+            clearPublishTimer();
+            await appendComputerCommand(ctx, {
+              ...commandEvent,
+              status: "done",
+              exitCode,
+              output: output.slice(-COMPUTER_COMMAND_OUTPUT_MAX_CHARS),
+            });
           },
-        },
-      ).finally(async () => {
-        for (const item of commandEnvironment.used) await recordVaultUse(ctx, name, item);
-      });
+          output: (snapshot) => commandOutput(snapshot, false),
+        });
+        if (settled !== SHELL_JOB_FALLBACK) return settled;
+      }
+      const limitNote = job && "note" in job ? job.note : undefined;
+      const observed = await observe();
       if (observed.completion) {
         const completion = observed.completion.then(
           async (final) => {
@@ -695,7 +729,7 @@ export const computerTools: ToolHandlers = {
         exitCode: redacted.code,
         output: commandOutput(redacted, false).slice(-COMPUTER_COMMAND_OUTPUT_MAX_CHARS),
       });
-      return call.finish(redacted);
+      return call.finish(limitNote ? { ...redacted, note: limitNote } : redacted);
     } catch (error) {
       await recordFailure(error);
       throw error;

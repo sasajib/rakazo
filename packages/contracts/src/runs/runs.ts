@@ -51,6 +51,8 @@ export const RUN_TRIGGERS = [
   "helper_result",
   // A short answer for the person while the bot's own run keeps working (see docs/agent-concurrency.md).
   "talk",
+  // A background shell job finished and its result wakes the bot (fork: background shell jobs).
+  "job_result",
 ] as const;
 export const RunTriggerSchema = z.enum(RUN_TRIGGERS);
 export type RunTrigger = z.infer<typeof RunTriggerSchema>;

@@ -60,6 +60,11 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "schedule_cancel",
   "schedule_update",
   "bot_queue",
+  // Background shell jobs (fork): a bot told its job id must be able to follow or stop it without find_tool.
+  "job_list",
+  "job_status",
+  "job_output",
+  "job_stop",
   // The scratchpad is a bot's task list: its standing rules say "load it before every task", and a model that must first
   // find_tool it sometimes never does (fork: always listed, so the first call cannot fail with "tool not found").
   "scratchpad_list",

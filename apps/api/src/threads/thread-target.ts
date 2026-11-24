@@ -59,7 +59,12 @@ import {
 } from "../content/artifacts.js";
 import type { ImageAdmissionRun } from "./thread-image-admission.js";
 import { assertThreadImageInput } from "./thread-image-admission.js";
-import { cancelThreadRuns, finishThreadStop, isStopMessage } from "./thread-stop.js";
+import {
+  cancelThreadRuns,
+  finishThreadStop,
+  isStopMessage,
+  stopThreadJobs,
+} from "./thread-stop.js";
 
 export type ThreadTarget =
   | {
@@ -1252,6 +1257,7 @@ export async function sendThreadMessage(
   );
   if ("stop" in committed && committed.stop) {
     await finishThreadStop(deps, actor, target, committed.stop);
+    await stopThreadJobs(deps, target.threadId);
     return sendResult(committed.message, committed.runs);
   }
   await deps.events.notify(target.threadId, committed.eventSeq);

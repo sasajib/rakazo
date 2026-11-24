@@ -34,6 +34,7 @@ export function handlers(): BackgroundJobHandlers {
     "page.revise": vi.fn(async () => undefined),
     "meeting.work": vi.fn(async () => undefined),
     "purchase.poll": vi.fn(async () => undefined),
+    "shell_job.poll": vi.fn(async () => undefined),
     "media.poll": vi.fn(async () => undefined),
     "push.receipt": vi.fn(async () => undefined),
     "email.lifecycle": vi.fn(async () => undefined),

@@ -222,12 +222,13 @@ export const computerTools: ConnectorTool[] = [
   {
     name: "shell",
     description:
-      "Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. A command is stopped after a few minutes, so on Linux or macOS start longer work, such as a coding agent CLI, as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.",
+      "Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. On a Linux computer a command still running after about 8 seconds keeps running as a background job and you get its job_id: its result comes back to this chat by itself when it finishes, so do not poll, sleep or wait for it; tell the user in one line that it is running, then end your turn unless other independent work remains. Pass background:true to start long work (builds, installs, coding agent CLIs, downloads) as a job at once. Where no job_id comes back, a command is stopped after a few minutes: start longer work as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.",
     inputSchema: {
       type: "object",
       properties: {
         command: { type: "string" },
         cwd: { type: "string" },
+        background: { type: "boolean", description: "Start as a background job at once." },
       },
       required: ["command"],
     },

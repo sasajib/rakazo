@@ -5,6 +5,7 @@ import { personalCalendarTools } from "../personal-calendar/personal-calendar.to
 import { computerTools } from "./builtin-computer.tool-definition.js";
 import { conversationTools } from "./builtin-conversation.tool-definition.js";
 import { fleetTools } from "./builtin-fleet.tool-definition.js";
+import { jobTools } from "./builtin-jobs.tool-definition.js";
 import { memoryTools } from "./builtin-memory.tool-definition.js";
 import { serviceTools } from "./builtin-services.tool-definition.js";
 import { workTools } from "./builtin-work.tool-definition.js";
@@ -20,6 +21,7 @@ export const DELEGATION_TOOL_NAMES = new Set<string>([
 
 export const builtinAgentTools: ConnectorTool[] = [
   ...computerTools,
+  ...jobTools,
   ...conversationTools,
   meetingTranscriptTool,
   ...serviceTools,
