@@ -110,6 +110,10 @@ export function deploymentDisabledBuiltinTools(env: Record<string, string | unde
     .filter(Boolean);
 }
 
+function effectiveDisabledTools(bot: { disabledBuiltinTools?: string[] | null }): string[] {
+  return [...(bot.disabledBuiltinTools ?? []), ...deploymentDisabledBuiltinTools(process.env)];
+}
+
 export async function startTurnModel(
   hold: RunHold,
   parts: { saved: SavedTurn; records: RunRecords },
@@ -434,6 +438,7 @@ export async function resolveRunCapabilities(
   } = parts.saved;
   const { bot, messagingChannelRun, nonOwnerChatRun, conversationRun, conversationThread, origin } =
     parts.records;
+  const botDisabledTools = effectiveDisabledTools(bot);
   const { cloudAgentPromise } = parts.connected;
   const { people } = parts.thread;
   const { credential, resolved, runModelId, runModelProvider, scripted, thinkingLevel } =
@@ -471,7 +476,7 @@ export async function resolveRunCapabilities(
     [
       hasMessagingIdentity ? messagingDmSurfaceNote() : null,
       chatApps.length > 0
-        ? chatAppConnectNote(chatApps, !bot.disabledBuiltinTools?.includes("connect_app"))
+        ? chatAppConnectNote(chatApps, !botDisabledTools.includes("connect_app"))
         : null,
       messagingChannelRun
         ? messagingChannelPrivacyBlock()
@@ -564,10 +569,7 @@ export async function resolveRunCapabilities(
   // beside stays the only writer of the bot's state. Its answer is its text.
   const disabledBuiltinTools = talkRun
     ? new Set<string>(BUILTIN_TOOL_NAMES)
-    : disabledBuiltinToolSet([
-        ...(bot.disabledBuiltinTools ?? []),
-        ...deploymentDisabledBuiltinTools(process.env),
-      ]);
+    : disabledBuiltinToolSet(botDisabledTools);
   const replyMode = runReplyMode(run.trigger, bot.replyMode, disabledBuiltinTools);
   const emailName = deps.inboundEmailDomain
     ? await deps.prisma.botEmailAddress.findUnique({
@@ -689,6 +691,7 @@ export async function selectRunTools(
     unknownChannelSourceId,
     ownerComputerRoutine,
   } = parts.records;
+  const botDisabledTools = effectiveDisabledTools(bot);
   const { connectedPlugins, semanticMemory } = parts.connected;
   const { discovered, groupReplyOptional, history, semanticMemoryEnabled } = parts.turnContext;
   const {
@@ -781,8 +784,8 @@ export async function selectRunTools(
       voiceCall,
       // Every member already got a message that names nobody, so a handoff only repeats it.
       disabledBuiltinTools: groupReplyOptional
-        ? [...(bot.disabledBuiltinTools ?? []), "handoff_to_bot"]
-        : bot.disabledBuiltinTools,
+        ? [...botDisabledTools, "handoff_to_bot"]
+        : botDisabledTools,
       fleetManagement: bot.fleetManagement,
       hasTeammates: teammates.length > 0,
       hasGroups: otherGroups.length > 0,
@@ -860,7 +863,7 @@ export async function selectRunTools(
     {
       groupId: conversationThread.groupId,
       trigger: run.trigger,
-      disabledBuiltinTools: bot.disabledBuiltinTools,
+      disabledBuiltinTools: botDisabledTools,
     },
     tools,
   );
