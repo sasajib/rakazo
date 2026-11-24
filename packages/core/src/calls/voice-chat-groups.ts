@@ -38,7 +38,11 @@ const SUMMARY_MAX = 120;
  * even when it reuses the run of a call turn. The bot's `voice_call` marker
  * closes the group, so the work it does after hanging up renders as chat.
  */
-export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): ThreadItem<T>[] {
+export function groupVoiceChats<T extends VoiceChatMessage>(
+  messages: T[],
+  options: { cardsApart?: boolean } = {},
+): ThreadItem<T>[] {
+  const cardsApart = options.cardsApart ?? true;
   const items: ThreadItem<T>[] = [];
   let open: VoiceChatGroup<T> | undefined;
   let openRunIds = new Set<string>();
@@ -48,7 +52,7 @@ export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): Thre
     // transcript: the call card shows captions only, so folding it in hid the card for as long as
     // the call lasted and left the run parked behind it. It stays a message of its own, and the
     // call's group carries on around it.
-    if (needsPersonOnScreen(message)) {
+    if (cardsApart && needsPersonOnScreen(message)) {
       items.push({ kind: "message", message });
       continue;
     }
@@ -98,12 +102,16 @@ export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): Thre
   return items;
 }
 
-/** Newest bot turn still inside this call's open card. Typed turns and wrap-up sit outside. */
+/**
+ * Newest bot turn still inside this call's open card. Typed turns and wrap-up sit outside.
+ * A reply that carries a card is still spoken (its text and the question), so speech groups the
+ * call with its cards folded in; only the rendered transcript keeps them apart.
+ */
 export function latestSpokenCallReply<T extends VoiceChatMessage>(
   messages: T[],
   callId: string,
 ): T | undefined {
-  const groups = groupVoiceChats(messages).filter(
+  const groups = groupVoiceChats(messages, { cardsApart: false }).filter(
     (item): item is VoiceChatGroup<T> => item.kind === "voiceChat" && item.callId === callId,
   );
   const group = groups.at(-1);

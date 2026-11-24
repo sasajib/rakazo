@@ -34,6 +34,16 @@ describe("groupVoiceChats cards that wait on the person", () => {
     expect(items.some((item) => item.kind === "message" && item.message === ask)).toBe(true);
     expect(group && group.kind === "voiceChat" ? group.messages : []).toEqual([user, reply]);
   });
+
+  it("still speaks a call reply that carries a question card", () => {
+    const user = message({ role: "user", callId: "call-1", runId: "run-1" });
+    const reply = message({
+      role: "bot",
+      runId: "run-1",
+      blocks: [{ kind: "ask", text: "Should I deploy it?", status: "pending" } as never],
+    });
+    expect(latestSpokenCallReply([user, reply], "call-1")).toBe(reply);
+  });
 });
 
 describe("groupVoiceChats", () => {
