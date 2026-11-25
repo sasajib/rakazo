@@ -28,6 +28,8 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("filterSkillsForBot(", 2), ("loadBotSkillSelection(", 3), ("addSkillToBotSelection(", 2),
            ("botSkillsProcedures", 2), ("createBotSkillsService(", 2), ("BotSkillsSection", 2),
            ('"BotSkillSelection",', 1),
+           # new agents start with built-in skills only (RAKAZO_NEW_BOT_SKILLS=builtins)
+           ("newBotSkillsBuiltinsOnly(", 2),
            # skill curator (auto-learned skills, chat teaching): run-finished hook, prompt seam, RPC,
            # card block, web card + Learning section + lesson bar, desktop-host teaching gate
            ("curateAfterRun(ctx)", 1), ("skillLearningPromptState(", 2), ("skillLearningInstruction(", 2),
