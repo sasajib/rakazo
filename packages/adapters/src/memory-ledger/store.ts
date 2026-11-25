@@ -122,8 +122,10 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
         .slice(0, 40);
       if (!words.length) return [];
       return selectFacts(
+        // Most relevant first, not newest first: with many retired facts sharing common words
+        // ("owner", "wants"), a recency order cut the one being named out of the LIMIT.
         `"spaceId" = $1 AND "status" IN ('superseded','retracted') AND "fts" @@ to_tsquery('english', $2)
-         ORDER BY "updatedAt" DESC LIMIT $3`,
+         ORDER BY ts_rank_cd("fts", to_tsquery('english', $2)) DESC, "updatedAt" DESC LIMIT $3`,
         [spaceId, words.join(" | "), limit],
       );
     },
@@ -135,8 +137,13 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
         .slice(0, 40);
       const textQuery = words.join(" | ");
       return selectFacts(
+        // Exact subject/id hits first, then by text relevance, then newest. Newest-first alone
+        // dropped older facts once more than LIMIT live facts shared a word like "owner", so a
+        // remove/replace quoting an older fact word for word found nothing (fork fix 2026-11-25).
         `"spaceId" = $1 AND "status" = ANY($2::text[]) AND ("subject" = ANY($3::text[]) OR "id" = ANY($4::text[]) OR ($5 <> '' AND "fts" @@ to_tsquery('english', $5)))
-         ORDER BY "updatedAt" DESC LIMIT $6`,
+         ORDER BY ("subject" = ANY($3::text[]) OR "id" = ANY($4::text[])) DESC,
+                  CASE WHEN $5 <> '' THEN ts_rank_cd("fts", to_tsquery('english', $5)) ELSE 0 END DESC,
+                  "updatedAt" DESC LIMIT $6`,
         [spaceId, live, subjects, ids, textQuery, limit],
       );
     },

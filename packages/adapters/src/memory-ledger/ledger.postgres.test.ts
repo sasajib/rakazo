@@ -276,6 +276,43 @@ postgres("memory ledger (PostgreSQL)", () => {
       const [oldHome] = await tenant(() => store.getFacts(spaceId, [home!.id]));
       expect(oldHome?.status).toBe("superseded");
 
+      // An older fact is still found by its own words when more than LIMIT newer facts share
+      // common words with it (live 2026-11-25: remove of an older fact said "no entry matches").
+      const older = await tenant(() =>
+        store.insertFact(
+          base("On Jumma the owner wants the assistant to call him 1 hour before jamat", {
+            area: "preferences",
+          }),
+        ),
+      );
+      const retiredOld = await tenant(() =>
+        store.insertFact(
+          base("The owner wants the assistant to ring the bell before maghrib", {
+            area: "preferences",
+            status: "retracted",
+          }),
+        ),
+      );
+      await tenant(async () => {
+        for (let n = 0; n < 25; n++) {
+          await store.insertFact(
+            base(`The owner wants the assistant to handle chore number ${n}`, {
+              area: "preferences",
+            }),
+          );
+          await store.insertFact(
+            base(`The owner wants the assistant to skip errand number ${n}`, {
+              area: "preferences",
+              status: "retracted",
+            }),
+          );
+        }
+      });
+      const liveHits = await tenant(() => store.findLive(spaceId, { texts: [older!.text] }, 20));
+      expect(liveHits[0]?.id).toBe(older!.id);
+      const retiredHits = await tenant(() => store.findRetired(spaceId, retiredOld!.text, 20));
+      expect(retiredHits[0]?.id).toBe(retiredOld!.id);
+
       // Deleting the bot keeps the space's facts and clears only the attribution.
       await fixture(() => prisma.bot.delete({ where: { id: bot.id } }));
       const [kept] = await tenant(() => store.getFacts(spaceId, [pdf!.id]));

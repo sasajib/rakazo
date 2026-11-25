@@ -180,6 +180,11 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Rule for tests:** messages sent as the owner become shared facts. After any throwaway-bot test:
   `update memory_facts set status='retracted', "validTo"=now() where "writtenByBotName"='<bot>' and status in ('confirmed','tentative','disputed')`.
 - **Conflicts:** upstream moves memory/assembly files often (`runs/assembly/`, `runs/lifecycle/run-complete.ts`); re-place the hooks.
+- **Fix 2026-11-25 (image `main-1125c`): candidate lookups ranked by relevance.** `store.ts` `findLive`/`findRetired` ordered
+  OR-of-words FTS hits by `updatedAt DESC LIMIT n`; with >20 live facts sharing "owner/wants/assistant", a `remember remove`
+  quoting an older fact word for word got no candidate ("no entry matches", fell back to MEMORY.md). Now: subject/id hits,
+  then `ts_rank_cd`, then newest. Also improves the writer's duplicate/conflict lookup. Guard: `ledger.postgres.test.ts`
+  ("older fact is still found", fails on the old order).
 
 ### 1.11 Background shell jobs (slice A)
 - **Purpose:** a shell call that runs long is promoted to a job; its result re-enters as a message (wake run), so a long
