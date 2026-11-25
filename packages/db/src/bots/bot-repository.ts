@@ -42,6 +42,11 @@ import { readStateFor, snoozedUntilFor, unreadFor } from "../threads/thread-read
 import { chooseBotAvatar } from "./bot-avatar-choice.js";
 import { botThreadPreviews } from "./bot-previews.js";
 
+/** Fork: whether new agents start with only the built-in skills (RAKAZO_NEW_BOT_SKILLS=builtins). */
+export function newBotSkillsBuiltinsOnly(env: Record<string, string | undefined>): boolean {
+  return (env.RAKAZO_NEW_BOT_SKILLS ?? "").trim().toLowerCase() === "builtins";
+}
+
 function isBotCreateConflict(error: unknown, clientId?: string): boolean {
   if (!isUniqueViolation(error)) return false;
   const target = (error as { meta?: { target?: string[] | string } }).meta?.target;
@@ -618,6 +623,14 @@ export function createRepos(
               content: initialBotMemory(input.name),
             },
           });
+          // Fork: with RAKAZO_NEW_BOT_SKILLS=builtins a new agent starts with only the built-in
+          // skills (a selection with no stored skills); the owner adds the others it needs, and
+          // the selection persists. Unset keeps upstream's behaviour: every skill of the space.
+          if (newBotSkillsBuiltinsOnly(process.env)) {
+            await tx.botSkillSelection.create({
+              data: { botId: created.id, spaceId: actor.spaceId, userId: actor.userId },
+            });
+          }
           await input.seed?.(tx, created.id);
           return tx.bot.findFirstOrThrow({
             where: { id: created.id },

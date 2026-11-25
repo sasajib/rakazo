@@ -260,7 +260,11 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (built-ins added later stay on until unticked). A bot that creates a skill with `skill_create` gets it added to its own
   selection. An unassigned skill is not in the prompt catalog, is not expanded from `/Name` or a routine's `@Name`, and
   `skill_read` refuses it by name or id ("not assigned to this agent"); `skill_update`/`skill_delete` cannot reach it.
-  Spawned/duplicated bots start with no selection (all skills).
+  Spawned/duplicated bots start with no selection (all skills), unless `RAKAZO_NEW_BOT_SKILLS=builtins`: then EVERY new
+  agent (web, API, `spawn_bot`, import, duplicate: all go through `createBot` in `db/src/bots/bot-repository.ts`) gets an
+  empty selection at creation = built-in skills only; the owner adds skills as needed and the selection persists. Bee runs
+  with `builtins` (owner's choice 2026-11-25). Existing agents are not touched. Env listed in all 3 compose files + stack
+  compose; test `db/src/bots/new-bot-skills.postgres.test.ts` (unit + PG; fails on code without the hook).
 - **Files (fork):** `packages/adapters/src/tools/bot-skill-access.ts` (`loadBotSkillSelection`, `filterSkillsForBot`,
   `botMaySeeSkill`, `addSkillToBotSelection`), `packages/contracts/src/skills/bot-skills.ts` (`botSkillsProcedures`),
   `apps/api/src/bots/bot-skills.ts` (`createBotSkillsService`), `apps/web/src/pages/shell/bots/bot-skills-section.tsx`
