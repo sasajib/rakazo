@@ -11,6 +11,7 @@ import {
   COMPUTER_USE_INSTRUCTION,
   PRIVATE_WORKSPACE_INSTRUCTION,
   RAKAZO_PLATFORM_INSTRUCTION,
+  secretGuidance,
   VOICE_CALL_INSTRUCTION,
 } from "./run-instructions.prompt.js";
 import {
@@ -126,6 +127,36 @@ describe("prompt surface", () => {
     await expect(`# Fixed prompt text\n\n${text}\n`).toMatchFileSnapshot(
       "./__prompt_surface__/prompts.md",
     );
+  });
+
+  // Fork: a run that browses through an MCP browser (the page browser switched off for the
+  // deployment) is offered vault_fill and told how to sign in with a saved login.
+  it("vault_fill: tool definition and sign-in guidance of an MCP browser run", async () => {
+    const disabled = ["browser_act", "browser_navigate", "browser_snapshot"];
+    const tools = selectBuiltinToolsForRun({
+      ...SCENARIOS["owner-chat"],
+      disabledBuiltinTools: disabled,
+      vaultFillBrowser: true,
+    } as never);
+    const tool = tools.find((candidate) => candidate.name === "vault_fill")!;
+    expect(
+      selectBuiltinToolsForRun(SCENARIOS["owner-chat"] as never).map((t) => t.name),
+    ).not.toContain("vault_fill");
+    const text = [
+      "# vault_fill surface (run with a configured MCP browser, page browser off)",
+      "",
+      "## tool",
+      tool.description,
+      "",
+      "```json",
+      JSON.stringify(tool.inputSchema, null, 2),
+      "```",
+      "",
+      "## sign-in guidance in the tool usage line",
+      ...secretGuidance(new Set(disabled), true).map((clause) => `- ${clause}`),
+      "",
+    ].join("\n");
+    await expect(text).toMatchFileSnapshot("./__prompt_surface__/vault-fill.md");
   });
 
   it("every scenario still offers the queue and standing tools it should", () => {

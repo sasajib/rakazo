@@ -54,6 +54,7 @@ import {
   userComputerObserve,
   userComputerShell,
 } from "./run-tools-user-computer.js";
+import { vaultFillTools, withVaultFillWording } from "./run-tools-vault-fill.js";
 
 /** The owner's own computer: its shell, screen and computer list. */
 const ownComputerResult = (tool: string) =>
@@ -82,7 +83,9 @@ const TOOL_HANDLERS = new Map<string, ToolHandler>([
   ...Object.entries(integrationTools),
   ...Object.entries(taskTools),
   ...Object.entries(messagingTools),
-  ...Object.entries(secretTools),
+  ...Object.entries(withVaultFillWording(secretTools)),
+  // Fork: a saved login typed through an MCP browser.
+  ...Object.entries(vaultFillTools),
   ...Object.entries(fleetTools),
   ["user_computer_list", userComputerList],
   [USER_COMPUTER_SHELL_TOOL, userComputerShell],

@@ -5,6 +5,7 @@ import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
 import { personSpeaker } from "../../runtime/context/history-speakers.js";
+import { VAULT_FILL_TOOL } from "../../secrets/vault/vault-mcp-fill.js";
 import { withShellJobSteering } from "../../shell-jobs/shell-job-steering.js";
 import { backgroundHelpersAllowed } from "../../tasks/background-helpers.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
@@ -303,6 +304,7 @@ function modelTurnRequest(
           : disabledBuiltinTools,
       offeredFleetTools: offeredFleetTools(strategicBuiltins),
       followUpsOffered: followUpsOffered(strategicBuiltins, ownerStartedRun, run.trigger),
+      vaultFillOffered: strategicBuiltins.some((tool) => tool.name === VAULT_FILL_TOOL),
       backgroundHelpersAllowed: backgroundHelpersAllowed({
         trigger: run.trigger,
       }),

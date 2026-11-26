@@ -98,6 +98,8 @@ const PAGE_CHANGING_TOOL_NAMES = new Set([
   "launch_app",
   "browser_navigate",
   "browser_act",
+  // Fork: types into a page of an MCP browser, one field after another.
+  "vault_fill",
 ]);
 
 /**
@@ -272,6 +274,7 @@ export function describeToolActivity(
     return `Opening page: ${detail(redactActivityUrl(record.url))}`;
   if (toolName === "browser_snapshot") return "Reading the page";
   if (toolName === "browser_act") return "Using the page";
+  if (toolName === "vault_fill") return "Signing in with a saved login";
   if (toolName === "computer_act") return "Operating the computer";
   if (toolName === "run_subagent") return `Delegating to helper: ${detail(record.name)}`;
   if (toolName === "create_space") return `Creating space: ${detail(record.name)}`;
