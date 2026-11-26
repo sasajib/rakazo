@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { planReplyIntent } from "./intent.js";
-import { planInstruction, spokenPlan, workflowTrusted } from "./plans.js";
+import type { PlanRow } from "./plans.js";
+import { planInstruction, planInvolves, spokenPlan, workflowTrusted } from "./plans.js";
 
 describe("planReplyIntent (fork: plan confirmation)", () => {
   it.each([
@@ -64,5 +65,47 @@ describe("plan prompt and trust rules", () => {
     ]);
     expect(line).toContain("1, YouTube Specialist Find it in history");
     expect(line.endsWith("Shall I go ahead?")).toBe(true);
+  });
+});
+
+// FORK.md 1.22: one approval covers the task, not one message.
+describe("what an approved plan covers", () => {
+  const plan = {
+    id: "plan-1",
+    title: "Subtitles",
+    steps: [
+      { text: "Find the video", agent: "Worker" },
+      { text: "Check the result", agent: "Reviewer (second opinion)" },
+      { text: "Report" },
+    ],
+    recipients: ["bot-sent"],
+  } as unknown as PlanRow;
+
+  it("involves an agent a step names or one that already got a request under it", () => {
+    expect(planInvolves(plan, { id: "bot-w", name: "Worker" })).toBe(true);
+    expect(planInvolves(plan, { id: "bot-w", name: "worker" })).toBe(true);
+    expect(planInvolves(plan, { id: "bot-r", name: "Reviewer" })).toBe(true);
+    expect(planInvolves(plan, { id: "bot-sent", name: "Unnamed" })).toBe(true);
+    expect(planInvolves(plan, { id: "bot-x", name: "Networker" })).toBe(false);
+    expect(planInvolves(plan, { id: "bot-x", name: "Designer" })).toBe(false);
+    expect(planInvolves(plan, { id: "bot-x", name: "Re" })).toBe(false);
+    expect(planInvolves({ steps: [], recipients: [] }, { id: "bot-w", name: "Worker" })).toBe(
+      false,
+    );
+  });
+
+  it("tells a later run that follow-ups are covered, and Always ask that only corrections are", () => {
+    const base = { threshold: 3, trusted: [], covering: { plan, agents: ["Worker", "Reviewer"] } };
+    const trusted = planInstruction({ ...base, mode: "until_trusted" });
+    expect(trusted).toContain("still covers this task for: Worker, Reviewer");
+    expect(trusted).toContain("do not propose a new plan for that");
+    expect(trusted).toContain("corrections and follow-ups about it");
+    const always = planInstruction({ ...base, mode: "always" });
+    expect(always).toContain("use message_bot with replaces; no new plan is needed for that");
+    expect(always).toContain("An approved plan is one hand-off");
+    expect(always).not.toContain("still covers this task");
+    expect(planInstruction({ mode: "until_trusted", threshold: 3, trusted: [] })).toContain(
+      "if the old one has already finished, the correction is delivered as a new request",
+    );
   });
 });

@@ -34,6 +34,7 @@ import {
   cancelReplacedRequest,
   findReplaceableRequest,
   finishReplacedRequest,
+  followsFinishedPreface,
   replacesPreface,
 } from "./bot-supersede.js";
 
@@ -231,6 +232,8 @@ export async function messageBot(
   const files = input.files ?? [];
   const replacesRef = String(input.replaces ?? "").trim();
   let superseded: SupersededRequest | undefined;
+  /** `replaces` named a request that had already ended: delivered as a new request instead. */
+  let afterFinished: { run?: { id: string; status: string }; summary: string } | undefined;
 
   let committed:
     | {
@@ -257,6 +260,7 @@ export async function messageBot(
     committed = await withTransactionRetry(() =>
       deps.prisma.$transaction(async (tx) => {
         superseded = undefined;
+        afterFinished = undefined;
         if (!(await spaceTakesWork(tx, run.spaceId)))
           return { ok: false as const, error: "this Space is being deleted" };
         for (const threadId of [run.threadId, targetThreadId].sort()) {
@@ -323,20 +327,28 @@ export async function messageBot(
             ref: replacesRef,
           });
           if (!found.ok) return { ok: false as const, error: found.error };
-          superseded = await cancelReplacedRequest(tx, {
-            spaceId: run.spaceId,
-            targetThreadId,
-            targetBotId: target.id,
-            run: found.run,
-            summary: found.summary,
-          });
-          if (!superseded)
-            return {
-              ok: false as const,
-              error:
-                "Not replaced: that request has just finished. Send the correction as a new request.",
-            };
-          text = `${replacesPreface(superseded)}\n\n${message}`;
+          if ("finished" in found) {
+            afterFinished = { run: found.run, summary: found.summary };
+          } else {
+            superseded = await cancelReplacedRequest(tx, {
+              spaceId: run.spaceId,
+              targetThreadId,
+              targetBotId: target.id,
+              run: found.run,
+              summary: found.summary,
+            });
+            // It ended between the lookup and the cancel: the correction still goes out.
+            if (!superseded)
+              afterFinished = {
+                run: { id: found.run.id, status: "completed" },
+                summary: found.summary,
+              };
+          }
+          text = superseded
+            ? `${replacesPreface(superseded)}\n\n${message}`
+            : afterFinished
+              ? `${followsFinishedPreface(afterFinished)}\n\n${message}`
+              : message;
         }
         const wakePrompt = buildBotMessageWakePrompt({ from: sender, text, intent, onCall });
         const outboundBlock: MessageBlock = {
@@ -458,6 +470,14 @@ export async function messageBot(
 
   await deps.events.notify(targetThreadId, committed.targetEventSeq);
   await deps.events.notify(run.threadId, committed.senderEventSeq);
+  if (afterFinished) {
+    getLogger().info("bot_message.correction_after_finished", {
+      "run.id": run.id,
+      "bot_message.earlier_run": afterFinished.run?.id ?? "",
+      "bot_message.new_run": committed.runId,
+      "bot.id": target.id,
+    });
+  }
   if (superseded) {
     await finishReplacedRequest(deps, run, superseded);
     getLogger().info("bot_message.superseded", {
@@ -479,9 +499,18 @@ export async function messageBot(
     ...(superseded
       ? { replaced: { requestId: superseded.runId, stopped: superseded.wasRunning } }
       : {}),
+    ...(afterFinished
+      ? { earlierRequestFinished: true as const, earlierRequestId: afterFinished.run?.id }
+      : {}),
     note: superseded
       ? `Sent to ${target.name}; it replaces request ${superseded.runId.slice(0, 8)}, which was ${superseded.wasRunning ? "stopped" : "cancelled"}. The correction starts now. A reply wakes you later as a new message.`
-      : `Sent to ${target.name} (request id ${committed.runId}; to correct it later, send message_bot with replaces set to that id). Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
+      : afterFinished
+        ? `Sent to ${target.name} as a new request (request id ${committed.runId}): ${
+            afterFinished.run
+              ? `the earlier request ${afterFinished.run.id.slice(0, 8)} had already finished, so there was nothing to stop`
+              : "no earlier open request of yours to this agent matched, so there was nothing to stop"
+          }. ${target.name} was told this corrects it. A reply wakes you later as a new message.`
+        : `Sent to ${target.name} (request id ${committed.runId}; to correct it later, send message_bot with replaces set to that id). Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
   };
 }
 

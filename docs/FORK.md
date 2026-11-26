@@ -373,6 +373,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   or "change step 2 to …") -> status `changes`, the prompt tells the agent to `plan_propose {revises}`; the
   revision replaces the card. The approved plan is bound to the run that carries it out (`executingRunId`), and only
   such a run may `message_bot` a request (`planGateForMessageBot`; refusal = `ok:false` + `PLAN_REQUIRED_NOTE`).
+  **Changed by 1.22:** a live approved plan also covers later runs' requests to the agents it involves.
   (2) `message_bot {replaces: <request id | id prefix | "latest">}`: in the delivery transaction the earlier
   request of the SAME sender to the same recipient is cancelled (queued) or stopped (running; the run's 1 s lease
   watch aborts it, computer work torn down after commit, like threads/stop), its auto-return is suppressed
@@ -460,6 +461,52 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   text; the unread dot is what shows. Mobile still has no renderer for `plan` / `learned_skill` cards (1.19, 1.20).
 - **Conflicts:** upstream adding a message block kind (add it to `NEEDS_PERSON_BY_KIND`; tsc fails until then) or
   editing the two filters in `thread-message-pages.ts` (keep the core call, drop any re-grown kind list).
+
+### 1.22 One approval covers the task: follow-ups, corrections, `replaces` of a finished request (audit finding 2)
+- **Why:** an approved plan was bound to ONE run (`executingRunId`). The owner's next message in the same chat (a
+  correction, "tell it to use the existing server") started a new run with no plan bound, `message_bot` was refused
+  with `PLAN_REQUIRED_NOTE`, and the agent had to post a new card: 5 `plan.gate_refused` in 33 h, one card each.
+  `message_bot {replaces}` also failed ("Not replaced: no open request…") once the recipient had finished.
+- **Rule now (`planGateCheck` in `plans/plans.ts`; `planGateForMessageBot` returns its refusal note):** a request
+  goes out under (1) the plan bound to this run, or an approved plan of the chat still unbound (as before, any
+  agent); or (2) a plan of this chat approved less than `PLAN_LIVE_MS` (6 h, counted from the approval) ago that
+  **involves the recipient** (`planInvolves`): a step names the agent as who does it, or a request already went to
+  that agent under the plan. (2) holds for later owner-started runs, so corrections and follow-ups need no card.
+  An agent the plan does not involve still needs a plan, with or without `replaces`. Nothing is covered while a
+  NEWER plan of the chat waits for the owner's answer (pending / changes).
+- **Always ask stays strict (decision):** its documented meaning is "every hand-off waits for a plan card". Under
+  Always ask only a correction (`replaces`) of a request to an involved agent is covered; a plain follow-up needs a
+  new plan. Ask until trusted (the default for every agent) gets the full follow-up cover. Never ask: no gate.
+- **What a plan covers is recorded:** `agent_plans.recipients` (JSON array of agent ids), written by
+  `recordPlanRecipient` after every request `message_bot` sends under a plan (`store.addRecipient`, once per agent).
+- **`replaces` of a finished request:** `findReplaceableRequest` looks at open requests, then at ended ones of the
+  same sender. Ended (or it ends between lookup and cancel, or `latest` with nothing earlier): the correction is
+  delivered as a NEW request with the preface "This corrects my earlier request <id8> (…), which you already
+  finished…", the result carries `earlierRequestFinished: true` and says so in `note`. A named id that matches
+  nothing is still an error, and another sender's request can still not be replaced.
+- **Prompt:** `planInstruction` says an approved plan covers the whole task for the agents it involves; a later run
+  gets "Plan <id> … is approved and still covers this task for: <agents>… do not propose a new plan for that"
+  (`PlanPromptState.covering`, from `withCoveringPlan`). `PLAN_REQUIRED_NOTE` reworded. `message_bot.replaces`
+  description +55 bytes (pinned-tool cap 48_230 still holds: 48_228).
+- **Seams:** `runs/tools/run-tools-messaging.ts` (gate gets the recipient; records it after the send),
+  `messaging/bot-messages.ts` (finished branch, result fields), `messaging/bot-supersede.ts`,
+  `tools/builtin-fleet.tool-definition.ts`, prompt-surface snapshots (4 tool files: only the `message_bot` schema hash and byte totals).
+- **Migration:** `20270126090000_plan_coverage` (`ALTER TABLE agent_plans ADD COLUMN IF NOT EXISTS recipients JSONB
+  NOT NULL DEFAULT '[]'`; no new table, the RLS of `agent_plans` applies; rollback = previous image, column ignored).
+- **Logs:** `plan.gate_covered` (plan, basis follow_up|correction, recipient), `plan.gate_refused` (+ latest status,
+  replaces), `bot_message.correction_after_finished`.
+- **Tests:** `plans/plans.postgres.test.ts` second case (approve -> send -> new owner run -> follow-up to the same
+  agent allowed; an agent that only received a request is covered; an uninvolved agent refused with and without
+  replaces; replaces of a finished request by `latest` and by id delivers; foreign request refused; newer pending
+  plan blocks; rejected newer plan does not; Always ask strict; cover ends after 6 h). On the old code the follow-up
+  assertion fails with the old refusal note. `plans/plans.test.ts` (`planInvolves`, prompt lines).
+- **Live check:** planner A (Ask until trusted) + workers B and C: plan naming B -> Approve -> A messages B; then
+  type a correction: A sends it to B with no new card (`plan.gate_covered` in the api log); ask A to hand the same
+  thing to C: refused, new card. After B finished: "also do X" -> delivered, result says the earlier one had finished.
+- **Known limits:** plans approved before this deploy have no recorded recipients (covered only through the agent
+  names in their steps) for their remaining 6 h; "follow-up" is not judged by content: any request to an involved
+  agent within 6 h of the approval goes out; the executing run may still message any agent (unchanged).
+- **Conflicts:** as 1.20 (`message_bot` delivery transaction, `run-tools-messaging.ts`), pinned tool byte cap.
 
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.

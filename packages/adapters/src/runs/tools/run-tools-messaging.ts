@@ -29,7 +29,7 @@ import {
 } from "../../memory/notice-ledger.js";
 import { messageBot, unresolvedBotError } from "../../messaging/bot-messages.js";
 import { describeQueueItem, loadBotQueue } from "../../messaging/bot-queue.js";
-import { planGateForMessageBot, proposePlan } from "../../plans/plans.js";
+import { planGateCheck, proposePlan, recordPlanRecipient } from "../../plans/plans.js";
 import { startBackgroundHelper } from "../../tasks/background-helpers.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { runLeaseFor } from "../assembly/run-messages.js";
@@ -417,8 +417,8 @@ export const messagingTools: ToolHandlers = {
     const { args, effectKey } = call;
     const invalid = messageError(ctx, args.message);
     if (invalid) return call.finish({ error: invalid });
-    // Fork: an owner-started run delegates only an approved plan (plans/plans.ts).
-    const planRefused = await planGateForMessageBot(
+    // Fork: an owner-started run delegates only under an approved plan (plans/plans.ts).
+    const planGate = await planGateCheck(
       deps.prisma,
       {
         id: run.id,
@@ -435,9 +435,13 @@ export const messagingTools: ToolHandlers = {
         messagingChannelRun: ctx.source?.messagingChannelRun === true,
         intent: args.intent ? String(args.intent) : undefined,
         replaces: args.replaces ? String(args.replaces) : undefined,
+        recipient: {
+          botId: args.bot_id ? String(args.bot_id) : undefined,
+          name: args.confirm_name ? String(args.confirm_name) : undefined,
+        },
       },
     );
-    if (planRefused) return call.finish({ ok: false, sent: false, note: planRefused });
+    if (planGate.refused) return call.finish({ ok: false, sent: false, note: planGate.refused });
     const stored = await prepareSentFiles(ctx, call, {
       botId: args.bot_id ? String(args.bot_id) : undefined,
       name: args.confirm_name ? String(args.confirm_name) : undefined,
@@ -466,6 +470,8 @@ export const messagingTools: ToolHandlers = {
       },
     );
     if (!sent.ok) return call.finish({ error: sent.error });
+    // Fork: the plan now covers this agent, so the owner's next correction needs no new card.
+    await recordPlanRecipient(deps.prisma, planGate, sent.botId);
     return call.finish({
       ok: true,
       botId: sent.botId,
@@ -473,6 +479,9 @@ export const messagingTools: ToolHandlers = {
       ...("duplicate" in sent ? { sent: false } : {}),
       ...("requestId" in sent ? { requestId: sent.requestId } : {}),
       ...("replaced" in sent && sent.replaced ? { replaced: sent.replaced } : {}),
+      ...("earlierRequestFinished" in sent && sent.earlierRequestFinished
+        ? { earlierRequestFinished: true }
+        : {}),
       note: sent.note,
     });
   },

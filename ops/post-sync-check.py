@@ -49,7 +49,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ('autoLanguage && transport !== "livekit"', 1),
            # 2026-11-26 audit fixes (FORK.md 1.21+): one core rule for cards that wait on the person, used by
            # the server page filter, the live-event filter, the unread default and the owner notice
-           ("isNeedsPersonBlock", 3), ("isPeerRunVisibleBlock", 2), ("notifyOpenOwnerCards(", 2)]
+           ("isNeedsPersonBlock", 3), ("isPeerRunVisibleBlock", 2), ("notifyOpenOwnerCards(", 2),
+           # one approval covers the task (1.22): gate by involved agents, recipients recorded, finished replaces
+           ("planGateCheck(", 2), ("recordPlanRecipient(", 2), ("planInvolves(", 2),
+           ("followsFinishedPreface(", 2)]
 results = []
 
 
@@ -104,6 +107,7 @@ def migrations():
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
     check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")
     check("plan confirmation tables exist with row security", psql("select count(*) from pg_class where relname in ('agent_plans','plan_settings','plan_trust') and relrowsecurity") == "3")
+    check("agent_plans.recipients column exists (plan coverage)", psql("select 1 from information_schema.columns where table_name='agent_plans' and column_name='recipients'") == "1")
 
 
 def live_queue_test():

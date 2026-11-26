@@ -7,12 +7,14 @@
  *   returns what the prompt says (planInstruction, joined to the skills line).
  * - plan_propose tool (run-tools-messaging.ts): posts the card; a trusted workflow is approved at
  *   once (status auto) and bound to the proposing run.
- * - planGateForMessageBot (message_bot): an owner-started run may send another agent a request only
- *   while an approved plan is bound to it.
+ * - planGateCheck / planGateForMessageBot (message_bot): an owner-started run may send another agent
+ *   a request only under an approved plan: the plan bound to it, or (FORK.md 1.22) a plan of this
+ *   chat that is still live and involves that agent, so the owner's corrections and follow-ups in
+ *   later messages need no new card. Requests sent under a plan are recorded on it (recipients).
  * - decidePlan (API plans/decide): the card's Approve / Change / Reject.
  *
- * Tables are raw SQL (migration 20270125090000_plan_confirm); every query runs in the caller's
- * tenant context.
+ * Tables are raw SQL (migrations 20270125090000_plan_confirm, 20270126090000_plan_coverage); every
+ * query runs in the caller's tenant context.
  */
 import { randomUUID } from "node:crypto";
 import type {
@@ -25,6 +27,7 @@ import type {
   PlanTrust,
 } from "@rakazo/contracts";
 import { DEFAULT_PLAN_MODE, DEFAULT_PLAN_TRUST_THRESHOLD } from "@rakazo/contracts";
+import { resolveBotAddress } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import {
   appendEventInTransaction,
@@ -40,8 +43,11 @@ type Sql = Pick<PrismaClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 type Events = { notify(threadId: string, seq: number): Promise<void> };
 
 export const PLAN_TRIGGERS = new Set(["user", "follow_up"]);
-/** A plan older than this no longer answers "yes" (the owner moved on). */
-const PLAN_LIVE_MS = 6 * 60 * 60_000;
+/**
+ * A plan older than this no longer answers "yes" (the owner moved on), and an approved plan stops
+ * covering follow-ups this long after it was approved.
+ */
+export const PLAN_LIVE_MS = 6 * 60 * 60_000;
 const MAX_STEPS = 12;
 
 export interface PlanRow {
@@ -63,6 +69,8 @@ export interface PlanRow {
   status: PlanStatus;
   decidedVia: PlanDecidedVia | null;
   executingRunId: string | null;
+  /** Ids of the agents that were sent a request under this plan (what the plan covers). */
+  recipients: string[];
   createdAt: Date;
 }
 
@@ -96,6 +104,9 @@ const toPlan = (row: Record<string, unknown>): PlanRow => ({
   ...(row as unknown as PlanRow),
   steps: asJsonArray<PlanStep>(row.steps),
   inputs: asJsonArray<{ label: string; value: string }>(row.inputs),
+  recipients: asJsonArray<unknown>(row.recipients).filter(
+    (id): id is string => typeof id === "string",
+  ),
 });
 
 export function createPlanStore(prisma: Sql) {
@@ -153,7 +164,28 @@ export function createPlanStore(prisma: Sql) {
       );
       return rows[0] ? toPlan(rows[0]) : undefined;
     },
-    async insert(row: Omit<PlanRow, "createdAt" | "messageId">): Promise<void> {
+    /** Approved (or auto) plans of this chat whose approval is newer than `since`, newest first. */
+    async liveApproved(threadId: string, botId: string, since: Date): Promise<PlanRow[]> {
+      const rows = await q<Record<string, unknown>>(
+        `SELECT * FROM "agent_plans" WHERE "threadId" = $1 AND "botId" = $2
+           AND "status" IN ('approved', 'auto') AND COALESCE("decidedAt", "createdAt") > $3
+         ORDER BY "createdAt" DESC, "revision" DESC LIMIT 10`,
+        threadId,
+        botId,
+        since,
+      );
+      return rows.map(toPlan);
+    },
+    /** Records that a request went to `recipientBotId` under this plan (once per agent). */
+    async addRecipient(id: string, recipientBotId: string): Promise<void> {
+      await x(
+        `UPDATE "agent_plans" SET "recipients" = "recipients" || to_jsonb($2::text), "updatedAt" = now()
+         WHERE "id" = $1 AND NOT ("recipients" @> to_jsonb($2::text))`,
+        id,
+        recipientBotId,
+      );
+    },
+    async insert(row: Omit<PlanRow, "createdAt" | "messageId" | "recipients">): Promise<void> {
       await x(
         `INSERT INTO "agent_plans" ("id", "spaceId", "botId", "userId", "threadId", "runId", "title", "steps",
            "inputs", "spoken", "workflow", "skillId", "revision", "revisesId", "status", "decidedVia",
@@ -422,6 +454,11 @@ export interface PlanPromptState {
   rejected?: PlanRow;
   /** Still waiting; the owner's message was about something else. */
   pending?: PlanRow;
+  /**
+   * An approved plan of this chat, carried out by an earlier run and still live: this run may send
+   * its agents follow-ups (Always ask: corrections with replaces only) without a new plan.
+   */
+  covering?: { plan: PlanRow; agents: string[] };
   trusted: string[];
 }
 
@@ -465,14 +502,17 @@ export async function planPromptState(
     const state: PlanPromptState = { mode, threshold: setting.threshold, trusted };
     if (!options.ownerStartedRun || options.messagingChannelRun || !PLAN_TRIGGERS.has(run.trigger))
       return state;
-    const plan = await store.latest(run.threadId, run.botId, new Date(Date.now() - PLAN_LIVE_MS));
-    if (!plan) return state;
+    const since = new Date(Date.now() - PLAN_LIVE_MS);
+    const plan = await store.latest(run.threadId, run.botId, since);
+    if (!plan) return withCoveringPlan(prisma, store, run, state, since);
     if (plan.executingRunId === run.id) return { ...state, approved: plan };
     if ((plan.status === "approved" || plan.status === "auto") && !plan.executingRunId) {
       if (await store.bind(plan.id, run.id))
         return { ...state, approved: { ...plan, executingRunId: run.id } };
       return state;
     }
+    if (plan.status !== "pending" && plan.status !== "changes")
+      return withCoveringPlan(prisma, store, run, state, since);
     if (plan.status !== "pending" || !run.sourceMessageId) return state;
     const source = await prisma.message.findFirst({
       where: { id: run.sourceMessageId, threadId: run.threadId },
@@ -503,6 +543,31 @@ export async function planPromptState(
   }
 }
 
+/** Adds the live approved plan an earlier run carried out, with the agents it involves by name. */
+async function withCoveringPlan(
+  prisma: PrismaClient,
+  store: PlanStore,
+  run: PlanRun,
+  state: PlanPromptState,
+  since: Date,
+): Promise<PlanPromptState> {
+  const [plan] = await store.liveApproved(run.threadId, run.botId, since);
+  if (!plan) return state;
+  const sent = plan.recipients.length
+    ? await prisma.bot.findMany({
+        where: { id: { in: plan.recipients }, spaceId: run.spaceId, archivedAt: null },
+        select: { name: true },
+      })
+    : [];
+  const agents = [
+    ...new Set([
+      ...sent.map((bot) => bot.name),
+      ...plan.steps.flatMap((step) => (step.agent?.trim() ? [step.agent.trim()] : [])),
+    ]),
+  ];
+  return agents.length ? { ...state, covering: { plan, agents } } : state;
+}
+
 function stepsText(plan: Pick<PlanRow, "steps">): string {
   return plan.steps
     .map((step, i) => `${i + 1}. ${step.agent ? `${step.agent}: ` : ""}${step.text}`)
@@ -513,7 +578,11 @@ function stepsText(plan: Pick<PlanRow, "steps">): string {
 export function planInstruction(state: PlanPromptState | undefined): string | undefined {
   if (!state) return undefined;
   const lines = [
-    `Plans (${state.mode === "always" ? "always ask" : "ask until trusted"}): before you hand work to another agent with message_bot (a request) or start a task of several steps the owner asked for, call plan_propose: numbered steps, who does each, and the inputs exactly as he gave them (titles, names, links, where to look). Then end your turn with one short question asking whether to go ahead; nothing else happens until he approves on the card or says yes. message_bot requests are refused until a plan is approved. If the request matches one of your skills (a known workflow), put its name in plan_propose's workflow field and build the steps from it. Questions, lookups and one-step replies need no plan. To correct a request you already sent another agent, use message_bot with replaces (its request id or "latest"): that stops or cancels the old one and starts the corrected one at once.`,
+    `Plans (${state.mode === "always" ? "always ask" : "ask until trusted"}): before you hand work to another agent with message_bot (a request) or start a task of several steps the owner asked for, call plan_propose: numbered steps, who does each, and the inputs exactly as he gave them (titles, names, links, where to look). Then end your turn with one short question asking whether to go ahead; nothing else happens until he approves on the card or says yes. message_bot requests are refused until a plan is approved. If the request matches one of your skills (a known workflow), put its name in plan_propose's workflow field and build the steps from it. Questions, lookups and one-step replies need no plan. ${
+      state.mode === "always"
+        ? "An approved plan is one hand-off: a new request needs a new plan, a correction of a request you already sent does not."
+        : "An approved plan covers the whole task for the agents it involves: the owner's corrections and follow-ups about it, in this message or his next ones, go to those agents with message_bot without a new plan. Only new work, or an agent the plan does not involve, needs a new plan."
+    } To correct a request you already sent another agent, use message_bot with replaces (its request id or "latest"): that stops or cancels the old one and starts the corrected one at once; if the old one has already finished, the correction is delivered as a new request.`,
   ];
   if (state.trusted.length)
     lines.push(
@@ -522,6 +591,12 @@ export function planInstruction(state: PlanPromptState | undefined): string | un
   if (state.approved)
     lines.push(
       `The owner approved plan ${state.approved.id} "${state.approved.title}" (revision ${state.approved.revision}). Carry it out now exactly as written, step by step: ${stepsText(state.approved)} Do not propose it again.`,
+    );
+  if (state.covering)
+    lines.push(
+      state.mode === "always"
+        ? `Plan ${state.covering.plan.id} "${state.covering.plan.title}" is approved: to correct a request you sent under it (${state.covering.agents.join(", ")}), use message_bot with replaces; no new plan is needed for that. Any other request needs a new plan.`
+        : `Plan ${state.covering.plan.id} "${state.covering.plan.title}" is approved and still covers this task for: ${state.covering.agents.join(", ")}. If the owner's message corrects or follows up on it, send it to them with message_bot now (replaces "latest" when it corrects your earlier request); do not propose a new plan for that and do not ask again. New work or another agent needs a new plan.`,
     );
   if (state.changing)
     lines.push(
@@ -657,7 +732,7 @@ export async function proposePlan(
     String(input.spoken ?? "")
       .trim()
       .slice(0, 600) || spokenPlan(title, steps);
-  const row: Omit<PlanRow, "createdAt" | "messageId"> = {
+  const row: Omit<PlanRow, "createdAt" | "messageId" | "recipients"> = {
     id: randomUUID(),
     spaceId: run.spaceId,
     botId: run.botId,
@@ -677,7 +752,7 @@ export async function proposePlan(
     executingRunId: auto ? run.id : null,
   };
   await store.insert(row);
-  const full: PlanRow = { ...row, messageId: null, createdAt: new Date() };
+  const full: PlanRow = { ...row, messageId: null, recipients: [], createdAt: new Date() };
   const messageId = await postCard(
     deps.prisma,
     deps.events,
@@ -712,43 +787,148 @@ export async function proposePlan(
 // --- message_bot gate --------------------------------------------------------------------------
 
 export const PLAN_REQUIRED_NOTE =
-  "Not sent: the owner has not approved a plan for this yet. Call plan_propose with the steps (who does what, and the inputs exactly as he gave them), end your turn with a short question, and send it after he approves.";
+  "Not sent: no approved plan covers this request. An approved plan covers corrections and follow-ups to the agents it involves; new work, or an agent it does not involve, needs its own plan. Call plan_propose with the steps (who does what, and the inputs exactly as he gave them), end your turn with a short question, and send it after he approves.";
+
+const agentKey = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
 
 /**
- * An owner-started chat run may send another agent a request only while an approved plan is
- * bound to it (or an approved plan of this chat is still unbound, e.g. he clicked Approve while
- * this run was going). Undefined = allowed.
+ * Does the plan involve this agent? Yes when a request already went to it under the plan, or when
+ * a step names it as who does the step (by name or id).
  */
-export async function planGateForMessageBot(
+export function planInvolves(
+  plan: Pick<PlanRow, "steps" | "recipients">,
+  agent: { id: string; name: string },
+): boolean {
+  if (plan.recipients.includes(agent.id)) return true;
+  const name = agentKey(agent.name);
+  return plan.steps.some((step) => {
+    const who = agentKey(step.agent ?? "");
+    if (!who) return false;
+    if (who === name || who === agent.id.toLowerCase()) return true;
+    // "Worker (the subtitles agent)" still names Worker; "Networker" does not.
+    return name.length >= 3 && ` ${who.replace(/[^\p{L}\p{N}]+/gu, " ")} `.includes(` ${name} `);
+  });
+}
+
+export interface PlanGateResult {
+  /** Why the request is not sent (PLAN_REQUIRED_NOTE); absent = allowed. */
+  refused?: string;
+  /** The plan the request goes out under, to record its recipient on. */
+  planId?: string;
+  /**
+   * bound = the run carrying the plan out; follow_up / correction = a later message of the owner
+   * about the same plan.
+   */
+  basis?: "bound" | "follow_up" | "correction";
+}
+
+export interface PlanGateOptions {
+  ownerStartedRun: boolean;
+  messagingChannelRun?: boolean;
+  intent?: string;
+  replaces?: string;
+  /** Who the request is for, as message_bot was given it. */
+  recipient?: { botId?: string; name?: string };
+}
+
+/**
+ * An owner-started chat run may send another agent a request only under an approved plan:
+ * 1. the plan bound to this run (or an approved plan of this chat still unbound, e.g. he clicked
+ *    Approve while this run was going), for any agent, as before;
+ * 2. a plan of this chat approved less than PLAN_LIVE_MS ago that involves the recipient
+ *    (`planInvolves`): the owner's corrections and follow-ups in later messages. Under Always ask
+ *    only a correction (`replaces`) is covered this way; a plain follow-up needs a new plan.
+ * Nothing is covered while a newer plan of the chat still waits for his answer.
+ */
+export async function planGateCheck(
   prisma: PrismaClient,
   run: PlanRun,
-  options: {
-    ownerStartedRun: boolean;
-    messagingChannelRun?: boolean;
-    intent?: string;
-    replaces?: string;
-  },
-): Promise<string | undefined> {
-  if ((options.intent ?? "request") !== "request") return undefined;
+  options: PlanGateOptions,
+): Promise<PlanGateResult> {
+  if ((options.intent ?? "request") !== "request") return {};
   if (!options.ownerStartedRun || options.messagingChannelRun || !PLAN_TRIGGERS.has(run.trigger))
-    return undefined;
+    return {};
   try {
     const store = createPlanStore(prisma);
     const mode = effectivePlanMode((await store.setting(run.botId)).mode);
-    if (mode === "never") return undefined;
-    if (await store.boundTo(run.id)) return undefined;
-    const latest = await store.latest(run.threadId, run.botId, new Date(Date.now() - PLAN_LIVE_MS));
-    if (latest && (latest.status === "approved" || latest.status === "auto")) {
-      if (!latest.executingRunId && (await store.bind(latest.id, run.id))) return undefined;
-      // The owner's own correction of a request the approved plan already sent.
-      if (options.replaces) return undefined;
+    if (mode === "never") return {};
+    const bound = await store.boundTo(run.id);
+    if (bound) return { planId: bound.id, basis: "bound" };
+    const since = new Date(Date.now() - PLAN_LIVE_MS);
+    const latest = await store.latest(run.threadId, run.botId, since);
+    if (
+      latest &&
+      (latest.status === "approved" || latest.status === "auto") &&
+      !latest.executingRunId &&
+      (await store.bind(latest.id, run.id))
+    )
+      return { planId: latest.id, basis: "bound" };
+    const waiting = latest?.status === "pending" || latest?.status === "changes";
+    if (!waiting) {
+      const target = await gateRecipient(prisma, run, options.recipient);
+      const basis = options.replaces ? "correction" : "follow_up";
+      if (target && (basis === "correction" || mode !== "always")) {
+        const plans = await store.liveApproved(run.threadId, run.botId, since);
+        const covering = plans.find((plan) => planInvolves(plan, target));
+        if (covering) {
+          getLogger().info("plan.gate_covered", {
+            "run.id": run.id,
+            "plan.id": covering.id,
+            "plan.basis": basis,
+            "bot.id": target.id,
+          });
+          return { planId: covering.id, basis };
+        }
+      }
     }
-    getLogger().info("plan.gate_refused", { "run.id": run.id, "plan.latest": latest?.id ?? "" });
-    return PLAN_REQUIRED_NOTE;
+    getLogger().info("plan.gate_refused", {
+      "run.id": run.id,
+      "plan.latest": latest?.id ?? "",
+      "plan.latest_status": latest?.status ?? "",
+      "plan.replaces": Boolean(options.replaces),
+    });
+    return { refused: PLAN_REQUIRED_NOTE };
   } catch (error) {
     // A broken plan table must never stop delegation.
     getLogger().warn("plan.gate_failed", { error: String(error) });
-    return undefined;
+    return {};
+  }
+}
+
+async function gateRecipient(
+  prisma: PrismaClient,
+  run: PlanRun,
+  recipient: PlanGateOptions["recipient"],
+): Promise<{ id: string; name: string } | undefined> {
+  if (!recipient?.botId && !recipient?.name) return undefined;
+  const bots = await prisma.bot.findMany({
+    where: { spaceId: run.spaceId, archivedAt: null },
+    select: { id: true, name: true },
+  });
+  const target = resolveBotAddress(bots, recipient);
+  return target && target.id !== run.botId ? target : undefined;
+}
+
+/** The gate's refusal note, or undefined when the request may go. */
+export async function planGateForMessageBot(
+  prisma: PrismaClient,
+  run: PlanRun,
+  options: PlanGateOptions,
+): Promise<string | undefined> {
+  return (await planGateCheck(prisma, run, options)).refused;
+}
+
+/** After a request went out under a plan: the plan now covers follow-ups to that agent. */
+export async function recordPlanRecipient(
+  prisma: PrismaClient,
+  gate: PlanGateResult,
+  recipientBotId: string,
+): Promise<void> {
+  if (!gate.planId) return;
+  try {
+    await createPlanStore(prisma).addRecipient(gate.planId, recipientBotId);
+  } catch (error) {
+    getLogger().warn("plan.recipient_record_failed", { error: String(error) });
   }
 }
 
