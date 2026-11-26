@@ -215,6 +215,8 @@ export const fleetTools: ToolHandlers = {
       instructions: args.instructions ? String(args.instructions) : undefined,
       prompt: args.prompt ? String(args.prompt) : undefined,
       computerMode,
+      // Fork (1.23): a specialist the owner's own request created can use its creator's servers.
+      inheritMcpServers: ctx.source?.ownerStartedRun === true,
     });
     if ("error" in spawned) return call.finish(spawned);
     if (!(await call.persistEffectResult(spawned))) return uncertainEffectResult(name);

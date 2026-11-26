@@ -43,6 +43,7 @@ import { isSandboxGoneError } from "../computers/sandbox/sandbox-errors.js";
 import { sandboxKindCapabilities } from "../computers/sandbox/sandbox-kind-capabilities.js";
 import { BrowserStoppedReleaseError } from "../computers/screens/computer-screens.js";
 import { toComputerRef } from "../computers/screens/computer-support.js";
+import { copyApprovedMcpAssignments, mcpReuseEnabled } from "../mcp/mcp-server-reuse.js";
 import type { MeetingService } from "../meetings/meeting-service.js";
 import { purgeClearedConversationMemory } from "../memory/conversation-memory-cleanup.js";
 import type { MemoryProviderResolver } from "../memory/memory-provider-factory.js";
@@ -81,6 +82,11 @@ export async function spawnBot(
     instructions?: string;
     prompt?: string;
     computerMode?: ComputerMode;
+    /**
+     * Fork (1.23): the run that creates the agent was started by the owner, so the new agent gets
+     * its creator's approved MCP servers (mcp-server-reuse.ts; MCP_REUSE_APPROVED_SERVERS).
+     */
+    inheritMcpServers?: boolean;
   },
 ) {
   const name = input.name.trim();
@@ -128,6 +134,17 @@ export async function spawnBot(
       name: existing.name,
       threadId: existing.thread.id,
     };
+  }
+
+  // Before the first run is queued, so that run's tool list already has them. A repeat of the same
+  // spawn copies again and skips what is there.
+  if (input.inheritMcpServers && mcpReuseEnabled()) {
+    await copyApprovedMcpAssignments(deps.prisma, {
+      spaceId: input.spawnedBy.spaceId,
+      userId: input.spawnedBy.userId,
+      fromBotId: input.spawnedBy.id,
+      toBotId: created.id,
+    }).catch((error) => getLogger().error("spawned bot MCP assignments", error));
   }
 
   const prompt = (input.prompt ?? "").trim();

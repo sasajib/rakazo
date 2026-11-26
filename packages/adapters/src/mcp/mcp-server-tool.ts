@@ -8,6 +8,7 @@ import { toStringRecord } from "../memory/memory-provider-factory.js";
 import { persistMessageInTransaction, runLeaseFor } from "../runs/assembly/run-messages.js";
 import type { ExecutorDeps } from "../runs/executor/executor-deps.js";
 import { removeMcpServerInTransaction } from "./mcp-server-removal.js";
+import { mcpReuseEnabled, reuseApprovedMcpServer } from "./mcp-server-reuse.js";
 import { assertNoMcpEndpointCredential, assertSafeRemoteUrl } from "./remote-mcp.js";
 
 export { deriveMcpSlug } from "@rakazo/core";
@@ -132,6 +133,8 @@ export async function addMcpServerFromTool(
   botId: string,
   args: Record<string, unknown>,
   executionId: string,
+  /** The run's own catalog tools, when it has them: a reused server is then usable at once. */
+  options: { catalogSearchTool?: string; catalogExecuteTool?: string } = {},
 ) {
   // A local server runs on the deployment's own hosts, so only an admin adds one.
   if (args.transport === "stdio") {
@@ -155,6 +158,12 @@ export async function addMcpServerFromTool(
     return {
       error: error instanceof Error ? error.message : "Invalid MCP endpoint",
     };
+  }
+  // Fork (1.23): an endpoint the owner already approved is assigned, not registered and asked
+  // for again. Before any credential is stored: a reused server keeps its own.
+  if (mcpReuseEnabled()) {
+    const reused = await reuseApprovedMcpServer(deps.prisma, run, botId, parsed, options);
+    if (reused) return reused;
   }
   if (!deps.secretStore) {
     return {

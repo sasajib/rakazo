@@ -52,7 +52,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("isNeedsPersonBlock", 3), ("isPeerRunVisibleBlock", 2), ("notifyOpenOwnerCards(", 2),
            # one approval covers the task (1.22): gate by involved agents, recipients recorded, finished replaces
            ("planGateCheck(", 2), ("recordPlanRecipient(", 2), ("planInvolves(", 2),
-           ("followsFinishedPreface(", 2)]
+           ("followsFinishedPreface(", 2),
+           # approved MCP server reused instead of a duplicate + card; spawn_bot inherits (1.23)
+           ("reuseApprovedMcpServer(", 2), ("copyApprovedMcpAssignments(", 2),
+           ("MCP_REUSE_APPROVED_SERVERS", 1), ("inheritMcpServers", 2)]
 results = []
 
 

@@ -508,6 +508,52 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   agent within 6 h of the approval goes out; the executing run may still message any agent (unchanged).
 - **Conflicts:** as 1.20 (`message_bot` delivery transaction, `run-tools-messaging.ts`), pinned tool byte cap.
 
+### 1.23 An approved MCP server is reused, not approved again (`MCP_REUSE_APPROVED_SERVERS`) (audit finding 3)
+- **Why:** MCP access is per agent (`bot_mcp_servers`) unless `allBots`, and `add_mcp_server` always registered a NEW
+  `mcp_servers` row plus a pending card, even for an endpoint the same owner had already approved in the Space. A
+  second agent needed a second approval, and agents registered duplicates under new names. A `spawn_bot` child got
+  none of its creator's servers.
+- **Purpose:** (1) `add_mcp_server` (`addMcpServerFromTool`): when the endpoint, normalised (`normalizeMcpEndpoint`:
+  scheme, host, port, path, sorted query; no fragment, no trailing slash), matches a server that is available in this
+  Space, owned by the run's owner, enabled, not stdio, and approved (`allBots`, or at least one `bot_mcp_servers` row
+  of this owner in this Space), the EXISTING server is assigned to the calling agent (`allowAllTools`, as an approval
+  card grants; an existing assignment is left as it is) and the result is `{ok: true, reused: true, server_id, name,
+  next_step}`. No server row, no card, no credential stored (a secret or headers passed with the call are ignored).
+  (2) `spawn_bot` from a run the owner started (`ctx.source.ownerStartedRun`): the new agent gets the creator's
+  assignments to enabled remote servers with the same tool limits (`copyApprovedMcpAssignments`), before its first
+  run is queued. The UI's Duplicate already copies assignments; this follows it.
+- **Security boundary (documented in `mcp/mcp-server-reuse.ts`):** same owner AND same Space only
+  (`availableInSpace` of the run, the rule every MCP read uses); only enabled, already-approved servers (one still
+  waiting on its card is not reused); never stdio (reuse and inheritance both skip local servers); never another
+  owner's server; the approved server's own credential is used and cannot be read or replaced by the call.
+  **What changes for the owner:** approval is per endpoint for his agents in a Space, no longer per agent.
+- **Same run or next run:** the connector reads assignments from the database on every catalog call, so a run that
+  already has the MCP catalog tools (`connectors_search_tools` / `connectors_execute_tool`, i.e. the agent had more
+  than 20 MCP tools at assembly) can use the reused server at once, and `next_step` names those tools. A run without
+  them has a fixed tool list: `next_step` says the tools arrive on the agent's next turn. Not changed: no
+  continuation run is queued (the approval path's `queueMcpConnectedRun` lives in the API).
+- **Env:** `MCP_REUSE_APPROVED_SERVERS` (api + worker; default ON, unset = on; `0` / `false` / `off` restores
+  upstream behaviour for both parts). Listed in the three fork compose anchors.
+- **Files (fork):** `packages/adapters/src/mcp/mcp-server-reuse.ts`. **Seams:** `mcp/mcp-server-tool.ts` (one call
+  before the credential is stored, one optional parameter), `runs/tools/run-tools-integrations.ts` (passes the
+  catalog tool names when the run has them), `bots/child-bots.ts` (`inheritMcpServers`), `runs/tools/run-tools-fleet.ts`,
+  `infra/compose/docker-compose{,.prod,.images}.yml`.
+- **Migration:** none. **Logs:** `mcp.server_reused` (server, newly_assigned, all_bots), `mcp.assignments_inherited`.
+- **Tests:** `mcp/mcp-server-reuse.postgres.test.ts` (reuse with a differently spelled endpoint and a call-supplied
+  secret: one server, no card, nothing stored; narrowed assignment untouched; other Space, other owner, pending
+  server, disabled server: not reused; `allBots` needs no row; env `0` -> new server + card; spawn inherits remote
+  assignments with limits, not stdio, not from a run the owner did not start, not with the env off). FAILS on the
+  old code at the first reuse assertion. `mcp/mcp-server-reuse.test.ts` (env switch, endpoint normalising).
+- **Live check:** agent A has an approved remote server. Tell agent B to add the same URL: result `reused: true`, no
+  card, `select count(*) from mcp_servers` unchanged, a `bot_mcp_servers` row for B, api log `mcp.server_reused`;
+  B uses a tool of it on its next turn. `spawn_bot` from A in an owner chat: child has the row(s).
+- **Known limits:** a second ACCOUNT on the same endpoint cannot be added by an agent while reuse is on (the call's
+  secret is ignored): add it in Settings, or set the env to `0`. An endpoint whose first server still waits on its
+  card is not reused (a second request for it still registers its own). A child created by a delegated
+  (`bot_message`) run inherits nothing.
+- **Conflicts:** upstream edits to `addMcpServerFromTool` (keep the reuse call before `secretStore.put`) and to
+  `spawnBot`'s input; `availableInSpace` semantics.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
