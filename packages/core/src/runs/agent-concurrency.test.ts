@@ -1,6 +1,7 @@
 import { UpdateBotInput } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  backgroundYieldsSlot,
   botConcurrency,
   CONVERSATIONAL_RUN_TRIGGERS,
   compareQueueOrder,
@@ -111,6 +112,34 @@ describe("compareQueueOrder", () => {
       compareQueueOrder(left, right, now),
     );
     expect(rows.map((r) => r.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("backgroundYieldsSlot", () => {
+  const live = (slot: number, runId: string) => ({ slot, runId, expiresAt: minutesAgo(-5) });
+  const expired = (slot: number, runId: string) => ({ slot, runId, expiresAt: minutesAgo(5) });
+  const yields = (
+    leases: Array<{ slot: number; runId: string; expiresAt: Date }>,
+    maxSlots: number,
+    waitingPeople: number,
+  ) => backgroundYieldsSlot({ leases, runId: "bg", maxSlots, waitingPeople, now });
+
+  it("yields a one-slot bot's computer to any waiting person, as upstream does", () => {
+    expect(yields([], 1, 1)).toBe(true);
+    expect(yields([expired(0, "old")], 1, 1)).toBe(true);
+    expect(yields([], 1, 0)).toBe(false);
+  });
+
+  it("leaves only the slots the waiting people need on a bot with several", () => {
+    // Three free, one person waiting (held back by the one-writer rule, say): other lanes go on.
+    expect(yields([live(0, "writer")], 4, 1)).toBe(false);
+    // One free and one person waiting: the person gets it.
+    expect(yields([live(0, "a"), live(1, "b"), live(2, "c")], 4, 1)).toBe(true);
+    expect(yields([live(0, "a")], 3, 2)).toBe(true);
+    expect(yields([live(0, "a")], 4, 2)).toBe(false);
+    // An expired lease is a free slot; none free still yields (and the plan is busy anyway).
+    expect(yields([live(0, "a"), expired(1, "b")], 2, 1)).toBe(true);
+    expect(yields([live(0, "a"), live(1, "b")], 2, 1)).toBe(true);
   });
 });
 

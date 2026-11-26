@@ -8,6 +8,7 @@ import type {
   NotificationProvider,
 } from "@rakazo/adapter-kit";
 import { pushReceiptJob } from "@rakazo/adapter-kit";
+import { chatAlertNeedsAttention } from "@rakazo/contracts";
 import { ResponseTooLargeError, readResponseWithin } from "@rakazo/core";
 import { bestEffort, getLogger } from "@rakazo/logging";
 import type { IncomingCallPush, VoipPushProvider } from "../calls/apns-voip.js";
@@ -173,6 +174,7 @@ function expoPushReceipts(body: unknown): Record<string, ExpoPushTicket | undefi
 export type ExpoPushOptions = {
   voip?: VoipPushProvider;
   sessionExpiresAt?: PushSessionExpiresAt;
+  notificationSounds?: (userId: string) => Promise<boolean>;
   /** Schedules the receipt check; without it receipts are not read. */
   jobs?: JobPublisher;
   /** Sent as a bearer token when the Expo project enforces enhanced push security. */
@@ -183,6 +185,7 @@ export type ExpoPushOptions = {
 export class ExpoPushProvider implements NotificationProvider {
   private readonly voip?: VoipPushProvider;
   private readonly sessionExpiresAt?: PushSessionExpiresAt;
+  private readonly notificationSounds?: ExpoPushOptions["notificationSounds"];
   private readonly jobs?: JobPublisher;
   private readonly accessToken?: string;
   private readonly retryDelaysMs: readonly number[];
@@ -193,6 +196,7 @@ export class ExpoPushProvider implements NotificationProvider {
   ) {
     this.voip = options.voip;
     this.sessionExpiresAt = options.sessionExpiresAt;
+    this.notificationSounds = options.notificationSounds;
     this.jobs = options.jobs;
     this.accessToken = options.accessToken?.trim() || undefined;
     this.retryDelaysMs = options.retryDelaysMs ?? EXPO_PUSH_RETRY_DELAYS_MS;
@@ -320,8 +324,18 @@ export class ExpoPushProvider implements NotificationProvider {
    */
   async deliver(message: NotificationMessage, context: AdapterContext): Promise<ExpoPushDelivery> {
     const registrations = await this.deliverableTokens(context.userId);
+    const urgent = chatAlertNeedsAttention(message.kind);
+    const sound =
+      urgent &&
+      registrations.length > 0 &&
+      (await bestEffort(
+        "read notification sound preference",
+        this.notificationSounds?.(context.userId),
+      )) === true;
     const results = await Promise.allSettled(
-      registrations.map((registration) => this.deliverTo(registration, message, context)),
+      registrations.map((registration) =>
+        this.deliverTo(registration, message, context, urgent, sound),
+      ),
     );
     const delivered = results.some(
       (result) => result.status === "fulfilled" && result.value === "delivered",
@@ -344,6 +358,8 @@ export class ExpoPushProvider implements NotificationProvider {
     registration: PushRecord,
     message: NotificationMessage,
     context: AdapterContext,
+    urgent: boolean,
+    sound: boolean,
   ): Promise<ExpoPushDelivery> {
     const token = registration.token;
     const title = capped(message.title, MAX_PUSH_TITLE_CHARS);
@@ -358,8 +374,6 @@ export class ExpoPushProvider implements NotificationProvider {
       collapseId: message.threadId,
       ...(message.badge === undefined ? {} : { badge: message.badge }),
     };
-    const urgent =
-      message.kind === "help" || message.kind === "takeover" || message.kind === "failure";
     const build = () =>
       registration.presentation === "android_sender"
         ? {
@@ -371,6 +385,7 @@ export class ExpoPushProvider implements NotificationProvider {
               ...data,
               notificationTitle: title,
               notificationBody: text,
+              ...(sound ? { notificationSound: true } : {}),
               ...(message.badge === undefined ? {} : { notificationBadge: message.badge }),
             },
           }
@@ -382,6 +397,7 @@ export class ExpoPushProvider implements NotificationProvider {
             data,
             ...(message.sender ? { mutableContent: true } : {}),
             ...(urgent ? { priority: "high" } : {}),
+            ...(sound ? { sound: "default" } : {}),
           };
     let payload = build();
     while (Buffer.byteLength(JSON.stringify(payload)) > MAX_PUSH_PAYLOAD_BYTES && bodyChars > 1) {

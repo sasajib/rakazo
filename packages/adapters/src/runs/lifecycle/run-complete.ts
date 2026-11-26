@@ -44,7 +44,7 @@ import {
   stripNoResponseReply,
   stripStrayNoResponse,
 } from "../assembly/silent-reply.js";
-import { saveLatestStepScreenshot } from "../turn/tool-step-calls.js";
+import { keptTurnTranscript, saveLatestStepScreenshot } from "../turn/tool-step-calls.js";
 import { notifyOpenOwnerCards } from "./owner-card-notice.js";
 import { enqueueSteeringContinuation, renewRunLease } from "./run-lifecycle.js";
 import {
@@ -153,6 +153,11 @@ export async function completeRun(ctx: RunContext) {
     outcome: "completed",
     blocks,
     markUnread: !groupSilentEnd && marksUnread,
+    // Only a reply that holds the whole turn stands for it; earlier messages of this run would
+    // sit between the turn's prompt and the reply.
+    ...(reply.transcript && blocks.length > 0 && !reply.publishedMidTurnUserMessage
+      ? { transcript: keptTurnTranscript(reply.transcript, ctx.secrets) }
+      : {}),
   });
   if (!completed) return;
   ctx.stopHeartbeatAfterCompletion();

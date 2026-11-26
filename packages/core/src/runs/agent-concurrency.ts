@@ -116,6 +116,28 @@ export type LeaseSlotPlan =
   | { kind: "busy" };
 
 /**
+ * Whether background work without a lease leaves the bot's free slots to people's runs that wait
+ * for its computer (upstream's "a person's message goes before scheduled work", on the fork's
+ * slots). It yields while the free slots are no more than the people waiting, and may take a slot
+ * beyond those. With one slot that is upstream's rule: any waiting person makes it yield.
+ */
+export function backgroundYieldsSlot(input: {
+  leases: readonly LeaseSlotView[];
+  runId: string;
+  maxSlots: number;
+  /** People's runs of this bot marked as waiting for the computer; 0 for a person's own run. */
+  waitingPeople: number;
+  now: Date;
+}): boolean {
+  if (input.waitingPeople <= 0) return false;
+  const held = input.leases.filter(
+    (lease) => lease.runId !== input.runId && lease.expiresAt.getTime() > input.now.getTime(),
+  ).length;
+  const free = Math.max(0, botConcurrency(input.maxSlots) - held);
+  return free <= input.waitingPeople;
+}
+
+/**
  * Which slot a run should take, given the bot's live leases.
  *
  * Pure on purpose: the lease table is the only thing that can race, and this decides the whole

@@ -65,7 +65,7 @@ export const SCHEDULE_TOOL_NAMES = new Set([
 ]);
 
 /** Routine runs may create, list, or cancel routines, but may not update them. */
-const ROUTINE_RUN_HIDDEN_TOOLS = new Set(["schedule_update"]);
+export const ROUTINE_RUN_HIDDEN_TOOLS: ReadonlySet<string> = new Set(["schedule_update"]);
 
 export function filterBuiltinToolsForRun<T extends { name: string }>(
   tools: T[],
@@ -286,7 +286,7 @@ function withNow(error: string, timezone: string): string {
   return `${error} ${nowIn(timezone)}`;
 }
 
-function toolRoutineEnd(
+export function toolRoutineEnd(
   value: string | undefined,
   timezone: string,
   timing: Parameters<typeof newRoutineEnd>[2],
@@ -627,6 +627,7 @@ export async function createScheduleFromTool(
     /** The tool's `on`: events that start the routine besides its timing, or instead of it. */
     on?: unknown;
     endAt?: string;
+    endTimezone?: string;
   },
 ) {
   const routineBotId = input.target?.botId ?? input.botId;
@@ -695,7 +696,11 @@ export async function createScheduleFromTool(
       ? { ok: true, cron: "", nextRunAt: new Date(0), oneShot: false }
       : resolveScheduleTiming(input.schedule, timezone);
     if (!resolved.ok) return { error: resolved.error } as const;
-    const end = toolRoutineEnd(input.endAt, timezone, {
+    const endAt =
+      input.endAt && input.endTimezone
+        ? routineEndInZone(new Date(input.endAt), input.endTimezone, timezone)?.toISOString()
+        : input.endAt;
+    const end = toolRoutineEnd(endAt, timezone, {
       crons: eventsOnly ? [] : [resolved.cron],
       watch: null,
       nextRunAt: eventsOnly ? null : resolved.nextRunAt,

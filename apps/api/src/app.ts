@@ -122,6 +122,7 @@ import { isTrustedOrigin, mobileAuthOrigins } from "./auth/trusted-origins.js";
 import { mountUserDeviceRoutes } from "./auth/user-devices.js";
 import { createBillingService } from "./billing/billing.js";
 import { mountBillingRoutes } from "./billing/billing-webhook.js";
+import { mountBotAccess } from "./bot-access/public-api-routes.js";
 import { createSpeechSummarizer } from "./calls/speech-summary.js";
 import { mountVoiceHttpRoutes } from "./calls/voice.js";
 import { callerBearerFromRequest, mountVoiceAgentRoutes } from "./calls/voice-agent.js";
@@ -812,7 +813,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   mountApiRequestBodyLimits(app);
   mountScreenTarget(app, prisma, env.screenProxySecret);
   mountScriptAssets(app);
-  mountSharedPages(app, prisma, requestClientIp);
+  mountSharedPages(app, { prisma, artifacts }, requestClientIp);
   const auditAuthResponse = createAuthResponseAudit();
   for (const [path, reason] of SYSTEM_CONTEXT_PATHS) {
     app.use(path, (_c, next) => runAsSystem(reason, next));
@@ -872,9 +873,12 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     });
   }
   mountRpcRoute(app, router, requestSession, env);
+  mountBotAccess(app, { prisma, auth, router, jobs, encryptionKey: env.encryptionKey });
   mountAccountExportRoute(app, { prisma, auth, artifacts, home });
   mountAuditExportRoute(app, { prisma, sessionActor });
-  mountVoiceHttpRoutes(app, { prisma, secrets, env }, (c) => sessionActor(c.req.raw));
+  // Upstream #6804: its cross-site cookie guard on /api/voice/* is mounted here, before the
+  // fork's voice agent routes below, so it covers them too.
+  mountVoiceHttpRoutes(app, { prisma, secrets, env }, (c) => sessionActor(c.req.raw), env);
   // Duplex calls through a LiveKit agent, present only when VOICE_AGENT_URL is set.
   mountVoiceAgentRoutes(
     app,

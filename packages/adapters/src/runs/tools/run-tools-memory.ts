@@ -28,7 +28,6 @@ import {
 } from "../../memory/standing-orders.js";
 import { recallToolViaLedger, rememberToolViaLedger } from "../../memory-ledger/run-hooks.js";
 import { MAX_RECALLED_MEMORIES } from "../../runtime/context/history-compaction.prompt.js";
-import { sharedMemorySaveError } from "../../tools/builtin.tool-definition.js";
 import { RememberInputSchema } from "../../tools/builtin-conversation.tool-definition.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { markReadOutsideContent } from "../assembly/run-context.js";
@@ -146,6 +145,17 @@ export const memoryTools: ToolHandlers = {
     const { args } = call;
     const parsed = RememberInputSchema.safeParse(args);
     if (!parsed.success) return call.finish({ error: argsError(parsed.error) });
+    // Fork: standing orders bind every bot and change only through standing_set (by key, and only
+    // on the user's own word). Upstream's `shared` flag reaches the Space's documents, so it must
+    // not become a second way into that one (the guard save_shared_memory carried before).
+    if (
+      parsed.data.shared &&
+      parsed.data.path?.trim().toLowerCase() === STANDING_ORDERS_PATH.toLowerCase()
+    ) {
+      return call.finish({
+        error: "STANDING.md changes only through standing_set (it replaces by key).",
+      });
+    }
     // Memory ledger seam (fork): facts from the owner's words go to the shared ledger.
     const ledger = await rememberToolViaLedger(ctx, parsed.data.operations);
     if (ledger) return call.finish(ledger);
@@ -155,11 +165,14 @@ export const memoryTools: ToolHandlers = {
         ? { ...operation, content: stampMemoryEntry(operation.content, today, operation.until) }
         : operation,
     );
-    // A save may edit any document the bot already has, such as an imported one. A path it
+    const owner = parsed.data.shared
+      ? { scope: "user" as const }
+      : { scope: "bot" as const, botId: bot.id };
+    // A save may edit any document the memory already has, such as an imported one. A path it
     // does not have means the index: a save never creates a document, so models cannot
     // invent file names to get past the size cap.
-    const requested = String(args.path ?? "").trim() || MEMORY_INDEX_PATH;
-    const read = (path: string) => deps.memory.read({ scope: "bot", botId: bot.id, path }, context);
+    const requested = parsed.data.path?.trim() || MEMORY_INDEX_PATH;
+    const read = (path: string) => deps.memory.read({ ...owner, path }, context);
     // Log-only (`memory.save`): sizes and the kind of edit, never the text.
     const logTarget = { runId, spaceId: run.spaceId, threadId: thread.id, botId: bot.id };
     const op = memoryOperationsOp(operations);
@@ -189,8 +202,7 @@ export const memoryTools: ToolHandlers = {
       try {
         await deps.memory.commit(
           {
-            scope: "bot",
-            botId: bot.id,
+            ...owner,
             path,
             content,
             expectedRevision: existing?.revision ?? 0,
@@ -343,35 +355,6 @@ export const memoryTools: ToolHandlers = {
       } catch (error) {
         if (!(error instanceof MemoryRevisionConflictError) || attempt >= 3) throw error;
       }
-    }
-  },
-  async save_shared_memory(ctx, call) {
-    const { deps, runId, thread, context } = ctx;
-    const { args } = call;
-    const invalid = sharedMemorySaveError(args);
-    if (invalid) return call.finish({ error: invalid });
-    const path = String(args.path ?? "").trim();
-    // The save replaces the whole document. Pass the revision just read so a
-    // concurrent edit is rejected instead of overwritten.
-    const snapshot = await deps.memory.read({ scope: "user", path }, context);
-    const expectedRevision = snapshot.documents[0]?.revision ?? 0;
-    try {
-      const saved = await deps.memory.commit(
-        {
-          scope: "user",
-          path,
-          content: String(args.content ?? ""),
-          expectedRevision,
-          sourceRunId: runId,
-          sourceThreadId: thread.id,
-        },
-        context,
-      );
-      return call.finish({ ok: true, path: saved.path, revision: saved.revision });
-    } catch (error) {
-      if (error instanceof MemoryRevisionConflictError)
-        return call.finish({ error: error.message });
-      throw error;
     }
   },
   async delete_shared_memory(ctx, call) {

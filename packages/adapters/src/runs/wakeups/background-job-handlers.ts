@@ -62,6 +62,7 @@ import { compactHistory } from "../../runtime/context/history-compaction.js";
 import { expireRunSecrets } from "../../secrets/run-secrets-expiry.js";
 import { retrySecretCleanup } from "../../secrets/secret-cleanup.js";
 import { pollShellJob } from "../../shell-jobs/shell-job-poll.js";
+import { deliverTaskCallback } from "../../tasks/task-callbacks.js";
 import type { createRunExecutor } from "../executor/executor.js";
 
 type Tenant = { spaceId: string; userId: string };
@@ -126,6 +127,8 @@ export function createBackgroundJobHandlers(deps: {
   pageRevisionWork?: (requestId: string, attempt?: BackgroundJobAttempt) => Promise<void>;
   meetingWork?: (job: BackgroundJobPayloads["meeting.work"]) => Promise<unknown>;
   lifecycleEmail?: (job: BackgroundJobPayloads["email.lifecycle"]) => Promise<void>;
+  /** Derives each task callback's signing secret; see `taskCallbackRootKey`. Absent sends none. */
+  taskCallbackRootKey?: string;
 }): BackgroundJobHandlers {
   const delivery = deps.messagingDelivery;
   const cleanupDeps = { prisma: deps.prisma, secrets: deps.secretStore };
@@ -137,6 +140,8 @@ export function createBackgroundJobHandlers(deps: {
     deps.prisma.computer.findUnique({ where: { id: computerId }, select: OWNER });
   const thread = ({ threadId }: { threadId: string }) =>
     deps.prisma.thread.findUnique({ where: { id: threadId }, select: OWNER });
+  const taskCallback = ({ taskId }: { taskId: string }) =>
+    deps.prisma.taskCallback.findUnique({ where: { taskId }, select: OWNER });
   const skill = ({ skillId }: { skillId: string }) =>
     deps.prisma.taughtSkill.findUnique({ where: { id: skillId }, select: OWNER });
   const cloudAgent = ({ agentId }: { agentId: string }) =>
@@ -250,6 +255,13 @@ export function createBackgroundJobHandlers(deps: {
     }),
     "computer.update": asOwner(updatedComputer, async ({ updateId }) => {
       await performComputerUpdate(deps, updateId);
+    }),
+    "task.callback": asOwner(taskCallback, async ({ taskId }) => {
+      if (!deps.taskCallbackRootKey) return;
+      await deliverTaskCallback(
+        { prisma: deps.prisma, jobs: deps.jobs, rootKey: deps.taskCallbackRootKey },
+        taskId,
+      );
     }),
     "computer.sleep": asOwner(computer, async (payload) => {
       await sleepComputerIfIdle(deps, payload.computerId);

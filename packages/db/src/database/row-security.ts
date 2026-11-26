@@ -147,6 +147,7 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "Bot",
   "Run",
   "Task",
+  "TaskCallback",
   "Routine",
   "Connection",
   "McpServer",
@@ -190,8 +191,10 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "AuditEvent",
   "Page",
   "PageVersion",
+  "PageImage",
   "PageGrant",
   "PageComment",
+  "PageReaderState",
   "PageRevisionRequest",
   // Memory ledger (fork): raw-SQL tables with no Prisma model, listed by table name.
   "memory_facts",

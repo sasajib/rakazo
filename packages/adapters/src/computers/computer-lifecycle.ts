@@ -20,9 +20,11 @@ import { COMPUTER_RECOVERY_REQUIRED_ERROR } from "@rakazo/contracts";
 import {
   ACTIVE_RUN_STATUSES,
   abortableDelay,
+  backgroundYieldsSlot,
   ClientError,
   computerUsingRuns,
   isRetryableError,
+  PERSON_RUN_TRIGGERS,
   planLeaseSlot,
   pollUntil,
   QUEUE_HOLDING_RUN_STATUSES,
@@ -997,18 +999,51 @@ export async function acquireDedicatedScreenLeaseFence(
 
 async function lockOwnedRun(
   tx: Prisma.TransactionClient,
-  input: { runId: string; botId: string; workerId: string; runFence: number },
-): Promise<void> {
-  const currentRun = await tx.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM runs
+  input: { computerId: string; runId: string; botId: string; workerId: string; runFence: number },
+  // Fork (1.2 execution slots): a bot with several slots yields only the slots the waiting people
+  // need. The caller that knows the slots passes "count" and decides; everyone else yields at once.
+  yieldTo: "any" | "count" = "any",
+): Promise<number> {
+  const now = new Date();
+  const people = [...PERSON_RUN_TRIGGERS];
+  // Background work leaves a free computer to a person's run waiting for it, but keeps one it
+  // holds. A marked person run that the lease row names already had its turn.
+  const currentRun = await tx.$queryRaw<Array<{ waitingPeople?: number | bigint | null }>>`
+    SELECT (
+      CASE WHEN trigger <> ALL(${people})
+      AND NOT EXISTS (
+        SELECT 1 FROM computer_execution_leases
+        WHERE "computerId" = ${input.computerId}
+          AND "botId" = ${input.botId}
+          AND "runId" = ${input.runId}
+          AND "expiresAt" > ${now})
+      THEN (
+        SELECT count(*)::int FROM runs waiting
+        WHERE waiting."botId" = ${input.botId}
+          AND waiting.id <> ${input.runId}
+          AND waiting.status = 'running'
+          AND waiting.trigger = ANY(${people})
+          AND waiting."computerUseStartedAt" IS NOT NULL
+          AND waiting."leaseExpiresAt" > ${now}
+          AND NOT EXISTS (
+            SELECT 1 FROM computer_execution_leases
+            WHERE "computerId" = ${input.computerId}
+              AND "botId" = ${input.botId}
+              AND "runId" = waiting.id))
+      ELSE 0 END
+    ) AS "waitingPeople"
+    FROM runs
     WHERE id = ${input.runId}
       AND "botId" = ${input.botId}
       AND status = 'running'
       AND "leaseOwner" = ${input.workerId}
       AND "leaseFence" = ${input.runFence}
-      AND "leaseExpiresAt" > ${new Date()}
+      AND "leaseExpiresAt" > ${now}
     FOR UPDATE SKIP LOCKED`;
   if (currentRun.length !== 1) throw new ComputerBusyError();
+  const waitingPeople = Number(currentRun[0]?.waitingPeople ?? 0);
+  if (waitingPeople > 0 && yieldTo === "any") throw new ComputerBusyError();
+  return waitingPeople;
 }
 
 export async function acquireComputerExecutionLease(
@@ -1035,13 +1070,16 @@ export async function acquireComputerExecutionLease(
     prisma.$transaction(async (tx) => {
       // Only the locked current worker claim may reclaim a live same-run lease.
       // API operations have no worker claim and may acquire only new or expired leases.
+      // People's runs of this bot waiting for its computer, when this is background work
+      // without a lease (upstream #6817); zero otherwise.
+      let waitingPeople = 0;
       if (ownsRun) {
         const assigned = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM bots WHERE id = ${input.botId}
           AND "computerId" = ${input.computerId} AND "computerSwitching" = false
         FOR UPDATE SKIP LOCKED`;
         if (assigned.length !== 1) throw new ComputerBusyError();
-        await lockOwnedRun(tx, input);
+        waitingPeople = await lockOwnedRun(tx, input, "count");
         await tx.run.update({
           where: { id: input.runId },
           data: { computerUseStartedAt: new Date() },
@@ -1078,6 +1116,21 @@ export async function acquireComputerExecutionLease(
       });
       // Which slot this run may take is decided in one pure place; the unique key on
       // (computerId, botId, slot) is what settles a race between two workers choosing the same one.
+      // Upstream #6817 on the fork's slots: background work leaves the free slots the waiting
+      // people need and may take one beyond that. With one slot (the default) this is upstream's
+      // rule exactly: it yields. With several, a person held back by the one-writer rule above
+      // does not freeze the bot's other conversations and lanes.
+      if (
+        backgroundYieldsSlot({
+          leases,
+          runId: input.runId,
+          maxSlots: input.maxSlots ?? 1,
+          waitingPeople,
+          now,
+        })
+      ) {
+        throw new ComputerBusyError();
+      }
       const plan = planLeaseSlot({
         leases,
         runId: input.runId,
@@ -1178,10 +1231,25 @@ export async function waitForRunComputerLease(
   },
   signal: AbortSignal,
 ): Promise<ComputerExecutionLease | null> {
+  let marked = false;
   const outcome = await pollUntil(
     async () => {
       signal.throwIfAborted();
       try {
+        // A person's run marks its wait, which the bot's background runs yield to.
+        if (!marked) {
+          await prisma.run.updateMany({
+            where: {
+              id: input.runId,
+              trigger: { in: [...PERSON_RUN_TRIGGERS] },
+              status: "running",
+              leaseOwner: input.workerId,
+              leaseFence: input.runFence,
+            },
+            data: { computerUseStartedAt: new Date() },
+          });
+          marked = true;
+        }
         const bot = await prisma.bot.findUnique({
           where: { id: input.botId },
           select: { computerId: true, computerSwitching: true, archivedAt: true },
