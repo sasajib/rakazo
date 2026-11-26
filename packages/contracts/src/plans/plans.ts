@@ -12,10 +12,17 @@ import { oc } from "@orpc/contract";
 import * as z from "zod";
 import { Id } from "../ids.js";
 
-export const PlanModeSchema = z.enum(["always", "until_trusted", "never"]);
+/**
+ * always / until_trusted: the plan card waits for the owner. notify (FORK.md 1.25): the card is
+ * still posted (and its short version spoken on a call) but as a notice; it is approved at once
+ * and the agent carries on in the same turn. never: no plan card at all.
+ */
+export const PlanModeSchema = z.enum(["always", "until_trusted", "notify", "never"]);
 export type PlanMode = z.infer<typeof PlanModeSchema>;
 
-/** Mode used when the agent has no setting of its own. */
+/**
+ * Mode used when the agent has no setting of its own and the deployment sets no PLAN_DEFAULT_MODE.
+ */
 export const DEFAULT_PLAN_MODE: PlanMode = "until_trusted";
 /** Clean approvals of the same workflow before an agent may run it without asking. */
 export const DEFAULT_PLAN_TRUST_THRESHOLD = 3;
@@ -24,7 +31,7 @@ export const PlanStatusSchema = z.enum([
   "pending",
   /** The owner approved it (click, voice or text). */
   "approved",
-  /** Run without asking: the workflow is trusted. The card is a notice. */
+  /** Run without asking: a trusted workflow, or Notify mode. The card is a notice. */
   "auto",
   /** The owner asked for changes; a revised plan follows. */
   "changes",
@@ -34,7 +41,8 @@ export const PlanStatusSchema = z.enum([
 ]);
 export type PlanStatus = z.infer<typeof PlanStatusSchema>;
 
-export const PlanDecidedViaSchema = z.enum(["click", "voice", "text", "trust"]);
+/** trust = a trusted workflow; notify = the agent's mode posts plans as notices. */
+export const PlanDecidedViaSchema = z.enum(["click", "voice", "text", "trust", "notify"]);
 export type PlanDecidedVia = z.infer<typeof PlanDecidedViaSchema>;
 
 export const PlanStepSchema = z.object({
@@ -92,6 +100,8 @@ export const PlanSettingsSchema = z.object({
   /** The agent's own choice (null = the default applies). */
   mode: PlanModeSchema.nullable(),
   effective: PlanModeSchema,
+  /** What applies to an agent with no choice of its own (the deployment's PLAN_DEFAULT_MODE). */
+  defaultMode: PlanModeSchema.optional(),
   threshold: z.number().int(),
   trust: z.array(PlanTrustSchema),
 });
@@ -100,7 +110,7 @@ export type PlanSettings = z.infer<typeof PlanSettingsSchema>;
 export const planProcedures = {
   /** One agent's plan setting and its trusted workflows. */
   settings: oc.input(z.object({ botId: Id })).output(PlanSettingsSchema),
-  /** Always ask / Ask until trusted / Never ask (null = default), and the approvals needed. */
+  /** Always ask / Ask until trusted / Notify / Never ask (null = default), and the approvals needed. */
   setMode: oc
     .input(
       z.object({

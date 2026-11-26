@@ -84,7 +84,7 @@ export interface TrustRow {
   revokedAt: Date | null;
 }
 
-const MODES = new Set<PlanMode>(["always", "until_trusted", "never"]);
+const MODES = new Set<PlanMode>(["always", "until_trusted", "notify", "never"]);
 const workflowKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
 
 const asJsonArray = <T>(value: unknown): T[] => {
@@ -134,7 +134,7 @@ export function createPlanStore(prisma: Sql) {
            "threshold" = COALESCE($5, "plan_settings"."threshold"), "updatedAt" = now()`,
         botId,
         spaceId,
-        mode ?? DEFAULT_PLAN_MODE,
+        mode ?? planDefaultMode(),
         threshold ?? DEFAULT_PLAN_TRUST_THRESHOLD,
         threshold ?? null,
       );
@@ -297,8 +297,25 @@ export function createPlanStore(prisma: Sql) {
 }
 export type PlanStore = ReturnType<typeof createPlanStore>;
 
-export function effectivePlanMode(mode: PlanMode | null): PlanMode {
-  return mode ?? DEFAULT_PLAN_MODE;
+/**
+ * FORK.md 1.25: the mode of an agent with no setting of its own. The deployment chooses it with
+ * PLAN_DEFAULT_MODE (always | until_trusted | notify | never); unset or unreadable = Ask until
+ * trusted, as before.
+ */
+export function planDefaultMode(env: NodeJS.ProcessEnv = process.env): PlanMode {
+  const value = (env.PLAN_DEFAULT_MODE ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return MODES.has(value as PlanMode) ? (value as PlanMode) : DEFAULT_PLAN_MODE;
+}
+
+/** The agent's own choice wins; otherwise the deployment default. */
+export function effectivePlanMode(
+  mode: PlanMode | null,
+  env: NodeJS.ProcessEnv = process.env,
+): PlanMode {
+  return mode ?? planDefaultMode(env);
 }
 
 export function workflowTrusted(
@@ -577,12 +594,23 @@ function stepsText(plan: Pick<PlanRow, "steps">): string {
 /** The prompt line (joined to the skills line). */
 export function planInstruction(state: PlanPromptState | undefined): string | undefined {
   if (!state) return undefined;
+  const cover =
+    "An approved plan covers the whole task for the agents it involves: the owner's corrections and follow-ups about it, in this message or his next ones, go to those agents with message_bot without a new plan. Only new work, or an agent the plan does not involve, needs a new plan.";
+  const correcting =
+    'To correct a request you already sent another agent, use message_bot with replaces (its request id or "latest"): that stops or cancels the old one and starts the corrected one at once; if the old one has already finished, the correction is delivered as a new request.';
+  const what =
+    "before you hand work to another agent with message_bot (a request) or start a task of several steps the owner asked for, call plan_propose: numbered steps, who does each, and the inputs exactly as he gave them (titles, names, links, where to look).";
+  const workflowHint =
+    "If the request matches one of your skills (a known workflow), put its name in plan_propose's workflow field and build the steps from it. Questions, lookups and one-step replies need no plan.";
   const lines = [
-    `Plans (${state.mode === "always" ? "always ask" : "ask until trusted"}): before you hand work to another agent with message_bot (a request) or start a task of several steps the owner asked for, call plan_propose: numbered steps, who does each, and the inputs exactly as he gave them (titles, names, links, where to look). Then end your turn with one short question asking whether to go ahead; nothing else happens until he approves on the card or says yes. message_bot requests are refused until a plan is approved. If the request matches one of your skills (a known workflow), put its name in plan_propose's workflow field and build the steps from it. Questions, lookups and one-step replies need no plan. ${
-      state.mode === "always"
-        ? "An approved plan is one hand-off: a new request needs a new plan, a correction of a request you already sent does not."
-        : "An approved plan covers the whole task for the agents it involves: the owner's corrections and follow-ups about it, in this message or his next ones, go to those agents with message_bot without a new plan. Only new work, or an agent the plan does not involve, needs a new plan."
-    } To correct a request you already sent another agent, use message_bot with replaces (its request id or "latest"): that stops or cancels the old one and starts the corrected one at once; if the old one has already finished, the correction is delivered as a new request.`,
+    state.mode === "notify"
+      ? // FORK.md 1.25: the plan is a notice. The agent works like a colleague who says what he is doing.
+        `Plans (notify, no approval needed): ${what} The plan is posted for the owner as a notice and is approved at once: carry it out in the same turn, step by step, starting right after plan_propose returns. Do NOT ask whether to go ahead, do not wait for an answer and do not end your turn for approval; the owner reads the plan and corrects you afterwards if he wants something different. message_bot requests are refused only until the plan is posted. ${workflowHint} ${cover} ${correcting}`
+      : `Plans (${state.mode === "always" ? "always ask" : "ask until trusted"}): ${what} Then end your turn with one short question asking whether to go ahead; nothing else happens until he approves on the card or says yes. message_bot requests are refused until a plan is approved. ${workflowHint} ${
+          state.mode === "always"
+            ? "An approved plan is one hand-off: a new request needs a new plan, a correction of a request you already sent does not."
+            : cover
+        } ${correcting}`,
   ];
   if (state.trusted.length)
     lines.push(
@@ -600,7 +628,11 @@ export function planInstruction(state: PlanPromptState | undefined): string | un
     );
   if (state.changing)
     lines.push(
-      `The owner asked for changes to plan ${state.changing.id} "${state.changing.title}" (${stepsText(state.changing)}). Apply his changes and call plan_propose again with revises="${state.changing.id}", then end your turn and wait for his approval.`,
+      `The owner asked for changes to plan ${state.changing.id} "${state.changing.title}" (${stepsText(state.changing)}). Apply his changes and call plan_propose again with revises="${state.changing.id}", then ${
+        state.mode === "notify"
+          ? "carry the revised plan out in the same turn"
+          : "end your turn and wait for his approval"
+      }.`,
     );
   if (state.rejected)
     lines.push(
@@ -675,6 +707,23 @@ export function spokenPlan(title: string, steps: PlanStep[]): string {
   );
 }
 
+/**
+ * What a call says for a plan posted as a notice: a statement, never a question. The agent's own
+ * short version is used without a closing question such as "Shall I go ahead?".
+ */
+export function spokenNotice(title: string, steps: PlanStep[], own = ""): string {
+  const given = own
+    .trim()
+    .replace(/\s*[^.!?]*\?\s*$/u, "")
+    .trim();
+  const base =
+    given ||
+    spokenPlan(title, steps)
+      .replace(/\s*Shall I go ahead\?\s*$/u, "")
+      .trim();
+  return `${base.replace(/[.\s]+$/u, "")}. I am starting now.`.slice(0, 600);
+}
+
 export async function proposePlan(
   deps: { prisma: PrismaClient; events?: Events },
   run: PlanRun & { lease?: unknown },
@@ -726,12 +775,17 @@ export async function proposePlan(
     skillId = skill?.id ?? null;
   }
   const trust = workflow ? await store.trust(run.botId, workflow) : undefined;
-  const auto =
+  const trusted =
     Boolean(workflow) && revision === 1 && workflowTrusted(mode, setting.threshold, trust);
-  const spoken =
-    String(input.spoken ?? "")
-      .trim()
-      .slice(0, 600) || spokenPlan(title, steps);
+  // FORK.md 1.25: under Notify every plan is a notice, approved as it is posted. It is not a
+  // "clean approval" by the owner, so the workflow's trust counter is left alone.
+  const notify = mode === "notify";
+  const auto = trusted || notify;
+  const spoken = notify
+    ? spokenNotice(title, steps, String(input.spoken ?? ""))
+    : String(input.spoken ?? "")
+        .trim()
+        .slice(0, 600) || spokenPlan(title, steps);
   const row: Omit<PlanRow, "createdAt" | "messageId" | "recipients"> = {
     id: randomUUID(),
     spaceId: run.spaceId,
@@ -742,13 +796,13 @@ export async function proposePlan(
     title,
     steps,
     inputs: cleanInputs(input.inputs),
-    spoken: auto ? `Running the trusted workflow ${workflow}: ${title}.` : spoken,
+    spoken: trusted ? `Running the trusted workflow ${workflow}: ${title}.` : spoken,
     workflow,
     skillId,
     revision,
     revisesId,
     status: auto ? "auto" : "pending",
-    decidedVia: auto ? "trust" : null,
+    decidedVia: trusted ? "trust" : notify ? "notify" : null,
     executingRunId: auto ? run.id : null,
   };
   await store.insert(row);
@@ -767,8 +821,16 @@ export async function proposePlan(
     "plan.revision": revision,
     "plan.workflow": workflow ?? "",
     "plan.auto": auto,
+    "plan.via": trusted ? "trust" : notify ? "notify" : "",
     "plan.steps": steps.length,
   });
+  if (notify && !trusted)
+    return {
+      ok: true,
+      planId: row.id,
+      status: "auto",
+      note: "The plan is posted for the owner as a notice (on a call its short version is read out) and is approved. Carry it out NOW in this same turn, step by step; message_bot requests go through. Do not ask whether to go ahead and do not end your turn to wait; he will tell you if he wants a change.",
+    };
   if (auto)
     return {
       ok: true,
@@ -788,6 +850,10 @@ export async function proposePlan(
 
 export const PLAN_REQUIRED_NOTE =
   "Not sent: no approved plan covers this request. An approved plan covers corrections and follow-ups to the agents it involves; new work, or an agent it does not involve, needs its own plan. Call plan_propose with the steps (who does what, and the inputs exactly as he gave them), end your turn with a short question, and send it after he approves.";
+
+/** Notify mode: nothing waits on the owner, the plan only has to be posted before the hand-off. */
+export const PLAN_NOTICE_FIRST_NOTE =
+  "Not sent yet: post the plan first. Call plan_propose with the steps (who does what, and the inputs exactly as he gave them); it is approved at once as a notice. Then send this request again in the same turn. Do not ask the owner anything.";
 
 const agentKey = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
 
@@ -883,11 +949,12 @@ export async function planGateCheck(
     }
     getLogger().info("plan.gate_refused", {
       "run.id": run.id,
+      "plan.mode": mode,
       "plan.latest": latest?.id ?? "",
       "plan.latest_status": latest?.status ?? "",
       "plan.replaces": Boolean(options.replaces),
     });
-    return { refused: PLAN_REQUIRED_NOTE };
+    return { refused: mode === "notify" && !waiting ? PLAN_NOTICE_FIRST_NOTE : PLAN_REQUIRED_NOTE };
   } catch (error) {
     // A broken plan table must never stop delegation.
     getLogger().warn("plan.gate_failed", { error: String(error) });

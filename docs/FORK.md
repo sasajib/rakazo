@@ -594,6 +594,50 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `walkDesktopWorkspace`, the `exportWorkspace` case of the runner, the request union
   in `host-computer-protocol.ts`, and the rewritten upstream test.
 
+### 1.25 Plan mode Notify and the deployment default `PLAN_DEFAULT_MODE`
+- **Why (owner, 2026-11-26):** "the system should be proactive; now everything asks for permission despite the obvious
+  decision… I don't want to babysit agents, they are my co-workers." Plan cards were one of the two prompts left.
+- **Purpose:** a fourth plan mode, `notify` (beside always / until_trusted / never). The agent still calls
+  `plan_propose` and the card is still posted (and its short version spoken on a call), but as a NOTICE: status `auto`,
+  `decidedVia: "notify"`, bound to the proposing run (`executingRunId`), which carries on in the same turn and may
+  `message_bot` at once. No question, no waiting. A revision (`revises`) is a notice too. The owner corrects
+  afterwards: `message_bot {replaces}` and the 1.22 cover apply unchanged. **Trust counters do not move** (a notice is
+  not his approval; `plan_trust` is only written by `applyPlanDecision`). Before the plan is posted a hand-off is
+  still held, with `PLAN_NOTICE_FIRST_NOTE` ("post the plan first… then send this again in the same turn").
+- **Deployment default:** env `PLAN_DEFAULT_MODE` (always | until_trusted | notify | never; unset, empty or unknown =
+  until_trusted as before), read by literal name in `planDefaultMode`; `effectivePlanMode(mode)` = the agent's own
+  setting, else that default. A per-agent setting always wins. Listed in the three fork compose anchors.
+- **Prompt:** `planInstruction` in notify mode: "Plans (notify, no approval needed): … approved at once: carry it out
+  in the same turn… Do NOT ask whether to go ahead, do not wait… do not end your turn for approval". The
+  `plan_propose` tool description no longer says "end your turn with one short question" (it now says the result
+  tells which); the tool result in notify mode says "Carry it out NOW in this same turn". Progress label "Writing
+  the plan". `spokenNotice` turns the spoken line into a statement ending "I am starting now." (a closing question
+  the agent wrote is dropped).
+- **Web:** agent settings -> Plans: option "Notify (show the plan, do not wait)" + one-line explanation; "Default
+  (…)" names the deployment default (`PlanSettings.defaultMode`). `PlanCard`: a notify plan renders like the
+  trusted-workflow notice ("Running: …", no buttons, "For your information: started without waiting…").
+- **Voice agent:** no change needed, example and deployed copy alike. `pending_plan_of` keys on `status == "pending"`
+  only, so a notify plan (`auto`) is never treated as waiting; `text_from_blocks` already speaks `auto` plans from
+  their `spoken` line, which is now a statement.
+- **Seams:** `contracts/src/plans/plans.ts` (enum, `decidedVia`, `defaultMode`), `adapters/src/plans/plans.ts`,
+  `apps/api/src/bots/plans.ts`, `tools/builtin-conversation.tool-definition.ts`, `runtime/pi/tools/pi-runtime-tools.ts`
+  (label), web `bot-plans-section.tsx`, `PlanCard.tsx`, compose anchors, 4 prompt-surface tool snapshots (-21 bytes).
+- **Migration:** `20270127090000_plan_notify` (widens two CHECK constraints: `plan_settings.mode` and
+  `agent_plans.decidedVia` accept `notify`; no table or column change). Rollback = previous image: it reads an
+  unknown mode as "no setting".
+- **Logs:** `plan.proposed` carries `plan.via` (trust | notify), `plan.gate_refused` carries `plan.mode`.
+- **Tests:** `plans/plans.postgres.test.ts` third case (env default -> propose -> `auto`/`notify`, bound, card a
+  notice with a statement, gate allows at once, trust unchanged, correction covered, revision a notice, per-agent
+  override both ways, unset = until_trusted). FAILS on the old code (`expected 'until_trusted' to be 'notify'`).
+  `plans/plans.test.ts` (env parsing, override, prompt wording, spoken notice).
+- **Live check:** set a throwaway agent to Notify (`plans/setMode {botId, mode: "notify"}`), ask it to hand work to
+  another agent: card shows "Running: …" with no buttons, the other agent's run starts in the same turn
+  (`plan.proposed` with `plan.via: notify`), nothing waits. To make it the default for every agent without a setting:
+  `.env PLAN_DEFAULT_MODE=notify` (+ the line in the stack's compose file).
+- **Known limits:** mobile draws no plan card (unchanged). An agent whose mode was set explicitly (e.g. Ask until
+  trusted) keeps it; the env only reaches agents on "Default". Not judged: whether a plan is wise.
+- **Conflicts:** as 1.20 / 1.22.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

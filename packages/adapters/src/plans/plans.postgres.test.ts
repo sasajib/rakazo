@@ -13,6 +13,7 @@ import { admissionBlock } from "../runs/lifecycle/run-gate.js";
 import {
   createPlanStore,
   decidePlan,
+  PLAN_NOTICE_FIRST_NOTE,
   PLAN_REQUIRED_NOTE,
   planGateCheck,
   planGateForMessageBot,
@@ -581,6 +582,205 @@ describePostgres("plan confirmation and superseding requests under PostgreSQL (f
         expect(await planGateForMessageBot(db.prisma, more, to(worker))).toBe(PLAN_REQUIRED_NOTE);
       });
     } finally {
+      await fixtures.space.deleteMany({ where: { organizationId } }).catch(() => undefined);
+      await fixtures.organization.delete({ where: { id: organizationId } }).catch(() => undefined);
+      await fixtures.user.delete({ where: { id: userId } }).catch(() => undefined);
+      await db.prisma.$disconnect();
+    }
+  }, 120_000);
+  // FORK.md 1.25: the plan is a notice. On the code before it, every plan waited for the owner.
+  it("notify mode posts the plan as a notice and lets the run carry on at once", async () => {
+    const db = createDb(runtimeUrl!);
+    const fixtures = asSystem(db.prisma);
+    const organizationId = randomUUID();
+    const userId = randomUUID();
+    const previous = process.env.PLAN_DEFAULT_MODE;
+    try {
+      await fixtures.user.create({
+        data: { id: userId, name: "Owner", email: `${userId}@rakazo.test` },
+      });
+      await fixtures.organization.create({
+        data: { id: organizationId, slug: organizationId, name: "Plans", createdAt: new Date() },
+      });
+      const space = await fixtures.space.create({
+        data: { id: randomUUID(), organizationId, name: "Space" },
+      });
+      const bot = (name: string) =>
+        fixtures.bot.create({ data: { spaceId: space.id, userId, name, color: "gray" } });
+      const planner = await bot("Planner");
+      const worker = await bot("Worker");
+      const outsider = await bot("Outsider");
+      const plannerThread = await fixtures.thread.create({
+        data: { spaceId: space.id, botId: planner.id, userId },
+      });
+      for (const other of [worker, outsider])
+        await fixtures.thread.create({ data: { spaceId: space.id, botId: other.id, userId } });
+      const actor = { spaceId: space.id, userId };
+      const deps = {
+        prisma: db.prisma,
+        events: { notify: async () => undefined },
+        jobs: { enqueue: async () => undefined },
+      };
+      const ownerTurn = async (text: string) =>
+        db.prisma.$transaction(async (tx) => {
+          const message = await createThreadMessageInTransaction(tx, {
+            threadId: plannerThread.id,
+            role: "user",
+            blocks: [{ kind: "text", text }],
+          });
+          const task = await tx.task.create({
+            data: {
+              spaceId: space.id,
+              botId: planner.id,
+              threadId: plannerThread.id,
+              userId,
+              prompt: text,
+              status: "running",
+            },
+          });
+          const run = await tx.run.create({
+            data: {
+              spaceId: space.id,
+              botId: planner.id,
+              threadId: plannerThread.id,
+              taskId: task.id,
+              userId,
+              status: "running",
+              trigger: "user",
+              sourceMessageId: message.id,
+              startedAt: new Date(),
+            },
+          });
+          return {
+            id: run.id,
+            spaceId: space.id,
+            threadId: plannerThread.id,
+            botId: planner.id,
+            userId,
+            trigger: "user",
+            sourceMessageId: message.id,
+          };
+        });
+      const owner = { ownerStartedRun: true, events: deps.events };
+      const to = (target: { id: string }) => ({
+        ownerStartedRun: true,
+        intent: "request",
+        recipient: { botId: target.id },
+      });
+      const lastCard = async () => {
+        const rows = await db.prisma.message.findMany({
+          where: { threadId: plannerThread.id, role: "bot" },
+          orderBy: { seq: "asc" },
+          select: { id: true, blocks: true },
+        });
+        return rows
+          .flatMap((row) =>
+            storedMessageBlocks(row).filter(
+              (block): block is Extract<MessageBlock, { kind: "plan" }> => block.kind === "plan",
+            ),
+          )
+          .at(-1);
+      };
+
+      await runAsTenant(actor, async () => {
+        const store = createPlanStore(db.prisma);
+        // The deployment default: an agent with no setting of its own follows PLAN_DEFAULT_MODE.
+        process.env.PLAN_DEFAULT_MODE = "notify";
+        expect((await store.setting(planner.id)).mode).toBeNull();
+        const ask = await ownerTurn("Have Worker pull the subtitles of the video and report");
+        const state = await planPromptState(db.prisma, ask, owner);
+        expect(state?.mode).toBe("notify");
+        expect(planInstruction(state)).toContain("Do NOT ask whether to go ahead");
+        // Before the plan is posted the hand-off is held, but nothing waits on the owner.
+        expect(await planGateForMessageBot(db.prisma, ask, to(worker))).toBe(
+          PLAN_NOTICE_FIRST_NOTE,
+        );
+        const proposed = await proposePlan(deps, ask, {
+          title: "Video subtitles",
+          steps: [{ text: "Pull the subtitles", agent: "Worker" }, { text: "Report" }],
+          workflow: "YouTube Subtitle Download",
+          spoken: "I will have Worker pull the subtitles. Shall I go ahead?",
+        });
+        // Approved as it is posted, bound to the run that proposed it.
+        expect(proposed).toMatchObject({ ok: true, status: "auto" });
+        expect(String(proposed.note)).toContain("Carry it out NOW in this same turn");
+        expect(await store.get(String(proposed.planId))).toMatchObject({
+          status: "auto",
+          decidedVia: "notify",
+          executingRunId: ask.id,
+        });
+        // The card is a notice (no buttons: not pending), and a call says it as a statement.
+        const card = await lastCard();
+        expect(card).toMatchObject({ status: "auto", decidedVia: "notify" });
+        expect(card?.spoken).toBe("I will have Worker pull the subtitles. I am starting now.");
+        // The same run may hand the work on at once.
+        const gate = await planGateCheck(db.prisma, ask, to(worker));
+        expect(gate).toMatchObject({ planId: proposed.planId, basis: "bound" });
+        const sent = await messageBot(
+          deps as never,
+          ask,
+          { id: planner.id, name: "Planner" },
+          { bot_id: worker.id, message: "Pull the subtitles of the video and report back." },
+        );
+        expect(sent.ok).toBe(true);
+        // A notice is not the owner's approval: the workflow's trust counter does not move.
+        expect(await store.trust(planner.id, "YouTube Subtitle Download")).toBeUndefined();
+        // His correction afterwards is covered (Fix B) and needs no new plan; a revision is a
+        // notice too.
+        await db.prisma.run.update({
+          where: { id: ask.id },
+          data: { status: "completed", completedAt: new Date() },
+        });
+        const fix = await ownerTurn("English subtitles only");
+        expect(await planGateForMessageBot(db.prisma, fix, to(worker))).toBeUndefined();
+        expect(await planGateForMessageBot(db.prisma, fix, to(outsider))).toBe(
+          PLAN_NOTICE_FIRST_NOTE,
+        );
+        const revised = await proposePlan(deps, fix, {
+          title: "Video subtitles",
+          steps: [{ text: "Pull the English subtitles only", agent: "Worker" }],
+          revises: proposed.planId,
+        });
+        expect(revised).toMatchObject({ status: "auto" });
+        expect(await lastCard()).toMatchObject({
+          status: "auto",
+          revision: 2,
+          decidedVia: "notify",
+        });
+
+        // The agent's own setting wins over the deployment default, in both directions.
+        await store.setSetting(space.id, planner.id, "always");
+        const strict = await ownerTurn("Have Worker write the summary");
+        const waiting = await proposePlan(deps, strict, {
+          title: "Summary",
+          steps: [{ text: "Write the summary", agent: "Worker" }],
+        });
+        expect(waiting).toMatchObject({ status: "pending" });
+        expect(await planGateForMessageBot(db.prisma, strict, to(worker))).toBe(PLAN_REQUIRED_NOTE);
+        await decidePlan(deps, actor, { planId: String(waiting.planId), decision: "reject" });
+        delete process.env.PLAN_DEFAULT_MODE;
+        await store.setSetting(space.id, planner.id, "notify");
+        expect((await store.setting(planner.id)).mode).toBe("notify");
+        const own = await ownerTurn("Have Worker tidy the folder");
+        expect(
+          await proposePlan(deps, own, {
+            title: "Tidy",
+            steps: [{ text: "Tidy the folder", agent: "Worker" }],
+          }),
+        ).toMatchObject({ status: "auto" });
+        // With neither a setting nor the env, it is Ask until trusted as before.
+        await store.setSetting(space.id, planner.id, null);
+        const asBefore = await ownerTurn("Have Worker archive the folder");
+        expect(
+          await proposePlan(deps, asBefore, {
+            title: "Archive",
+            steps: [{ text: "Archive the folder", agent: "Worker" }],
+          }),
+        ).toMatchObject({ status: "pending" });
+      });
+    } finally {
+      if (previous === undefined) delete process.env.PLAN_DEFAULT_MODE;
+      else process.env.PLAN_DEFAULT_MODE = previous;
       await fixtures.space.deleteMany({ where: { organizationId } }).catch(() => undefined);
       await fixtures.organization.delete({ where: { id: organizationId } }).catch(() => undefined);
       await fixtures.user.delete({ where: { id: userId } }).catch(() => undefined);

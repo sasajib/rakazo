@@ -333,7 +333,7 @@ export const conversationTools: ConnectorTool[] = [
     // Fork: plan confirmation (plans/plans.ts).
     name: "plan_propose",
     description:
-      "Show the owner your plan before you hand work to another agent or start a task of several steps: a card with numbered steps (who does each) and the inputs he gave. He approves on the card or by saying yes; then you carry it out. After calling it, end your turn with one short question.",
+      "Show the owner your plan before you hand work to another agent or start a task of several steps: a card with numbered steps (who does each) and the inputs he gave. The result says whether to ask him one short question and end your turn, or to carry it out at once.",
     inputSchema: {
       type: "object",
       properties: {

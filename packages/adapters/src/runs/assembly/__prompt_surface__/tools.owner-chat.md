@@ -1,5 +1,5 @@
 # Tool surface: owner-chat
-68 tools, 84267 bytes of definitions
+68 tools, 84246 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -122,7 +122,7 @@ Move a bot or group into a sidebar section, clear its section, or pin and unpin 
 schema 0bfe0c4dc209 (500 bytes)
 
 ## plan_propose
-Show the owner your plan before you hand work to another agent or start a task of several steps: a card with numbered steps (who does each) and the inputs he gave. He approves on the card or by saying yes; then you carry it out. After calling it, end your turn with one short question.
+Show the owner your plan before you hand work to another agent or start a task of several steps: a card with numbered steps (who does each) and the inputs he gave. The result says whether to ask him one short question and end your turn, or to carry it out at once.
 schema 8b1776f9e1c6 (976 bytes)
 
 ## read_file

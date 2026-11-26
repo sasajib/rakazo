@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { planReplyIntent } from "./intent.js";
 import type { PlanRow } from "./plans.js";
-import { planInstruction, planInvolves, spokenPlan, workflowTrusted } from "./plans.js";
+import {
+  effectivePlanMode,
+  planDefaultMode,
+  planInstruction,
+  planInvolves,
+  spokenNotice,
+  spokenPlan,
+  workflowTrusted,
+} from "./plans.js";
 
 describe("planReplyIntent (fork: plan confirmation)", () => {
   it.each([
@@ -107,5 +115,56 @@ describe("what an approved plan covers", () => {
     expect(planInstruction({ mode: "until_trusted", threshold: 3, trusted: [] })).toContain(
       "if the old one has already finished, the correction is delivered as a new request",
     );
+  });
+});
+
+// FORK.md 1.25: Notify mode and the deployment default.
+describe("plan mode notify and PLAN_DEFAULT_MODE", () => {
+  it("takes the default from the deployment, and the agent's own choice over it", () => {
+    expect(planDefaultMode({})).toBe("until_trusted");
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: "" })).toBe("until_trusted");
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: "notify" })).toBe("notify");
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: " Notify " })).toBe("notify");
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: "always" })).toBe("always");
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: "never" })).toBe("never");
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: "until-trusted" })).toBe("until_trusted");
+    // A value nobody knows never switches approval off by accident.
+    expect(planDefaultMode({ PLAN_DEFAULT_MODE: "yolo" })).toBe("until_trusted");
+    expect(effectivePlanMode(null, { PLAN_DEFAULT_MODE: "notify" })).toBe("notify");
+    expect(effectivePlanMode("always", { PLAN_DEFAULT_MODE: "notify" })).toBe("always");
+    expect(effectivePlanMode("until_trusted", { PLAN_DEFAULT_MODE: "never" })).toBe(
+      "until_trusted",
+    );
+    expect(effectivePlanMode(null, {})).toBe("until_trusted");
+  });
+
+  it("tells the agent to post the plan and carry on, never to ask or wait", () => {
+    const line = planInstruction({ mode: "notify", threshold: 3, trusted: [] }) ?? "";
+    expect(line).toContain("Plans (notify, no approval needed)");
+    expect(line).toContain("carry it out in the same turn");
+    expect(line).toContain("Do NOT ask whether to go ahead");
+    expect(line).not.toContain("end your turn with one short question");
+    expect(line).not.toContain("nothing else happens until he approves");
+    // Corrections afterwards still work the same way.
+    expect(line).toContain("use message_bot with replaces");
+    expect(line).toContain("corrections and follow-ups about it");
+    // The asking modes are worded as before.
+    const asking = planInstruction({ mode: "until_trusted", threshold: 3, trusted: [] }) ?? "";
+    expect(asking).toContain("Then end your turn with one short question");
+    expect(asking).not.toContain("no approval needed");
+  });
+
+  it("never trusts a workflow by count under notify", () => {
+    expect(workflowTrusted("notify", 3, { approvals: 9 })).toBe(false);
+  });
+
+  it("speaks a notice as a statement, not a question", () => {
+    const steps = [{ text: "Find the video", agent: "Worker" }, { text: "Report" }];
+    const own = spokenNotice("Subtitles", steps, "I will have Worker find it. Shall I go ahead?");
+    expect(own).toBe("I will have Worker find it. I am starting now.");
+    const built = spokenNotice("Subtitles", steps);
+    expect(built).toContain("My plan for Subtitles: 1, Worker Find the video; 2, Report");
+    expect(built.endsWith("I am starting now.")).toBe(true);
+    expect(`${own}${built}`).not.toContain("?");
   });
 });

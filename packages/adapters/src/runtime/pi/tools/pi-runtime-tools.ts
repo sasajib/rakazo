@@ -285,7 +285,7 @@ export function describeToolActivity(
   if (toolName === "create_child_routine") return `Scheduling routine: ${detail(record.name)}`;
   if (toolName === "remember") return "Saving a note to memory";
   if (toolName === "bot_queue") return "Checking a bot's work queue";
-  if (toolName === "plan_propose") return "Writing the plan for your approval";
+  if (toolName === "plan_propose") return "Writing the plan";
   if (toolName === "job_list") return "Checking background jobs";
   if (toolName === "job_status") return `Checking background job ${detail(record.job_id)}`;
   if (toolName === "job_output") return `Reading background job output: ${detail(record.job_id)}`;

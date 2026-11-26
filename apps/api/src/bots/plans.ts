@@ -8,6 +8,7 @@ import {
   decidePlan,
   effectivePlanMode,
   PlanNotFoundError,
+  planDefaultMode,
   trustList,
 } from "@rakazo/adapters";
 import type { Actor, PlanBlock, PlanMode, PlanSettings, PlanTrust } from "@rakazo/contracts";
@@ -41,6 +42,7 @@ export function createPlansService(deps: Deps, sendAsOwner: SendAsOwner) {
       botId,
       mode: setting.mode,
       effective: effectivePlanMode(setting.mode),
+      defaultMode: planDefaultMode(),
       threshold: setting.threshold,
       trust: await trustList(deps.prisma, actor.spaceId, botId),
     };

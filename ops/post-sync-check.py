@@ -58,7 +58,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("MCP_REUSE_APPROVED_SERVERS", 1), ("inheritMcpServers", 2),
            # host checkpoint skips files over the protocol cap and saves the rest (1.24)
            ("exportWorkspaceSkippingLarge(", 2), ("skipLargeFiles", 3), ("keepSavedVersion(", 2),
-           ("computer.checkpoint_skipped_large", 1)]
+           ("computer.checkpoint_skipped_large", 1),
+           # proactive agents (1.25+): plan mode notify + deployment default
+           ("planDefaultMode(", 2), ("PLAN_DEFAULT_MODE", 1), ("PLAN_NOTICE_FIRST_NOTE", 1), ("spokenNotice(", 1)]
 results = []
 
 
@@ -114,6 +116,7 @@ def migrations():
     check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")
     check("plan confirmation tables exist with row security", psql("select count(*) from pg_class where relname in ('agent_plans','plan_settings','plan_trust') and relrowsecurity") == "3")
     check("agent_plans.recipients column exists (plan coverage)", psql("select 1 from information_schema.columns where table_name='agent_plans' and column_name='recipients'") == "1")
+    check("plan mode notify allowed by the database", "notify" in psql("select pg_get_constraintdef(oid) from pg_constraint where conname='plan_settings_mode_check'"))
 
 
 def live_queue_test():
