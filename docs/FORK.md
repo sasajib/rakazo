@@ -282,6 +282,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (still gated in runs outside text started; result taints the run). `secretGuidance` gets a sign-in recipe when
   `browser_act` is off and `vault_fill` is offered; the secret tools' result notes that say `browser_act fill_*`
   are reworded for such a run (`withVaultFillWording`).
+- **Commits:** `77a39bef1` (feature), `654c56f1e` (connector-level test, one lookup per server tool). Branch
+  `feat/vault-fill-mcp-browser`; not deployed when written (report: stack `FIX-1126-vault-fill.md`).
 - **Files (fork):** `packages/adapters/src/secrets/vault/vault-mcp-fill.ts` (config, probe, server calls),
   `runs/tools/run-tools-vault-fill.ts` (handler, approval steps, wording), `tools/builtin-vault-fill.tool-definition.ts`.
 - **Seams:** `tools/builtin.tool-definition.ts`, `tools/builtin-tool-bridge.ts` (pinned), `runs/tools/run-tools.ts` (handlers +
@@ -295,7 +297,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   fill: {tool, args}, elementCheck}}` with placeholders `{page} {ref} {value} {script} {function}`; default = BrowserOS
   neo's shape (`act` focus/fill, `evaluate {code}`). Unreadable shapes switch the feature off (logged `vault_fill.config_invalid`).
 - **Migrations:** none.
-- **Tests:** `runs/tools/run-tools-vault-fill.test.ts` (fake MCP browser behind the real `ConnectorRegistry` and catalog
+- **Tests:** `runs/tools/run-tools-vault-fill.connector.test.ts` (real `McpConnector` + HTTP MCP server: one session for the
+  agent's call and the fill, allowlist held), `runs/tools/run-tools-vault-fill.test.ts` (fake MCP browser behind the real `ConnectorRegistry` and catalog
   lookup, real vault/encryption/`resolveLoginFill`/code claims: right origin, wrong origin, http, forged origin record,
   unknown login/field, field types, page moving mid-call, server refusal/timeout, ask-first through `prepareToolRequest`,
   TOTP once + restore, run code, server allowlist, shapes, offering, wording, guidance), `prompt-surface.test.ts`
