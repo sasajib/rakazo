@@ -13,9 +13,13 @@ import {
   isHedged,
   overlap,
   quoteSources,
+  quotesOverlap,
+  sameNumbers,
   sameText,
   sentenceAround,
   stem,
+  stemCover,
+  stemOverlap,
 } from "./text.js";
 import type { Fact, FactCandidate, FactStatus, OwnerMessage } from "./types.js";
 import { FACT_AREAS, FACT_QUOTE_MAX_CHARS, FACT_TEXT_MAX_CHARS } from "./types.js";
@@ -28,6 +32,17 @@ export const ASK_BELOW = 0.6;
 export const OBVIOUS_CORRECTION = 0.75;
 /** Content-word overlap at which two texts count as the same fact. */
 export const DUPLICATE_OVERLAP = 0.8;
+/**
+ * Cosine similarity (bge-m3) at which a live fact is about the same thing as the proposal, so
+ * the two never stay live side by side: the same statement in other words adds evidence, a
+ * changed one goes through the supersede/conflict rules as if it shared the subject slug. The
+ * memory model does not repeat a slug reliably ("work.doop-mcp" / "work.doop-mcp-approved").
+ */
+export const NEAR_DUPLICATE_SIMILARITY = 0.92;
+/** Stemmed-word overlap at which a near fact says the same thing rather than a changed one. */
+export const NEAR_SAME_WORDS = 0.6;
+/** Word cover at which two facts quoting the same words of one message are one fact. */
+export const SAME_EVIDENCE_COVER = 0.6;
 
 const SUBJECT_WORDS = new Set(["owner", "owner's", "user", "user's"]);
 
@@ -72,6 +87,8 @@ export interface DecisionInput {
   decidedAgainst?: ReadonlySet<string>;
   /** The owner explicitly asked to remember (cue, or a bot's remember call on their message). */
   explicit?: boolean;
+  /** Cosine similarity of the proposal to live facts in `existing`, by fact id. */
+  near?: ReadonlyMap<string, number> | undefined;
 }
 
 export function decisionKey(oldId: string, text: string): string {
@@ -146,9 +163,25 @@ export function decide(input: DecisionInput): Decision {
   const confidence = scoreCandidate(candidate, source, explicit);
   if (confidence < DROP_BELOW) return { kind: "reject", reason: "low_confidence" };
 
-  const duplicate = existing.find(
-    (fact) => sameText(fact.text, text) || overlap(fact.text, text) >= DUPLICATE_OVERLAP,
-  );
+  // Near by meaning, and not a different date, time or amount (those stay separate facts
+  // unless the subject slug or `replaces` ties them).
+  const near = (fact: Fact) =>
+    (input.near?.get(fact.id) ?? 0) >= NEAR_DUPLICATE_SIMILARITY && sameNumbers(fact.text, text);
+  const duplicate =
+    existing.find(
+      (fact) => sameText(fact.text, text) || overlap(fact.text, text) >= DUPLICATE_OVERLAP,
+    ) ??
+    // Read again (a retried job, a later job over the same stretch): the same words of the same
+    // message already back a fact that says this. The memory model words a fact differently
+    // on each call, so the text alone does not show it.
+    existing.find(
+      (fact) =>
+        sources.some((message) => fact.sourceMessageIds.includes(message.id)) &&
+        quotesOverlap(fact.quote, quote) &&
+        stemCover(fact.text, text) >= SAME_EVIDENCE_COVER,
+    ) ??
+    // The same statement in other words, by meaning.
+    existing.find((fact) => near(fact) && stemOverlap(fact.text, text) >= NEAR_SAME_WORDS);
   if (duplicate) {
     const newSource = !duplicate.sourceMessageIds.includes(source.id);
     const mentions = duplicate.mentions + (newSource ? 1 : 0);
@@ -174,7 +207,9 @@ export function decide(input: DecisionInput): Decision {
   const targets = existing.filter(
     (fact) =>
       replaced.has(fact.id) ||
-      (candidate.subject && fact.subject && fact.subject === candidate.subject),
+      (candidate.subject && fact.subject && fact.subject === candidate.subject) ||
+      // About the same thing by meaning, under another slug: never a second live copy.
+      near(fact),
   );
   if (
     input.decidedAgainst &&

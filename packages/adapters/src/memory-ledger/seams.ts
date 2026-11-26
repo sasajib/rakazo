@@ -168,10 +168,15 @@ function textOf(blocks: ReadonlyArray<{ kind: string; text?: unknown }>): string
  * The run person's own messages in this thread, oldest first: the run's source message and what
  * they sent after it are `current`, the ten before are context. Bot replies, tool output,
  * deliveries and other members' messages are never read.
+ *
+ * `until` is when the run finished. A job caught up later must pass it: without it the newest
+ * messages of the thread, which belong to later runs and their own jobs, were read as this
+ * run's, so every late job wrote the same facts again in its own words (and never read its own
+ * message once the thread had moved on).
  */
 export async function loadOwnerMessages(
   prisma: Pick<PrismaClient, "message">,
-  input: { threadId: string; userId: string; sourceMessageId: string },
+  input: { threadId: string; userId: string; sourceMessageId: string; until?: Date | undefined },
 ): Promise<OwnerMessage[]> {
   const source = await prisma.message.findFirst({
     where: { id: input.sourceMessageId, threadId: input.threadId },
@@ -179,7 +184,12 @@ export async function loadOwnerMessages(
   });
   if (!source) return [];
   const rows = await prisma.message.findMany({
-    where: { threadId: input.threadId, role: "user", authorUserId: input.userId },
+    where: {
+      threadId: input.threadId,
+      role: "user",
+      authorUserId: input.userId,
+      ...(input.until ? { createdAt: { lte: input.until } } : {}),
+    },
     orderBy: { seq: "desc" },
     take: MAX_MESSAGES,
     select: { id: true, seq: true, blocks: true, createdAt: true },
@@ -296,6 +306,8 @@ async function runLedgerJob(
       threadId: job.threadId,
       userId: job.userId,
       sourceMessageId,
+      // A job caught up later carries the time its run finished and reads up to it only.
+      until: job.createdAt,
     });
     const model = await memoryModel(deps, job.userId, config);
     const result = await learnFromMessages(
@@ -315,11 +327,13 @@ async function runLedgerJob(
         botName,
         messages,
         standingRules: await loadStandingRules(deps.prisma, job.spaceId, job.userId),
+        writeOnce: true,
       },
     );
-    // A configured model that gave no usable answer is retried by the catch-up pass (up to 3
-    // attempts) instead of being recorded as "nothing to learn".
-    const modelMissed = model !== undefined && !result.usedModel;
+    // A configured model that gave no usable answer is retried by the catch-up pass (up to
+    // MAX_JOB_ATTEMPTS, each after a longer wait) instead of being recorded as "nothing to
+    // learn". An attempt that finds the job's facts already written has nothing left to do.
+    const modelMissed = model !== undefined && !result.usedModel && !result.alreadyWritten;
     await store.finishJob(
       job.spaceId,
       job.runId,
@@ -348,6 +362,7 @@ function logLearned(runId: string, result: LearnResult, ms: number) {
     "memory.ledger.asked": result.asked,
     "memory.ledger.resolved": result.resolved,
     "memory.ledger.used_model": result.usedModel,
+    "memory.ledger.already_written": result.alreadyWritten,
     "memory.ledger.ms": ms,
   });
 }

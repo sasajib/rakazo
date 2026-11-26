@@ -4,6 +4,7 @@
  * The quote fold and the card-number/key/login-link secret filter adapt Nod's
  * `src/server/memory-tree.ts` (Copyright 2026 n8n GmbH, Apache License 2.0); see NOTICE.
  */
+import { createHash } from "node:crypto";
 import type { OwnerMessage } from "./types.js";
 
 /** Case, accent and whitespace folded, so a quote matches however the model re-spaced it. */
@@ -57,6 +58,15 @@ export function stem(word: string): string {
 export function sameText(a: string, b: string): boolean {
   const left = tokens(a).join(" ");
   return Boolean(left) && left === tokens(b).join(" ");
+}
+
+/**
+ * The key two facts share when they say the same words in the same order (sameText): the
+ * database keeps at most one live fact per Space and key, whatever wrote it.
+ */
+export function textKey(value: string): string | null {
+  const words = tokens(value).join(" ");
+  return words ? createHash("sha256").update(words).digest("hex").slice(0, 40) : null;
 }
 
 /** Jaccard overlap of the two texts' content words, 0-1. */
@@ -201,4 +211,42 @@ export function stemCover(a: string, b: string): number {
   let shared = 0;
   for (const word of left) if (right.has(word)) shared += 1;
   return shared / Math.min(left.size, right.size);
+}
+
+const stems = (value: string) =>
+  new Set(
+    contentWords(value)
+      .map(stem)
+      .filter((word) => word !== "owner"),
+  );
+
+/** Jaccard overlap of the stemmed content words ("owner" aside), 0-1. */
+export function stemOverlap(a: string, b: string): number {
+  const left = stems(a);
+  const right = stems(b);
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const word of left) if (right.has(word)) shared += 1;
+  return shared / (left.size + right.size - shared);
+}
+
+/** One quote holds the other: both cite the same words of the owner. */
+export function quotesOverlap(a: string, b: string): boolean {
+  const left = foldQuote(a);
+  const right = foldQuote(b);
+  return Boolean(left) && Boolean(right) && (left.includes(right) || right.includes(left));
+}
+
+/**
+ * The same numbers, dates and times in both. Two facts that differ in one ("meeting on the 1st"
+ * and "meeting on the 8th", "after 3pm" and "before 11am") are close in meaning by any
+ * embedding and are still two facts.
+ */
+export function sameNumbers(a: string, b: string): boolean {
+  const numbers = (value: string) =>
+    tokens(value)
+      .filter((word) => /\d/.test(word))
+      .sort()
+      .join(" ");
+  return numbers(a) === numbers(b);
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@rakazo/db";
-import { contentWords, overlap, stem } from "./text.js";
+import { contentWords, overlap, stem, textKey } from "./text.js";
 import type { Fact, FactLink, FactStatus, LinkKind, NewFact } from "./types.js";
 import { LIVE_FACT_STATUSES } from "./types.js";
 
@@ -32,7 +32,14 @@ export interface LedgerJob {
   botId: string | null;
   userId: string;
   attempts: number;
+  /** When the run finished and the job was recorded: where the run's own messages end. */
+  createdAt?: Date | undefined;
 }
+
+/** Attempts a job gets before it stays failed. */
+export const MAX_JOB_ATTEMPTS = 3;
+/** A write transaction may hold the Space's writer lock this long. */
+const WRITE_TRANSACTION_OPTIONS = { maxWait: 15_000, timeout: 60_000 };
 
 /**
  * Where the ledger lives. One implementation runs raw SQL against Postgres (pgvector + full
@@ -59,6 +66,14 @@ export interface LedgerStore {
   /** Confirmed and disputed facts about the owner, their preferences and people; newest first. */
   coreFacts(spaceId: string, limit: number): Promise<Fact[]>;
   insertFact(fact: NewFact, embedding?: readonly number[]): Promise<Fact>;
+  /**
+   * Inserts the fact unless a live fact of the Space already says the same words (the database
+   * enforces it, so two writers at once cannot both insert); then that fact is returned.
+   */
+  insertFactOnce(
+    fact: NewFact,
+    embedding?: readonly number[],
+  ): Promise<{ fact: Fact; inserted: boolean }>;
   updateFact(spaceId: string, id: string, patch: FactPatch): Promise<void>;
   setEmbedding(spaceId: string, id: string, vector: readonly number[]): Promise<void>;
   missingEmbeddings(spaceId: string, limit: number): Promise<Fact[]>;
@@ -86,11 +101,30 @@ export interface LedgerStore {
     status: "done" | "failed",
     error?: string,
   ): Promise<void>;
-  /** Runs whose writer did not finish, oldest first. */
+  /**
+   * Runs whose writer did not finish, oldest first. A failed job waits longer after each
+   * attempt (`olderThanMs`, then twice that, ...) and stops being offered after
+   * MAX_JOB_ATTEMPTS.
+   */
   staleJobs(spaceId: string, olderThanMs: number, limit: number): Promise<LedgerJob[]>;
+  /**
+   * The write stage of a run's job, at most once: false when an earlier attempt of the job
+   * already wrote its facts (it committed, then failed or timed out before the job was marked
+   * done). `mark` records this attempt as the one that writes; call it inside writeTransaction
+   * so the mark and the facts commit together or not at all.
+   */
+  claimWrite(spaceId: string, runId: string, mark: boolean): Promise<boolean>;
+  /**
+   * Runs `fn` as one transaction holding the Space's writer lock: writers of one Space take
+   * turns, so the duplicate check and the insert that follows cannot interleave with another
+   * job's, and a failure leaves nothing half written.
+   */
+  writeTransaction<T>(spaceId: string, fn: (store: LedgerStore) => Promise<T>): Promise<T>;
 }
 
-type Sql = Pick<PrismaClient, "$queryRawUnsafe">;
+type Sql = Pick<PrismaClient, "$queryRawUnsafe"> & {
+  $transaction?: PrismaClient["$transaction"] | undefined;
+};
 
 type FactRow = Omit<Fact, "confidence"> & { confidence: number | string };
 
@@ -103,7 +137,7 @@ function toFact(row: FactRow): Fact {
 }
 
 /** The ledger on Postgres. Runs inside the caller's tenant context (row-level security). */
-export function createSqlLedgerStore(prisma: Sql): LedgerStore {
+export function createSqlLedgerStore(prisma: Sql, inTransaction = false): LedgerStore {
   const live = [...LIVE_FACT_STATUSES];
   const queryUnsafe = prisma as unknown as {
     $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
@@ -115,7 +149,7 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
         ...params,
       )
     ).map(toFact);
-  return {
+  const store: LedgerStore = {
     async findRetired(spaceId, text, limit = 10) {
       const words = [...new Set(contentWords(text))]
         .filter((word) => /^[\p{L}\p{M}\p{N}]+$/u.test(word))
@@ -187,11 +221,17 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
       );
     },
     async insertFact(fact, embedding) {
+      return (await store.insertFactOnce(fact, embedding)).fact;
+    },
+    async insertFactOnce(fact, embedding) {
       const id = randomUUID();
+      const key = textKey(fact.text);
       const [row] = await queryUnsafe.$queryRawUnsafe<FactRow[]>(
-        `INSERT INTO "memory_facts" ("id","spaceId","area","subject","text","quote","origin","status","confidence","mentions","sourceMessageIds","entities","sourceThreadId","sourceRunId","writtenByBotId","writtenByBotName","userId","validFrom","validTo","supersedesId","embedding")
+        // The partial unique index memory_facts_live_text_key: one live fact per Space and text.
+        `INSERT INTO "memory_facts" ("id","spaceId","area","subject","text","quote","origin","status","confidence","mentions","sourceMessageIds","entities","sourceThreadId","sourceRunId","writtenByBotId","writtenByBotName","userId","validFrom","validTo","supersedesId","embedding","textKey")
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text[],$12::text[],$13,$14,
-           (SELECT "id" FROM "bots" WHERE "id" = $15),$16,$17,$18,$19,$20,$21::vector)
+           (SELECT "id" FROM "bots" WHERE "id" = $15),$16,$17,$18,$19,$20,$21::vector,$22)
+         ON CONFLICT ("spaceId","textKey") WHERE "textKey" IS NOT NULL AND "status" IN ('tentative','confirmed','disputed') DO NOTHING
          RETURNING ${FACT_COLUMNS}`,
         id,
         fact.spaceId,
@@ -214,9 +254,15 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
         fact.validTo,
         fact.supersedesId,
         embedding ? vectorLiteral(embedding) : null,
+        key,
       );
-      if (!row) throw new Error("memory fact insert returned no row");
-      return toFact(row);
+      if (row) return { fact: toFact(row), inserted: true };
+      const [existing] = await selectFacts(
+        `"spaceId" = $1 AND "textKey" = $2 AND "status" = ANY($3::text[]) LIMIT 1`,
+        [fact.spaceId, key, live],
+      );
+      if (!existing) throw new Error("memory fact insert returned no row");
+      return { fact: existing, inserted: false };
     },
     async updateFact(spaceId, id, patch) {
       const sets: string[] = [];
@@ -345,17 +391,47 @@ export function createSqlLedgerStore(prisma: Sql): LedgerStore {
     },
     async staleJobs(spaceId, olderThanMs, limit) {
       return queryUnsafe.$queryRawUnsafe<LedgerJob[]>(
-        `SELECT "runId","spaceId","threadId","botId","userId","attempts" FROM "memory_ledger_jobs"
-         WHERE "spaceId" = $1 AND "attempts" < 3
-           AND (("status" IN ('pending', 'failed') AND "updatedAt" < CURRENT_TIMESTAMP - ($2::int * interval '1 millisecond'))
+        `SELECT "runId","spaceId","threadId","botId","userId","attempts","createdAt" FROM "memory_ledger_jobs"
+         WHERE "spaceId" = $1 AND "attempts" < $4
+           AND (("status" IN ('pending', 'failed') AND "updatedAt" < CURRENT_TIMESTAMP
+                 - ($2::int * power(2, GREATEST("attempts", 1) - 1) * interval '1 millisecond'))
              OR ("status" = 'running' AND "updatedAt" < CURRENT_TIMESTAMP - interval '15 minutes'))
          ORDER BY "createdAt" LIMIT $3`,
         spaceId,
         Math.round(olderThanMs),
         limit,
+        MAX_JOB_ATTEMPTS,
       );
     },
+    async claimWrite(spaceId, runId, mark) {
+      const rows = await queryUnsafe.$queryRawUnsafe<Array<{ runId: string }>>(
+        mark
+          ? `UPDATE "memory_ledger_jobs" SET "wroteAt" = CURRENT_TIMESTAMP
+             WHERE "spaceId" = $1 AND "runId" = $2 AND "wroteAt" IS NULL RETURNING "runId"`
+          : `SELECT "runId" FROM "memory_ledger_jobs"
+             WHERE "spaceId" = $1 AND "runId" = $2 AND "wroteAt" IS NULL FOR UPDATE`,
+        spaceId,
+        runId,
+      );
+      return rows.length > 0;
+    },
+    async writeTransaction(spaceId, fn) {
+      const lock = (target: LedgerStore, sql: typeof queryUnsafe) =>
+        sql
+          .$queryRawUnsafe(
+            `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS "locked"`,
+            `memory-ledger:${spaceId}`,
+          )
+          .then(() => fn(target));
+      // Already inside a transaction (or a client without one): the caller owns the commit.
+      if (inTransaction || !prisma.$transaction) return lock(store, queryUnsafe);
+      return prisma.$transaction(
+        (tx) => lock(createSqlLedgerStore(tx as unknown as Sql, true), tx as typeof queryUnsafe),
+        WRITE_TRANSACTION_OPTIONS,
+      ) as Promise<Awaited<ReturnType<typeof fn>>>;
+    },
   };
+  return store;
 }
 
 // --- In-memory store (tests, and the eval harness's offline mode) ----------------------------
@@ -374,16 +450,22 @@ function cosine(a: readonly number[], b: readonly number[]): number {
   return left && right ? dot / Math.sqrt(left * right) : 0;
 }
 
+type MemoryJob = LedgerJob & { status: string; updatedAt: number; wroteAt?: number | undefined };
+
 export function createMemoryLedgerStore(): LedgerStore & {
   facts: Map<string, Fact>;
   links: Map<string, FactLink>;
   embeddings: Map<string, readonly number[]>;
-  jobs: Map<string, LedgerJob & { status: string; updatedAt: number }>;
+  jobs: Map<string, MemoryJob>;
+  /** Moves the store's clock (job ages) forward. */
+  advance(ms: number): void;
 } {
   const facts = new Map<string, Fact>();
   const links = new Map<string, FactLink>();
   const embeddings = new Map<string, readonly number[]>();
-  const jobs = new Map<string, LedgerJob & { status: string; updatedAt: number }>();
+  const jobs = new Map<string, MemoryJob>();
+  let serial = 0;
+  let writers: Promise<unknown> = Promise.resolve();
   let clock = Date.parse("2026-11-24T00:00:00Z");
   const tick = () => {
     clock += 1000;
@@ -398,11 +480,14 @@ export function createMemoryLedgerStore(): LedgerStore & {
     return own.filter((word) => words.has(word) || [...words].some((w) => stem(w) === stem(word)))
       .length;
   };
-  return {
+  const store: ReturnType<typeof createMemoryLedgerStore> = {
     facts,
     links,
     embeddings,
     jobs,
+    advance(ms) {
+      clock += ms;
+    },
     async findRetired(spaceId, text, limit = 10) {
       return inSpace(spaceId)
         .filter((fact) => fact.status === "superseded" || fact.status === "retracted")
@@ -464,10 +549,19 @@ export function createMemoryLedgerStore(): LedgerStore & {
         .slice(0, limit);
     },
     async insertFact(fact, embedding) {
+      return (await store.insertFactOnce(fact, embedding)).fact;
+    },
+    async insertFactOnce(fact, embedding) {
+      const key = textKey(fact.text);
+      const same = inSpace(fact.spaceId).find(
+        (other) => isLive(other) && key !== null && textKey(other.text) === key,
+      );
+      if (same) return { fact: same, inserted: false };
       const now = tick();
+      serial += 1;
       const stored: Fact = {
         ...fact,
-        id: `fact-${facts.size + 1}`,
+        id: `fact-${serial}`,
         askedAt: null,
         askedThreadId: null,
         askedMessageId: null,
@@ -476,7 +570,7 @@ export function createMemoryLedgerStore(): LedgerStore & {
       };
       facts.set(stored.id, stored);
       if (embedding) embeddings.set(stored.id, embedding);
-      return stored;
+      return { fact: stored, inserted: true };
     },
     async updateFact(spaceId, id, patch) {
       const fact = facts.get(id);
@@ -557,7 +651,13 @@ export function createMemoryLedgerStore(): LedgerStore & {
     },
     async claimJob(job) {
       if (jobs.has(job.runId)) return false;
-      jobs.set(job.runId, { ...job, attempts: 0, status: "pending", updatedAt: clock });
+      jobs.set(job.runId, {
+        ...job,
+        attempts: 0,
+        status: "pending",
+        updatedAt: clock,
+        createdAt: new Date(clock),
+      });
       return true;
     },
     async startJob(_spaceId, runId) {
@@ -575,13 +675,47 @@ export function createMemoryLedgerStore(): LedgerStore & {
         .filter(
           (job) =>
             job.spaceId === spaceId &&
-            job.attempts < 3 &&
+            job.attempts < MAX_JOB_ATTEMPTS &&
             (job.status === "pending" || job.status === "failed") &&
-            job.updatedAt <= clock - olderThanMs,
+            job.updatedAt <= clock - olderThanMs * 2 ** (Math.max(job.attempts, 1) - 1),
         )
         .slice(0, limit);
     },
+    async claimWrite(_spaceId, runId, mark) {
+      const job = jobs.get(runId);
+      if (!job || job.wroteAt !== undefined) return false;
+      if (mark) jobs.set(runId, { ...job, wroteAt: clock });
+      return true;
+    },
+    writeTransaction(_spaceId, fn) {
+      // One writer at a time, and a failed one leaves nothing behind.
+      const run = writers.then(async () => {
+        const before = {
+          facts: new Map(facts),
+          links: new Map(links),
+          embeddings: new Map(embeddings),
+          jobs: new Map(jobs),
+        };
+        try {
+          return await fn(store);
+        } catch (error) {
+          for (const [live, saved] of [
+            [facts, before.facts],
+            [links, before.links],
+            [embeddings, before.embeddings],
+            [jobs, before.jobs],
+          ] as Array<[Map<string, unknown>, Map<string, unknown>]>) {
+            live.clear();
+            for (const [key, value] of saved) live.set(key, value);
+          }
+          throw error;
+        }
+      });
+      writers = run.catch(() => undefined);
+      return run;
+    },
   };
+  return store;
 }
 
 export type { FactStatus };

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { MemoryModel } from "./model.js";
 import { assemblePack } from "./pack.js";
 import { loadOwnerMessages } from "./seams.js";
-import { createSqlLedgerStore } from "./store.js";
+import { createSqlLedgerStore, MAX_JOB_ATTEMPTS } from "./store.js";
 import type { FactCandidate, NewFact } from "./types.js";
 import { learnFromMessages } from "./writer.js";
 
@@ -326,6 +326,201 @@ postgres("memory ledger (PostgreSQL)", () => {
         await prisma.space.deleteMany({ where: { id: { in: [spaceId, otherSpaceId] } } });
         await prisma.organization.deleteMany({ where: { id: organizationId } });
         await prisma.user.deleteMany({ where: { id: { in: [userId, otherUserId] } } });
+      }).catch(() => undefined);
+      await prisma.$disconnect();
+      await pool.end();
+    }
+  }, 60_000);
+
+  it("writes a fact once: one live fact per text, one write stage per job, all or nothing", async () => {
+    const { prisma, pool } = createDb(process.env.DATABASE_URL!);
+    const id = `ledger-once-${randomUUID()}`;
+    const userId = `${id}-user`;
+    const spaceId = `${id}-space`;
+    const organizationId = `${id}-org`;
+    const fixture = <T>(fn: () => Promise<T>) => runAsSystem("test fixture", fn);
+    try {
+      const threadId = await fixture(async () => {
+        await prisma.user.create({
+          data: { id: userId, name: "Owner", email: `${id}@rakazo.test` },
+        });
+        await prisma.organization.create({
+          data: { id: organizationId, name: "Ledger once", slug: id, createdAt: new Date() },
+        });
+        await prisma.space.create({ data: { id: spaceId, organizationId, name: "A" } });
+        const bot = await prisma.bot.create({
+          data: {
+            spaceId,
+            userId,
+            name: "Bot",
+            color: "ink",
+            thread: { create: { spaceId, userId } },
+          },
+          include: { thread: true },
+        });
+        return bot.thread!.id;
+      });
+      const tenant = <T>(fn: () => Promise<T>) => runAsTenant({ spaceId, userId }, fn);
+      const store = createSqlLedgerStore(prisma);
+      const base = (text: string, extra: Partial<NewFact> = {}): NewFact => ({
+        spaceId,
+        area: "work",
+        subject: null,
+        text,
+        quote: text,
+        origin: "stated",
+        status: "tentative",
+        confidence: 0.8,
+        mentions: 1,
+        sourceMessageIds: [],
+        entities: [],
+        sourceThreadId: threadId,
+        sourceRunId: null,
+        writtenByBotId: null,
+        writtenByBotName: "Bot",
+        userId,
+        validFrom: new Date(),
+        validTo: null,
+        supersedesId: null,
+        ...extra,
+      });
+      const live = () =>
+        tenant(() => store.findLive(spaceId, { texts: ["agency Northwind Sylhet office"] }, 50));
+
+      // The database refuses a second LIVE fact with the same words, whoever inserts it and
+      // however the two inserts are timed; the copy's caller gets the fact that stands.
+      const racers = await Promise.all(
+        Array.from({ length: 6 }, () =>
+          tenant(() => store.insertFactOnce(base("Owner's agency is called  Northwind."))),
+        ),
+      );
+      expect(racers.filter((racer) => racer.inserted)).toHaveLength(1);
+      expect(new Set(racers.map((racer) => racer.fact.id)).size).toBe(1);
+      const again = await tenant(() =>
+        store.insertFactOnce(base("owner's agency is called northwind")),
+      );
+      expect(again.inserted).toBe(false);
+      // A retired fact does not block the words from being said again.
+      await tenant(() =>
+        store.updateFact(spaceId, again.fact.id, { status: "superseded", validTo: new Date() }),
+      );
+      const fresh = await tenant(() =>
+        store.insertFactOnce(base("Owner's agency is called Northwind")),
+      );
+      expect(fresh.inserted).toBe(true);
+      expect(fresh.fact.id).not.toBe(again.fact.id);
+
+      // A job's write stage: claimed once, together with its facts.
+      const jobOf = (runId: string) => ({ runId, spaceId, threadId, botId: null, userId });
+      await tenant(() => store.claimJob(jobOf(`${id}-run1`)));
+      expect(await tenant(() => store.startJob(spaceId, `${id}-run1`))).toBe(true);
+      expect(await tenant(() => store.claimWrite(spaceId, `${id}-run1`, false))).toBe(true);
+      await expect(
+        tenant(() =>
+          store.writeTransaction(spaceId, async (tx) => {
+            expect(await tx.claimWrite(spaceId, `${id}-run1`, true)).toBe(true);
+            await tx.insertFactOnce(base("The office moves to Sylhet"));
+            throw new Error("connection lost");
+          }),
+        ),
+      ).rejects.toThrow("connection lost");
+      // Rolled back: no fact, and the job may still write.
+      expect((await live()).map((fact) => fact.text)).toEqual([
+        "Owner's agency is called Northwind",
+      ]);
+      expect(
+        await tenant(() =>
+          store.writeTransaction(spaceId, async (tx) => {
+            const claimed = await tx.claimWrite(spaceId, `${id}-run1`, true);
+            if (claimed) await tx.insertFactOnce(base("The office moves to Sylhet"));
+            return claimed;
+          }),
+        ),
+      ).toBe(true);
+      expect(await tenant(() => store.claimWrite(spaceId, `${id}-run1`, true))).toBe(false);
+      expect(await tenant(() => store.claimWrite(spaceId, `${id}-run1`, false))).toBe(false);
+
+      // End to end through the writer: the same job twice, then three late jobs at once that
+      // all read the same words (what the catch-up pass did after a deploy).
+      const sentence = "we will open a second studio in Khulna";
+      const reply = (text: string): FactCandidate[] => [
+        { area: "work", text, quote: sentence, origin: "stated", confidence: 0.85, entities: [] },
+      ];
+      const answers = [
+        reply("Owner will open a second studio in Khulna"),
+        reply("A second studio of the owner opens in Khulna city"),
+      ];
+      const model: MemoryModel = {
+        extract: async () => answers.shift() ?? reply("Owner will open a second studio in Khulna"),
+      };
+      const messages = [
+        { id: `${id}-m1`, text: `By March ${sentence}.`, at: new Date(), current: true },
+      ];
+      const learn = (runId: string) =>
+        tenant(() =>
+          learnFromMessages(
+            { store, model, config: { model: {} as never } },
+            {
+              spaceId,
+              userId,
+              threadId,
+              runId,
+              botId: null,
+              botName: "Bot",
+              messages,
+              writeOnce: true,
+            },
+          ),
+        );
+      const first = await learn(`${id}-run1`);
+      // run1's write stage was used above, so its job writes nothing more.
+      expect(first.alreadyWritten).toBe(true);
+      for (const run of ["run2", "run3", "run4", "run5"]) {
+        await tenant(() => store.claimJob(jobOf(`${id}-${run}`)));
+        await tenant(() => store.startJob(spaceId, `${id}-${run}`));
+      }
+      const one = await learn(`${id}-run2`);
+      expect(one.saved).toHaveLength(1);
+      const twice = await learn(`${id}-run2`);
+      expect(twice.alreadyWritten).toBe(true);
+      const late = await Promise.all(["run3", "run4", "run5"].map((run) => learn(`${id}-${run}`)));
+      expect(late.flatMap((result) => result.saved)).toHaveLength(0);
+      const studio = await tenant(() => store.findLive(spaceId, { texts: ["studio Khulna"] }, 50));
+      expect(studio.map((fact) => fact.id)).toEqual([one.saved[0]?.id]);
+
+      // A failed job comes back after a longer wait each time, with the time its run finished.
+      await tenant(() => store.finishJob(spaceId, `${id}-run3`, "failed", "model"));
+      expect(await tenant(() => store.staleJobs(spaceId, 60_000, 5))).toEqual([]);
+      await fixture(() =>
+        prisma.$executeRawUnsafe(
+          `UPDATE "memory_ledger_jobs" SET "updatedAt" = CURRENT_TIMESTAMP - interval '90 seconds', "attempts" = 1 WHERE "runId" = $1`,
+          `${id}-run3`,
+        ),
+      );
+      const [stale] = await tenant(() => store.staleJobs(spaceId, 60_000, 5));
+      expect(stale).toMatchObject({ runId: `${id}-run3`, attempts: 1 });
+      expect(stale?.createdAt).toBeInstanceOf(Date);
+      await fixture(() =>
+        prisma.$executeRawUnsafe(
+          `UPDATE "memory_ledger_jobs" SET "attempts" = 2 WHERE "runId" = $1`,
+          `${id}-run3`,
+        ),
+      );
+      // Second failure: 2 x 60 s must pass, 90 s is not enough.
+      expect(await tenant(() => store.staleJobs(spaceId, 60_000, 5))).toEqual([]);
+      await fixture(() =>
+        prisma.$executeRawUnsafe(
+          `UPDATE "memory_ledger_jobs" SET "attempts" = $2, "updatedAt" = CURRENT_TIMESTAMP - interval '1 day' WHERE "runId" = $1`,
+          `${id}-run3`,
+          MAX_JOB_ATTEMPTS,
+        ),
+      );
+      expect(await tenant(() => store.staleJobs(spaceId, 60_000, 5))).toEqual([]);
+    } finally {
+      await fixture(async () => {
+        await prisma.space.deleteMany({ where: { id: spaceId } });
+        await prisma.organization.deleteMany({ where: { id: organizationId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
       }).catch(() => undefined);
       await prisma.$disconnect();
       await pool.end();

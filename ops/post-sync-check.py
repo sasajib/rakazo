@@ -98,7 +98,11 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # organization MCP servers (1.29): the reply names no empty Space list (upstream bug, local
            # patch); one unreadable row never takes mcp/servers/list; inheritance copies own rows only
            ("availability.spaceIds.length > 0", 1), ("readableMcpServers(", 2),
-           ("organizationItemIn(scope), allBots: true", 1)]
+           ("organizationItemIn(scope), allBots: true", 1),
+           # memory ledger idempotency (1.10, 2026-11-27): a late job reads its own run's messages, the
+           # write stage is one transaction claimed once per job, one live fact per text and meaning
+           ("until: job.createdAt", 1), ("claimWrite(", 3), ("writeTransaction(", 3), ("insertFactOnce(", 3),
+           ("NEAR_DUPLICATE_SIMILARITY", 2), ("memory_facts_live_text_key", 1)]
 results = []
 
 
@@ -149,6 +153,8 @@ def migrations():
     check("all repo migrations applied", not (on_disk - applied), sorted(on_disk - applied)[:3] or f"{len(applied)} applied")
     check("runs.lane column exists", psql("select 1 from information_schema.columns where table_name='runs' and column_name='lane'") == "1")
     check("memory ledger migration on disk", os.path.isdir(mdir + "/20261231235500_memory_ledger"))
+    check("memory ledger idempotency migration on disk", os.path.isdir(mdir + "/20270128090000_memory_ledger_idempotency"))
+    check("memory ledger idempotency columns exist", psql("select count(*) from information_schema.columns where (table_name='memory_facts' and column_name='textKey') or (table_name='memory_ledger_jobs' and column_name='wroteAt')") == "2")
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
     check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")

@@ -217,7 +217,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `MEMORY_LEDGER_MODEL_CONNECTION`, `MEMORY_LEDGER_MODEL_TIMEOUT_MS`, `MEMORY_LEDGER_MODEL_MAX_TOKENS`, `MEMORY_EMBEDDINGS_URL/_MODEL/_API_KEY[_FILE]/_TIMEOUT_MS`,
   `MEMORY_LEDGER_PACK_BUDGET_MS` (2500 on bee), `MEMORY_LEDGER_CORE_MAX_BYTES`, `MEMORY_LEDGER_PACK_MAX_BYTES`,
   `MEMORY_LEDGER_PACK_LIMIT`, `MEMORY_LEDGER_FAST_PACK_LIMIT`.
-- **Migration:** `20261231235500_memory_ledger` (raw SQL tables, no Prisma models; hard-requires pgvector).
+- **Migration:** `20261231235500_memory_ledger` (raw SQL tables, no Prisma models; hard-requires pgvector);
+  `20270128090000_memory_ledger_idempotency` (`memory_facts.textKey` + partial unique index, `memory_ledger_jobs.wroteAt`).
 - **Tests:** `memory-ledger/*.test.ts`, `ledger.postgres.test.ts`, `seams.postgres.test.ts` (pgvector DB), `run-hooks.test.ts`,
   `ops/memory-ledger-eval/run_eval.py`; live matrix in stack repo `MEMORY-LIVE-TEST-1124.md`.
 - **Live check:** `memory.ledger.*` api log lines; `select count(*) from memory_facts`.
@@ -235,6 +236,31 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   its own timeout. Tests: `memory-ledger/model.test.ts` ("a reasoning model that spends the whole budget thinking", 4
   cases + the env), `skill-curator/curator.test.ts` (same for the curator), `compose-env.test.ts`. Stack: add the
   `MEMORY_LEDGER_MODEL_MAX_TOKENS:` line to the stack compose anchor only if the default is to be changed.
+- **Fix 2026-11-27 (`fix/leftovers-1126`): a ledger job writes once.** Live 2026-11-26: 18 live facts were copies
+  of another live fact (14 word for word, written in the same second by two or three jobs), all from late jobs. Cause:
+  `loadOwnerMessages` read "the run's source message and everything after it" as the run's own words, taken from the
+  24 newest owner messages of the thread. Right when the job runs as the run ends; wrong for a job caught up hours
+  later (failed first on the 30 s model timeout): each late job read the same newest stretch, which belonged to
+  later runs, and none read its own message. On 11-26, 113 of 157 facts cite a message sent after their run had
+  finished. Nothing stopped the copies: no key, check-then-insert without a lock, and the model words and names
+  (slug) a fact differently each call, so the word-overlap and same-subject rules did not match. Now:
+  (1) `seams.ts` passes `until: job.createdAt` (the run's end) for a caught-up job, so it reads its own run's
+  messages only; (2) `writer.ts` does the whole write stage in `store.writeTransaction` (one transaction under a
+  per-Space `pg_advisory_xact_lock`), with `claimWrite` setting `memory_ledger_jobs.wroteAt` in that transaction: an
+  attempt that committed and then failed or timed out is not written again by its retry (`already_written` in
+  `memory.ledger.learned`); a fallback after a model failure writes without claiming, so the model's retry still
+  lands; (3) `scoring.ts` duplicate rules gain "same evidence" (same source message, overlapping quote, same words)
+  and "near" (bge-m3 cosine >= `NEAR_DUPLICATE_SIMILARITY` 0.92 with the same numbers/dates: same stemmed words =
+  more evidence, otherwise the supersede/conflict rules as for a shared subject); (4) `insertFactOnce` + the
+  partial unique index `memory_facts_live_text_key` (`spaceId`, `textKey`) refuse a second live fact with the same
+  words at the database; (5) a failed job comes back after 10, then 20 minutes (`staleJobs`, `MAX_JOB_ATTEMPTS` 3).
+  Embeddings are fetched before the transaction. Rows written before the migration have `textKey` NULL (matched by
+  the writer's text rules). Tests: `memory-ledger/idempotency.test.ts` (9, all fail on the old code),
+  `ledger.postgres.test.ts` ("writes a fact once", real index, lock and rollback). Cleanup of existing copies:
+  `ops/memory-ledger-dedupe.py` (dry run by default; `--apply` backs the rows up to JSONL, then marks copies
+  `superseded` + `validTo` + a `supersedes` link from the fact that stays; never touches open conflicts, facts the
+  owner was asked about, or a confirmed fact worded differently). Tuning: 0.92 was measured on bee's bge-m3
+  (paraphrases 0.925-0.935, "Dhaka"/"Chittagong" 0.83, PDF/Word 0.89); a different embedding model needs it re-measured.
 - **Fix 2026-11-25 (image `main-1125c`): candidate lookups ranked by relevance.** `store.ts` `findLive`/`findRetired` ordered
   OR-of-words FTS hits by `updatedAt DESC LIMIT n`; with >20 live facts sharing "owner/wants/assistant", a `remember remove`
   quoting an older fact word for word got no candidate ("no entry matches", fell back to MEMORY.md). Now: subject/id hits,

@@ -9,7 +9,7 @@ import { cueCandidates, hintCandidates } from "./cues.js";
 import type { Embedder } from "./embeddings.js";
 import type { MemoryModel } from "./model.js";
 import type { Decision, Rejection } from "./scoring.js";
-import { decide, decisionKey } from "./scoring.js";
+import { decide, decisionKey, NEAR_DUPLICATE_SIMILARITY } from "./scoring.js";
 import type { LedgerStore } from "./store.js";
 import { overlap, stemCover } from "./text.js";
 import type { Fact, FactCandidate, FactLink, OwnerMessage } from "./types.js";
@@ -54,6 +54,12 @@ export interface LearnInput {
    * copies drift apart when only one is changed.
    */
   standingRules?: readonly string[] | undefined;
+  /**
+   * This is the run's ledger job (not a remember call): its write stage happens at most once,
+   * so an attempt that wrote and then failed or timed out is not written a second time by the
+   * retry. Needs `runId` and the job's row.
+   */
+  writeOnce?: boolean | undefined;
 }
 
 /** A standing rule already says this preference or lesson. */
@@ -75,6 +81,8 @@ export interface LearnResult {
   asked: number;
   resolved: number;
   usedModel: boolean;
+  /** An earlier attempt of this job already wrote its facts; this one wrote nothing. */
+  alreadyWritten: boolean;
 }
 
 function emptyResult(): LearnResult {
@@ -87,6 +95,7 @@ function emptyResult(): LearnResult {
     asked: 0,
     resolved: 0,
     usedModel: false,
+    alreadyWritten: false,
   };
 }
 
@@ -120,49 +129,87 @@ export async function learnFromMessages(
     ...(input.hint ? hintCandidates(input.hint, input.messages) : []),
   ];
 
+  // Embeddings are fetched before the write transaction opens; nothing slow runs inside it.
+  const proposals: Array<{ candidate: FactCandidate; vector: readonly number[] | undefined }> = [];
+  for (const candidate of candidates.slice(0, MAX_CANDIDATES))
+    proposals.push({ candidate, vector: await services.embedder?.embed(candidate.text) });
+
   const questions: Question[] = [];
-  const seen = new Map(known.map((fact) => [fact.id, fact]));
-  for (const candidate of candidates.slice(0, MAX_CANDIDATES)) {
-    const nearby = await store.findLive(
-      input.spaceId,
-      {
-        subjects: candidate.subject ? [candidate.subject] : [],
-        ids: candidate.replaces ?? [],
-        texts: [candidate.text],
-      },
-      10,
-    );
-    for (const fact of nearby) seen.set(fact.id, fact);
-    const existing = [...seen.values()].filter((fact) =>
-      ["tentative", "confirmed", "disputed"].includes(fact.status),
-    );
-    if (coveredByStandingRule(candidate, input.standingRules)) {
-      result.rejected.standing_rule = (result.rejected.standing_rule ?? 0) + 1;
-      continue;
+  // One transaction under the Space's writer lock: every duplicate check sees what any other
+  // job has committed, and the job's "wrote" mark commits with its facts or not at all.
+  const wrote = await store.writeTransaction(input.spaceId, async (tx) => {
+    if (input.writeOnce && input.runId) {
+      // A fallback after a model failure writes but leaves the job open for the retry that
+      // reads with the model; what it wrote is found again by the duplicate rules.
+      const mark = result.usedModel || !services.model;
+      if (!(await tx.claimWrite(input.spaceId, input.runId, mark))) return false;
     }
-    const decidedAgainst = await losingStatements(store, input.spaceId, existing);
-    const decision = decide({
-      candidate,
-      messages: input.messages,
-      existing,
-      decidedAgainst,
-      explicit: input.explicit,
-    });
-    const applied = await apply(services, input, candidate, decision, existing, now());
-    if (!applied) {
-      if (decision.kind === "reject")
-        result.rejected[decision.reason] = (result.rejected[decision.reason] ?? 0) + 1;
-      continue;
+    const seen = new Map(known.map((fact) => [fact.id, fact]));
+    // `known` was read before the model call; another job may have changed those facts since.
+    for (const fact of await tx.getFacts(input.spaceId, [...seen.keys()])) seen.set(fact.id, fact);
+    for (const { candidate, vector } of proposals) {
+      const nearby = await tx.findLive(
+        input.spaceId,
+        {
+          subjects: candidate.subject ? [candidate.subject] : [],
+          ids: candidate.replaces ?? [],
+          texts: [candidate.text],
+        },
+        10,
+      );
+      for (const fact of nearby) seen.set(fact.id, fact);
+      const near = new Map<string, number>();
+      if (vector) {
+        for (const hit of await tx.searchVector(input.spaceId, vector, 5))
+          if (hit.similarity >= NEAR_DUPLICATE_SIMILARITY) near.set(hit.id, hit.similarity);
+        const missing = [...near.keys()].filter((id) => !seen.has(id));
+        for (const fact of await tx.getFacts(input.spaceId, missing)) seen.set(fact.id, fact);
+      }
+      const existing = [...seen.values()].filter((fact) =>
+        ["tentative", "confirmed", "disputed"].includes(fact.status),
+      );
+      if (coveredByStandingRule(candidate, input.standingRules)) {
+        result.rejected.standing_rule = (result.rejected.standing_rule ?? 0) + 1;
+        continue;
+      }
+      const decidedAgainst = await losingStatements(tx, input.spaceId, existing);
+      const decision = decide({
+        candidate,
+        messages: input.messages,
+        existing,
+        decidedAgainst,
+        explicit: input.explicit,
+        near,
+      });
+      const applied = await apply(
+        { ...services, store: tx },
+        input,
+        candidate,
+        decision,
+        existing,
+        now(),
+        vector,
+      );
+      if (!applied) {
+        if (decision.kind === "reject")
+          result.rejected[decision.reason] = (result.rejected[decision.reason] ?? 0) + 1;
+        continue;
+      }
+      for (const fact of applied.changed) seen.set(fact.id, fact);
+      if (applied.saved) {
+        seen.set(applied.saved.id, applied.saved);
+        result.saved.push(applied.saved);
+      }
+      if (applied.reinforced) result.reinforced.push(applied.reinforced);
+      result.superseded.push(...applied.superseded);
+      result.disputed.push(...applied.disputed);
+      questions.push(...applied.questions);
     }
-    for (const fact of applied.changed) seen.set(fact.id, fact);
-    if (applied.saved) {
-      seen.set(applied.saved.id, applied.saved);
-      result.saved.push(applied.saved);
-    }
-    if (applied.reinforced) result.reinforced.push(applied.reinforced);
-    result.superseded.push(...applied.superseded);
-    result.disputed.push(...applied.disputed);
-    questions.push(...applied.questions);
+    return true;
+  });
+  if (!wrote) {
+    result.alreadyWritten = true;
+    return result;
   }
 
   if (input.ask !== false && questions.length && services.postCard)
@@ -212,6 +259,7 @@ async function apply(
   decision: Decision,
   existing: readonly Fact[],
   now: Date,
+  vector: readonly number[] | undefined,
 ): Promise<Applied | undefined> {
   const { store } = services;
   if (decision.kind === "reject") return undefined;
@@ -231,8 +279,7 @@ async function apply(
     return { reinforced: updated, superseded: [], disputed: [], changed: [updated], questions: [] };
   }
 
-  const vector = await services.embedder?.embed(candidate.text);
-  const saved = await store.insertFact(
+  const { fact: saved, inserted } = await store.insertFactOnce(
     {
       spaceId: input.spaceId,
       area: candidate.area,
@@ -256,6 +303,10 @@ async function apply(
     },
     vector,
   );
+  // A live fact with these very words exists after all (written since `existing` was read):
+  // it stands, and nothing is retired or disputed on behalf of a copy that was not stored.
+  if (!inserted)
+    return { reinforced: saved, superseded: [], disputed: [], changed: [saved], questions: [] };
   const superseded: Fact[] = [];
   const disputed: Fact[] = [];
   const changed: Fact[] = [];

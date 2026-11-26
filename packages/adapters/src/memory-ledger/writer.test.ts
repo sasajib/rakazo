@@ -271,7 +271,7 @@ describe("writer", () => {
   it("links facts that share a person, and nearest neighbours by embedding", async () => {
     const vectors: Record<string, number[]> = {
       "Rahim Uddin is the owner's accountant": unit(0),
-      "Rahim Uddin files the owner's taxes every March": unit(0, 0.2),
+      "Rahim Uddin files the owner's taxes every March": unit(0, 0.45),
       "Owner prefers tax documents as PDF": unit(0, 0.5),
     };
     const embedder: Embedder = { embed: async (text) => vectors[text] };
