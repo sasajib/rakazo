@@ -1,4 +1,4 @@
-import { continuationPrompt, needsContinuation } from "@rakazo/core";
+import { continuationPrompt, needsContinuation, PAUSED_FOR_PERSON_EVENT_TYPES } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import type { RunContext } from "../assembly/run-context.js";
 import { wakeRun } from "../wakeups/wake-run.js";
@@ -14,18 +14,24 @@ export async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
   const { reply } = ctx.state;
   const request = ctx.task.prompt ?? "";
   const replyText = reply.assembled || reply.assistantTurnText || "";
-  if (
-    !needsContinuation({
-      trigger: run.trigger,
-      request,
-      toolCallCount: reply.toolCalls.length,
-      replyText,
-      taskPrompt: task?.prompt ?? null,
-      status: "completed",
-    })
-  ) {
-    return;
-  }
+  const facts = {
+    trigger: run.trigger,
+    request,
+    toolCallCount: reply.toolCalls.length,
+    replyText,
+    taskPrompt: task?.prompt ?? null,
+    status: "completed",
+  };
+  if (!needsContinuation(facts)) return;
+  // Read only when the rule would fire. A run that stopped for the person (takeover, question,
+  // approval) acted, even when the pause was not a tool call (the scripted runtime) or the
+  // resumed attempt started without the paused attempt's steps. Continuing it asked for the same
+  // takeover a second time, right after the person had finished it.
+  const pausedForPerson =
+    (await deps.prisma.event.count({
+      where: { runId: run.id, type: { in: [...PAUSED_FOR_PERSON_EVENT_TYPES] } },
+    })) > 0;
+  if (!needsContinuation({ ...facts, pausedForPerson })) return;
   const created = await deps.prisma.$transaction(async (tx) => {
     const nextTask = await tx.task.create({
       data: {

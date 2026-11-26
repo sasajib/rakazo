@@ -32,6 +32,38 @@ describe("requestsWork", () => {
   });
 });
 
+describe("requestsWork: a work word used as a noun asks for nothing", () => {
+  it("does not mistake a statement for an instruction", () => {
+    for (const said of [
+      "this is a safe test",
+      "thanks for the update",
+      "that was a good call",
+      "nice find",
+      "the report looks great",
+      "good plan, I like it",
+    ]) {
+      expect(requestsWork(said), said).toBe(false);
+    }
+  });
+
+  it("still sees the verb wherever an instruction puts it", () => {
+    for (const said of [
+      "install the gsc cli and sign in",
+      "spawn a bot named Scout to research venues",
+      "can you quickly fix the login page",
+      "ok, then deploy it",
+      "the invoice is wrong: update it",
+      "let's test the new build",
+      "don't delete it, just rename the folder",
+      "I need a report on last week's sales",
+      "we really want a plan for the launch",
+      "create a voice agent for testing",
+    ]) {
+      expect(requestsWork(said), said).toBe(true);
+    }
+  });
+});
+
 describe("needsContinuation", () => {
   const base = {
     trigger: "user",
@@ -47,6 +79,22 @@ describe("needsContinuation", () => {
 
   it("leaves a run alone once it used a tool", () => {
     expect(needsContinuation({ ...base, toolCallCount: 2 })).toBe(false);
+  });
+
+  it("leaves a run alone once it stopped for the person, with or without a tool call", () => {
+    const afterTakeover = {
+      ...base,
+      request: "install the gsc cli and sign in",
+      replyText: "signed in. the session stays in this computer.",
+    };
+    expect(needsContinuation(afterTakeover)).toBe(true);
+    expect(needsContinuation({ ...afterTakeover, pausedForPerson: true })).toBe(false);
+  });
+
+  it("leaves a statement alone: nothing was asked for, so nothing is left undone", () => {
+    expect(
+      needsContinuation({ ...base, request: "this is a safe test", replyText: "Noted." }),
+    ).toBe(false);
   });
 
   it("leaves a question alone, however short the answer", () => {
