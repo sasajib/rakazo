@@ -76,13 +76,13 @@ export async function spawnBot(
     };
     runId: string;
     spawnKey: string;
+    /** Fork: runs in the creation transaction (spawn_bot's skills), before any run exists. */
+    seed?: (tx: Prisma.TransactionClient, botId: string) => Promise<void>;
     name: string;
     description?: string;
     instructions?: string;
     prompt?: string;
     computerMode?: ComputerMode;
-    /** Fork: runs in the creation transaction (spawn_bot's skills), before any run exists. */
-    seed?: (tx: Prisma.TransactionClient, botId: string) => Promise<void>;
   },
 ) {
   const name = input.name.trim();

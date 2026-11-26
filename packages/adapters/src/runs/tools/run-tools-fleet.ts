@@ -226,11 +226,6 @@ export const fleetTools: ToolHandlers = {
       },
       runId,
       spawnKey: effectKey,
-      name: String(args.name ?? ""),
-      description: args.description ? String(args.description) : undefined,
-      instructions: args.instructions ? String(args.instructions) : undefined,
-      prompt: args.prompt ? String(args.prompt) : undefined,
-      computerMode,
       ...(skills?.ok
         ? {
             seed: (tx, botId) =>
@@ -243,6 +238,11 @@ export const fleetTools: ToolHandlers = {
               }),
           }
         : {}),
+      name: String(args.name ?? ""),
+      description: args.description ? String(args.description) : undefined,
+      instructions: args.instructions ? String(args.instructions) : undefined,
+      prompt: args.prompt ? String(args.prompt) : undefined,
+      computerMode,
     });
     if ("error" in spawned) return call.finish(spawned);
     if (skills?.ok && !("duplicate" in spawned)) {
