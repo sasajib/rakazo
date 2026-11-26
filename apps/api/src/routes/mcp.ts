@@ -31,6 +31,7 @@ import {
   revertConnectedMcpApprovals,
 } from "../integrations/mcp-approval.js";
 import { buildMcpUpdateMaterial, legacyMcpArgs } from "../integrations/mcp-material.js";
+import { readableMcpServers } from "../integrations/mcp-server-list-fork.js";
 import {
   assertMcpOAuthTemplates,
   assertMcpRemoteEndpoint,
@@ -512,16 +513,15 @@ export function mcpRoutes(ctx: RouterContext) {
               })
             : [];
           const ciphertextById = new Map(secrets.map((secret) => [secret.id, secret.ciphertext]));
-          return Promise.all(
-            rows.map(async (row) =>
-              mcpServerDto(
-                row,
-                await mcpOAuth.summaryForCiphertext(
-                  row.secretId ? ciphertextById.get(row.secretId) : undefined,
-                  row.secretId ?? undefined,
-                ),
-                viewer,
+          // Fork (1.29): a row that cannot be read is left out, never the whole list.
+          return readableMcpServers(rows, async (row) =>
+            mcpServerDto(
+              row,
+              await mcpOAuth.summaryForCiphertext(
+                row.secretId ? ciphertextById.get(row.secretId) : undefined,
+                row.secretId ?? undefined,
               ),
+              viewer,
             ),
           );
         }),

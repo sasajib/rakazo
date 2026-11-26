@@ -94,7 +94,11 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("forkClientUpdates(", 2), ("installFork", 2), ("forkAllows", 2), ("holdReload(", 2),
            ("autoReloadHeaderMiddleware(", 2), ("WEB_AUTO_RELOAD", 2),
            # Ask first on a saved item holds in Never ask; loosely named logins (1.28)
-           ("itemAsksFirst", 4), ("withSavedLoginNames(", 2), ("unknownLoginError(", 2)]
+           ("itemAsksFirst", 4), ("withSavedLoginNames(", 2), ("unknownLoginError(", 2),
+           # organization MCP servers (1.29): the reply names no empty Space list (upstream bug, local
+           # patch); one unreadable row never takes mcp/servers/list; inheritance copies own rows only
+           ("availability.spaceIds.length > 0", 1), ("readableMcpServers(", 2),
+           ("organizationItemIn(scope), allBots: true", 1)]
 results = []
 
 

@@ -74,6 +74,7 @@ export function mcpServerDto(
     value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
   const envKeys = keysOf(row.env);
   const headerKeys = keysOf(row.headers);
+  const availability = spaceAvailability({ ...row, allSpaces: row.allSpaces ?? false });
   return {
     id: row.id,
     // An organization's server is in no one Space; it reads as in the viewer's.
@@ -104,7 +105,9 @@ export function mcpServerDto(
     verbatimResults: row.verbatimResults ?? false,
     revision: row.revision,
     health: mcpServerHealthDto(row),
-    availability: spaceAvailability({ ...row, allSpaces: row.allSpaces ?? false }),
+    // Fork (1.29, upstream bug at this line): an organization's server is in no Space, so its
+    // list is empty, which SpaceAvailabilitySchema (min 1) refuses and the whole reply fails.
+    ...(availability.spaceIds.length > 0 ? { availability } : {}),
     allBots: row.allBots ?? false,
     organization: organizationId !== null,
     manageable: organizationId === null || organizationId === viewer.managedOrganizationId,

@@ -27,9 +27,19 @@
  *   one allows all tools, which is what an approval card grants.
  * What the owner gives up: approval is per endpoint for his agents in the Space, no longer per
  * agent. An agent of his that knows the URL of an approved server can use it without a card.
+ *
+ * An organization's server (upstream, `mcp_servers.organizationId`, no `userId` / `spaceId`):
+ * - It is usable by every non-guest member's agents already (`allBots`, upstream's `mcpServerIn`);
+ *   nothing here grants or widens that.
+ * - Reuse never targets it: the lookup stays `availableInSpace` (the run owner's own servers), so
+ *   this code never writes an assignment for a server the run's owner does not own. A call for
+ *   its endpoint gets upstream's answer ("Your organization already added this MCP server").
+ * - Inheritance copies only the member's OWN `bot_mcp_servers` rows, and for an organization's
+ *   server only while it is `allBots`: there such a row can only narrow the tool list, so the
+ *   copy keeps a new agent within its creator's limit and gives it nothing it would not have had.
  */
 import type { McpServer, Prisma, PrismaClient } from "@rakazo/db";
-import { availableInSpace } from "@rakazo/db";
+import { availableInSpace, organizationItemIn } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { logMcpAutoApproved } from "./mcp-owner-request.js";
 
@@ -195,7 +205,13 @@ export async function copyApprovedMcpAssignments(
       botId: input.fromBotId,
       spaceId: input.spaceId,
       userId: input.userId,
-      server: { ...availableInSpace(scope), enabled: true, transport: { not: "stdio" } },
+      // The member's own rows only. On an organization's server (1.29) that every agent may use,
+      // such a row is a tool limit the member set, so the new agent starts with the same limit.
+      server: {
+        OR: [availableInSpace(scope), { ...organizationItemIn(scope), allBots: true }],
+        enabled: true,
+        transport: { not: "stdio" },
+      },
     },
     select: { serverId: true, allowAllTools: true, allowedTools: true },
   });

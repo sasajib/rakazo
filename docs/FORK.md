@@ -724,6 +724,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   secret is ignored): add it in Settings, or set the env to `0`. An endpoint whose first server still waits on its
   card is not reused (a second request for it still registers its own). A child created by a delegated
   (`bot_message`) run inherits nothing.
+- **Organization servers (upstream #6827):** never reused or assigned by this feature; see 1.29 for the rule.
 - **Conflicts:** upstream edits to `addMcpServerFromTool` (keep the reuse call before `secretStore.put`) and to
   `spawnBot`'s input; `availableInSpace` semantics.
 
@@ -929,6 +930,63 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `planActionGate`'s `never` line or to the login/card block of
   `prepareToolRequest`; upstream restoring its own Never-ask test.
 
+### 1.29 Organization MCP servers: the reply no longer fails; one unreadable row never takes the list (UPSTREAM BUG, local patch)
+- **Status: upstream bug carried as a local patch. Drop the `mcp-servers.ts` hunk at the next sync if upstream
+  fixed it** (check: `git diff <merge-base> upstream/main -- apps/api/src/integrations/mcp-servers.ts
+  packages/contracts/src/account/space-availability.ts packages/db/src/spaces/availability.ts`, then run
+  `--spec=mcp-organization-servers.fork` on pure upstream: its first case must pass there). The list guard and the
+  reuse rule below are fork features and stay.
+- **Defect (found 2026-11-26 on `main-1126b`, same on pure upstream `50de80b1f`, still there at `6d816462a`):**
+  upstream #6827 (`20270102120000_organization_mcp_servers`) lets an organization own a server: the row has
+  `organizationId` and NULL `userId` / `spaceId`. `mcpServerDto` (upstream `apps/api/src/integrations/mcp-servers.ts:107`
+  at `50de80b1f`) always sent `availability: spaceAvailability(row)`; for such a row `spaceAvailability`
+  (`packages/db/src/spaces/availability.ts:29-42`) returns `spaceIds: []`, and the reply schema
+  `SpaceAvailabilitySchema` (`packages/contracts/src/account/space-availability.ts:7`) demands `.min(1)`. So
+  `mcp/servers/createForOrganization` stored the row and answered `500 Output validation failed`
+  (`availability.spaceIds: Too small`), and from then on `mcp/servers/list` (and `update`, `test`, `agents` on that
+  server) answered 500 for every member of the organization: Settings showed no MCP server at all. Upstream's tests
+  never send a real organization row through the reply schema (the web e2e relabels an own server). No fork code is
+  involved: the fork does not touch these three files.
+- **Patch (minimal):** `mcpServerDto` sends `availability` only when the row is in at least one Space. The field is
+  optional in `McpServerSchema`; web and mobile hide the Space control for an organization's server and read
+  `availability` as optional. `spaceId` keeps upstream's "reads as in the viewer's Space".
+- **Fork rule on top: `mcp/servers/list` never fails because one row is unreadable.**
+  `integrations/mcp-server-list-fork.ts` (`readableMcpServers`): each row is turned into its reply and checked
+  against `McpServerSchema` on its own; a row that fails (or whose secret summary throws) is left out and logged as
+  `mcp.server_unreadable` (`mcp.server_id`, `mcp.reason`: `reply_schema` | `read_failed`, `mcp.fields`: field paths
+  only, never a value). Seam: one call in the `list` handler of `apps/api/src/routes/mcp.ts`.
+- **Reuse / inheritance (1.23) and organization servers, decided:** an organization's server is usable by every
+  non-guest member's agents through upstream's own rule (`allBots` + `mcpServerIn`); the fork grants nothing on it.
+  Reuse never targets it (`findApprovedMcpServer` stays on `availableInSpace` = the run owner's own servers), so the
+  fork never writes an assignment for a server the run's owner does not own; `add_mcp_server` for the organization's
+  address gets upstream's answer ("Your organization already added this MCP server as …", URL-normalised spelling
+  only: a trailing slash is another address for upstream and registers the member's own server with a card).
+  `spawn_bot` inheritance copies only the member's OWN `bot_mcp_servers` rows; for an organization's server only
+  while it is `allBots`, where such a row is a tool limit the member set, so the new agent starts within the same
+  limit (before: the child got no row and therefore every tool). Owner-request auto-approve (1.26) only acts on the
+  server the call itself creates, never on an organization's. `vault_fill` (1.16b) reads its server from the run's
+  tool list, not from `mcp_servers`. No other fork code reads `mcp_servers` (checked: `git diff 50de80b1f` for
+  `mcpServer` / `availableInSpace` / `bot_mcp_servers`).
+- **Files (fork):** `apps/api/src/integrations/mcp-server-list-fork.ts`. **Seams:** `integrations/mcp-servers.ts`
+  (`mcpServerDto`), `routes/mcp.ts` (`list`), `packages/adapters/src/mcp/mcp-server-reuse.ts`
+  (`copyApprovedMcpAssignments` filter + boundary notes). **Migration / env:** none.
+- **Tests:** `apps/api/src/integrations/mcp-organization-servers.fork.postgres.test.ts` (router with the real reply
+  schema: an admin creates an organization server, admin and member list it, `availability/items`, `update`; a row
+  with `revision: 0` beside them is left out of the list). On pure upstream `50de80b1f` and on fork `main-1126b`:
+  2 of 2 fail with the error above; with only the DTO patch the second still fails; now 2 of 2 pass.
+  `packages/adapters/src/mcp/mcp-organization-reuse.fork.postgres.test.ts` (reuse finds nothing, `add_mcp_server`
+  gets upstream's answer and writes nothing, spawn copies the member's own limit only, not for a server that is not
+  `allBots`, another member's row untouched; fails on the old filter: `expected [] to deeply equal [ … ]`).
+  `integrations/mcp-server-list-fork.test.ts` (no database: DTO for an organization row passes `McpServerSchema`,
+  own row unchanged, guard leaves out and logs).
+- **Live check:** as an organization owner, Settings → MCP servers → Add server → Available to: the organization →
+  saved with the "Organization" label, the list still opens for him and for a member; api log has no
+  `Output validation failed`. `docker logs rakazo-api-1 | grep mcp.server_unreadable` is empty in normal use.
+- **Known limits:** a row left out of the list is invisible in Settings until fixed (the log line names it);
+  `connect`, `update`, `test` on a row that is itself unreadable still fail for that one row.
+- **Conflicts:** upstream fixing `mcpServerDto` or `SpaceAvailabilitySchema` its own way (take upstream's, keep the
+  test); upstream edits to the `list` handler's `Promise.all`.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
@@ -936,6 +994,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (`979685f61`); see §4 (2026-11-26 b).
 - `881e9133b` (`fix/cards-plans-mcp-1126`, 1.21-1.26), `6b69eac81` (`feat/vault-fill-mcp-browser`, 1.16b), `55fe5eeea`
   (`feat/agent-skill-assign-tool`, 1.17a) merged into `integrate/1126` on fork `main` `6ae098ad1`; see §4 (2026-11-26).
+- `938172ba2` (`fix/journeys-1126`, 1.3 + gate 4b), `9691dd126` (`fix/reload-askfirst-1126`, 1.27, 1.28) merged into
+  `integrate/1126c` on fork `main` `051c16885`; 1.29 committed on top; see §4 (2026-11-26 c).
 
 ---
 
@@ -1018,7 +1078,8 @@ their siblings and fix `index.ts` exports.
    `chat-wait.postgres.test.ts`, `computer-lifecycle.postgres.test.ts`, `apps/api/src/bots/bot-skills.postgres.test.ts`,
    `skill-curator/curator.postgres.test.ts`, `apps/api/src/bots/skill-learning.postgres.test.ts`,
    `plans/plans.postgres.test.ts`, `messaging/bot-supersede.postgres.test.ts`, `takeover-chat.postgres.test.ts`,
-   `wakeup.postgres.test.ts`, `packages/testkit/src/product/authorization.test.ts` (one fresh database per spec):
+   `wakeup.postgres.test.ts`, `packages/testkit/src/product/authorization.test.ts`,
+   `mcp-organization` (1.29: two files) (one fresh database per spec):
    `CI_POSTGRES_URL=postgresql://postgres:pw@127.0.0.1:<port>/rakazo MCP_ALLOW_PRIVATE_ENDPOINT=true pnpm test:integration --spec=<file>`;
    remove the container after. (Plain `postgres:18-alpine` lacks pgvector; the ledger migration fails there.)
    **4b. Journeys are a gate (since 2026-11-26):** `packages/testkit/src/product/journeys.test.ts`, same scratch
@@ -1089,6 +1150,15 @@ Tell him: stale web tabs keep the old bundle until reloaded.
 ---
 
 ## 4. Sync log
+
+### 2026-11-26 (c) — two fix branches + organization MCP server patch (no upstream change) → `integrate/1126c`, image `main-1126c`
+- **Base:** fork `main` `051c16885` (image `main-1126b`, live). Merged `fix/journeys-1126` (`938172ba2`) and
+  `fix/reload-askfirst-1126` (`9691dd126`) with real merge commits. One conflict, `ops/post-sync-check.py` (both
+  sides appended markers to the end of `MARKERS`: both kept); `docs/FORK.md` merged by itself.
+- **Defect fixed on top (1.29):** organization-level MCP server creation answered 500 and broke `mcp/servers/list`.
+  Reproduced on pure upstream `50de80b1f` with the same spec, so it is upstream's; carried as a local patch.
+- **Not deployed by this entry.** Deploy needs the `WEB_AUTO_RELOAD: ${WEB_AUTO_RELOAD:-}` line in the stack's
+  `web` service (1.27); rollback is `ops/rollback.sh main-1126b`. Gate numbers: stack `INTEGRATE-1126c.md`.
 
 ### 2026-11-26 (b) — post-live fixes + upstream `4f4189032..50de80b1f` (67 commits) → `sync/upstream-1126`, image `main-1126b`
 - **Base:** fork `main` `49d2743ed` (tag `pre-sync-1126`, image `main-1126a`, live-verified). First `fix/post-live-1126`
