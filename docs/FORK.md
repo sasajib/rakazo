@@ -836,6 +836,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `addMcpServerFromTool`'s transaction or to `isOwnerStartedRun` / `RunTrust`.
 
 ### 1.27 An open tab moves onto a new deploy by itself (`WEB_AUTO_RELOAD`)
+- **Commit:** `a56d18695`.
 - **Why:** after every deploy the owner had to be told to reload his open tabs. Upstream already has the handshake
   (`x-rakazo-build` on every API reply, `/build-id` on the web server, `lib/platform/client-update.ts`), but it learns
   the new build only from API replies and reloads only a tab that is hidden, navigating, or five minutes idle with
@@ -884,6 +885,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   web server's settings object, or a new upstream "update available" UI (then drop the fork toast, keep the rules).
 
 ### 1.28 "Ask first" on a saved item holds in Never ask; a login named loosely is the saved login it means
+- **Commit:** `d04c12a04`.
 - **Why (live test 2026-11-26, vault retest c + b):** on an account in Never ask, a login set to Ask first was typed
   with no card: `planActionGate` returned `allow` for mode `never` before the mandatory check, for `browser_act` and
   `vault_fill` alike (upstream's own docs say the card shows "also in Never ask"; its gate test said the opposite).
@@ -909,7 +911,9 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   triggers; title/case), `core/src/runs/action-approval.test.ts` (2 cases), `run-tool-gate.test.ts` (upstream's
   "runs it without asking in Never ask" now expects the ask), `run-tools-vault-fill.test.ts` (flag; approved replay
   fills; by title, case, spacing, default host title; two matches; unknown name lists the site's names; no value in
-  any message; blocked login). 4 + 12 of them fail on the old code.
+  any message; blocked login), `secrets/vault/vault-login-names.postgres.test.ts` (the lookups on the real schema
+  under a tenant; runs with `VERIFY_DATABASE=1 DATABASE_URL=...`, it is not in the integration harness list).
+  4 + 12 of them fail on the old code.
 - **Not covered by a test:** the card's Allow/Deny round trip under Never ask with a database (from the gate on it
   is the same code Ask and Auto use).
 - **Conflicts:** upstream edits to `planActionGate`'s `never` line or to the login/card block of
