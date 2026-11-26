@@ -106,7 +106,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # the memory and curator model calls repeat on 429/5xx/timeout inside a time budget
            ("MEMORY_LEDGER_MODEL_RETRIES", 1), ("retryAfterMs(", 2), ("MODEL_CALL_BUDGET_MS", 2),
            # a removed bot is not read again (1.30, upstream bug, local patch): trusted batch on web, the roster drops the bot's cached reads, a read for a missing bot is not a warning
-           ("omittedIsGone", 2), ("dropBotQueries(", 1), ("BotNotFoundError", 3), ("markExpectedClientMiss(", 2)]
+           ("omittedIsGone", 2), ("dropBotQueries(", 1), ("BotNotFoundError", 3), ("markExpectedClientMiss(", 2),
+           # a rollback reloads open tabs too (1.27): older build seen stable twice, own loop guard
+           ("attemptRollback", 3), ("claimRollbackReload(", 2), ("FORK_STABLE_MS", 1)]
 results = []
 
 

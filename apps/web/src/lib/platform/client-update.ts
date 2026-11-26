@@ -14,6 +14,7 @@ import {
 import { onRpcResponse } from "../query/rpc";
 import { CLIENT_BUILD } from "./client-build";
 import type { UpdateMoment } from "./client-update-fork";
+import { claimRollbackReload } from "./client-update-fork";
 import { forkClientUpdates } from "./client-update-fork-wiring";
 import { hasOpenDialog } from "./has-open-dialog";
 import { recoveryReload } from "./preload-recovery";
@@ -197,6 +198,33 @@ export function createClientUpdates(deps: ClientUpdateDeps) {
       if (!target || checking || !safe(moment)) return Promise.resolve(false);
       return reloadOntoServedBuild(moment);
     },
+    /**
+     * Fork: a guarded reload onto an OLDER build the web server went back to (a rollback), which
+     * the fork saw stable. Upstream's path above only knows "newer" and is not touched. Same
+     * safety check; the build must still be the one served; the fork's own guard allows one
+     * reload per build and a few per hour; the shared recovery guard still applies.
+     */
+    async attemptRollback(
+      moment: "hidden" | "visible" | "released",
+      expected: string,
+    ): Promise<boolean> {
+      if (!deps.build || checking || !safe(moment)) return false;
+      checking = true;
+      lastCheck = deps.now();
+      try {
+        const served = await deps.servedBuild().catch(() => null);
+        if (served !== expected || (compareBuilds(served, deps.build) ?? 0) >= 0) return false;
+        if (!safe(moment)) return false;
+        const undo = claimRollbackReload(deps.storage, served, deps.now());
+        if (!undo) return false;
+        if (deps.reload()) return true;
+        // The recovery guard refused (offline, or cooling down): this build was never tried.
+        undo();
+        return false;
+      } finally {
+        checking = false;
+      }
+    },
     install(): () => void {
       if (!deps.build) return () => {};
       const noteInput = () => {
@@ -246,6 +274,10 @@ export function clientUpdates(): ReturnType<typeof createClientUpdates> {
     attempt: (moment) =>
       moment === "hidden" || moment === "visible" || moment === "released"
         ? clientUpdates().attempt(moment)
+        : Promise.resolve(false),
+    attemptRollback: (moment, build) =>
+      moment === "hidden" || moment === "visible" || moment === "released"
+        ? clientUpdates().attemptRollback(moment, build)
         : Promise.resolve(false),
   });
   shared = createClientUpdates({

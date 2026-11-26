@@ -1,4 +1,4 @@
-import { compareBuilds, SERVER_BUILD_HEADER } from "@rakazo/contracts";
+import { compareBuilds, isBuildId, SERVER_BUILD_HEADER } from "@rakazo/contracts";
 import { AUTO_RELOAD_HEADER } from "./auto-reload-header";
 
 /**
@@ -15,7 +15,12 @@ import { AUTO_RELOAD_HEADER } from "./auto-reload-header";
  *   reloads by itself once the thing in the way has ended;
  * - stricter rules for every automatic reload: never during a call, never while a text field on
  *   the page holds text, never while recording or controlling a computer's screen;
- * - the kill switch `WEB_AUTO_RELOAD=0` on the web server leaves only the notice.
+ * - the kill switch `WEB_AUTO_RELOAD=0` on the web server leaves only the notice;
+ * - a ROLLBACK moves the tab too: an older build than this bundle counts as an update once the
+ *   web server has answered with that same build on two checks in a row at least
+ *   FORK_STABLE_MS apart (a rolling restart serves both builds for a moment, and a tab that
+ *   just reloaded onto the new one must not be sent back). Same notice, same safety rules; the
+ *   reload has its own loop guard (`claimRollbackReload`), since upstream's only knows "newer".
  *
  * Every reload still goes through upstream's guarded path (the web server must serve the newer
  * build, one attempt per build pair, at most one automatic reload per cooldown).
@@ -33,6 +38,13 @@ export const FORK_RELEASE_TICK_MS = 3_000;
 export const FORK_RELEASE_QUIET_MS = 3_000;
 /** Guarded reload attempts are at least this far apart. */
 export const FORK_ATTEMPT_SPACING_MS = 10_000;
+/** An older served build is a rollback once two checks in a row, this far apart, both named it. */
+export const FORK_STABLE_MS = 30_000;
+/** While an older build waits for its second sighting, ask again this often. */
+export const FORK_CONFIRM_MS = FORK_STABLE_MS + 5_000;
+/** A tab reloads onto older builds at most this often per hour, and once per build. */
+export const FORK_ROLLBACK_MAX_PER_HOUR = 3;
+const ROLLBACK_KEY = "rk:client-update-rollbacks";
 const IDLE_MS = 5 * 60_000;
 const INPUT_EVENTS = ["keydown", "pointerdown", "input", "wheel", "touchstart"] as const;
 
@@ -61,6 +73,8 @@ export type UpdateFacts = UnsafeFacts & {
   moment: UpdateMoment;
   /** Milliseconds since the last key, pointer or scroll input. */
   quietMs: number;
+  /** The older build the web server was seen serving on two checks in a row; null otherwise. */
+  rolledBackTo?: string | null;
 };
 
 export function reloadUnsafe(facts: UnsafeFacts): boolean {
@@ -86,14 +100,61 @@ export function reloadAllowed(
   }
 }
 
+/** The served build is older than this bundle and was confirmed stable: a rollback. */
+export function isRollback(facts: Pick<UpdateFacts, "build" | "served" | "rolledBackTo">): boolean {
+  return (
+    isBuildId(facts.rolledBackTo) &&
+    facts.rolledBackTo === facts.served &&
+    (compareBuilds(facts.build, facts.served) ?? 0) > 0
+  );
+}
+
 /**
- * The whole rule in one place. Nothing unless the web server serves a newer build than this
- * bundle (same build, older build, unknown, malformed: nothing). Then reload when allowed,
- * otherwise show the notice.
+ * The whole rule in one place. Nothing unless the web server serves another build than this
+ * bundle: a newer one, or an older one seen stable (same build, an older build seen once,
+ * unknown, malformed: nothing). Then reload when allowed, otherwise show the notice.
  */
 export function decideClientUpdate(facts: UpdateFacts): UpdateDecision {
-  if ((compareBuilds(facts.build, facts.served) ?? 0) >= 0) return "nothing";
+  if ((compareBuilds(facts.build, facts.served) ?? 0) >= 0 && !isRollback(facts)) return "nothing";
   return reloadAllowed(facts) ? "reload" : "bar";
+}
+
+type RollbackStorage = Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+
+/**
+ * The loop guard of a rollback reload, kept for the tab's session. Refuses (null) when this tab
+ * already reloaded for that build, or reloaded onto older builds FORK_ROLLBACK_MAX_PER_HOUR
+ * times in the last hour, or the record cannot be kept. Otherwise records the reload and
+ * returns its undo, for a reload the recovery guard then refused.
+ */
+export function claimRollbackReload(
+  storage: RollbackStorage,
+  to: string,
+  now: number,
+): (() => void) | null {
+  if (!storage) return null;
+  try {
+    const previous = storage.getItem(ROLLBACK_KEY);
+    const parsed: unknown = JSON.parse(previous ?? "[]");
+    const reloads = (Array.isArray(parsed) ? parsed : []).filter(
+      (entry): entry is { to: string; at: number } =>
+        Boolean(entry) && typeof entry.to === "string" && typeof entry.at === "number",
+    );
+    if (reloads.some((entry) => entry.to === to)) return null;
+    if (reloads.filter((entry) => now - entry.at < 3_600_000).length >= FORK_ROLLBACK_MAX_PER_HOUR)
+      return null;
+    storage.setItem(ROLLBACK_KEY, JSON.stringify([...reloads, { to, at: now }].slice(-20)));
+    return () => {
+      try {
+        if (previous === null) storage.removeItem(ROLLBACK_KEY);
+        else storage.setItem(ROLLBACK_KEY, previous);
+      } catch {
+        // The record stays: one reload fewer, never one more.
+      }
+    };
+  } catch {
+    return null;
+  }
 }
 
 export type ServedBuild = { build: string | null; autoReload: boolean };
@@ -114,9 +175,12 @@ export async function fetchServedBuild(
   }
 }
 
-/** An API reply that names a newer build, or suggests this bundle and the server disagree about the contract. */
+/**
+ * An API reply that names another build (newer, or older after a rollback), or suggests this
+ * bundle and the server disagree about the contract.
+ */
 export function replyHintsNewBuild(response: Response, build: string): boolean {
-  if ((compareBuilds(build, response.headers.get(SERVER_BUILD_HEADER)) ?? 0) < 0) return true;
+  if ((compareBuilds(build, response.headers.get(SERVER_BUILD_HEADER)) ?? 0) !== 0) return true;
   // An unknown procedure (404) or an input the server no longer accepts (400).
   return response.status === 404 || response.status === 400;
 }
@@ -131,6 +195,8 @@ export type ForkUpdateDeps = {
   note: (build: string) => void;
   /** Upstream's guarded reload; false when it did not reload. */
   attempt: (moment: UpdateMoment) => Promise<boolean>;
+  /** The guarded reload onto an older build seen stable; false when it did not reload. */
+  attemptRollback?: (moment: UpdateMoment, build: string) => Promise<boolean>;
   /** Show or hide the notice. Must never take focus. */
   bar: (show: boolean) => void;
   listen: (type: string, listener: () => void) => () => void;
@@ -151,6 +217,11 @@ export function createForkClientUpdates(deps: ForkUpdateDeps) {
   let attempting = false;
   let barShown = false;
   let tick: unknown = null;
+  /** An older build than this bundle, and when the web server first answered with it. */
+  let older: { build: string; since: number } | null = null;
+  /** That build, once a later check at least FORK_STABLE_MS on named it again. */
+  let rolledBackTo: string | null = null;
+  let confirm: unknown = null;
 
   const quietMs = () => deps.now() - lastInput;
   const showBar = (show: boolean) => {
@@ -177,6 +248,7 @@ export function createForkClientUpdates(deps: ForkUpdateDeps) {
       autoReload,
       moment,
       quietMs: quietMs(),
+      rolledBackTo,
     });
     if (decision === "nothing") {
       showBar(false);
@@ -190,8 +262,12 @@ export function createForkClientUpdates(deps: ForkUpdateDeps) {
     if (attempting || deps.now() - lastAttempt < FORK_ATTEMPT_SPACING_MS) return decision;
     attempting = true;
     lastAttempt = deps.now();
-    void deps
-      .attempt(moment)
+    const rollback = isRollback({ build: deps.build, served, rolledBackTo });
+    void (
+      rollback
+        ? (deps.attemptRollback?.(moment, rolledBackTo as string) ?? Promise.resolve(false))
+        : deps.attempt(moment)
+    )
       .catch(() => false)
       .then((reloaded) => {
         attempting = false;
@@ -218,9 +294,28 @@ export function createForkClientUpdates(deps: ForkUpdateDeps) {
 
   function note(answer: ServedBuild) {
     autoReload = answer.autoReload;
-    if (compareBuilds(deps.build, answer.build) === null) return;
+    const order = compareBuilds(deps.build, answer.build);
+    if (order === null) return;
     served = answer.build;
     if (served) deps.note(served);
+    // An older build must be named by two answers in a row, FORK_STABLE_MS apart, before it
+    // counts: any other answer in between (this build again, a newer one) starts over.
+    if (order <= 0 || !served) {
+      older = null;
+      rolledBackTo = null;
+    } else if (older?.build !== served) {
+      older = { build: served, since: deps.now() };
+      rolledBackTo = null;
+    } else if (deps.now() - older.since >= FORK_STABLE_MS) {
+      rolledBackTo = served;
+    }
+    const waiting = older !== null && rolledBackTo === null;
+    if (waiting && confirm === null) {
+      confirm = deps.setInterval(() => void check(restingMoment), FORK_CONFIRM_MS);
+    } else if (!waiting && confirm !== null) {
+      deps.clearInterval(confirm);
+      confirm = null;
+    }
   }
 
   return {
@@ -253,8 +348,9 @@ export function createForkClientUpdates(deps: ForkUpdateDeps) {
         }),
         deps.listen("focus", visible),
         deps.responses((response) => {
-          // Once the newer build is known to be served, replies have nothing more to say.
+          // Once another build is known to be served, replies have nothing more to say.
           if ((compareBuilds(deps.build, served) ?? 0) < 0) return;
+          if (isRollback({ build: deps.build, served, rolledBackTo })) return;
           if (replyHintsNewBuild(response, deps.build)) void check(restingMoment);
         }),
       ];
@@ -262,6 +358,8 @@ export function createForkClientUpdates(deps: ForkUpdateDeps) {
       return () => {
         for (const stop of stops) stop();
         deps.clearInterval(poll);
+        if (confirm !== null) deps.clearInterval(confirm);
+        confirm = null;
         showBar(false);
       };
     },

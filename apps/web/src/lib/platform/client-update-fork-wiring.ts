@@ -41,6 +41,7 @@ function notice(show: boolean): void {
 type Link = {
   note: (build: string) => void;
   attempt: (moment: UpdateMoment) => Promise<boolean>;
+  attemptRollback: (moment: UpdateMoment, build: string) => Promise<boolean>;
 };
 
 let shared: ReturnType<typeof createForkClientUpdates> | undefined;
@@ -57,6 +58,7 @@ export function forkClientUpdates(link: Link): ReturnType<typeof createForkClien
     now: () => Date.now(),
     note: link.note,
     attempt: link.attempt,
+    attemptRollback: link.attemptRollback,
     bar: notice,
     listen: (type, listener) => {
       const target = type === "visibilitychange" ? document : window;

@@ -933,8 +933,22 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Not on mobile or desktop:** the desktop app bundles its renderer (a reload cannot change it; the fork tracker is
   off when `window.rakazoDesktop` is set; it updates through the app's own updater). The mobile app downloads an
   over-the-air update when it returns to the foreground and runs it on the next launch (`apps/mobile/lib/api/client-update.ts`).
-- **Known limits:** only a *newer* build counts (upstream's ordering): after a rollback to an older image, open tabs
-  keep the newer bundle until reloaded by hand. A `textarea` that shows saved text (an instructions editor left open)
+- **Rollback (owner decision 2026-11-27, `fix/leftovers-1126`):** an OLDER served build moves the tab too. In the
+  fork path only: `/build-id` naming an older build than the bundle counts as an update once two answers in a row,
+  at least 30 s apart (`FORK_STABLE_MS`), named that same build; any other answer in between starts over, so the
+  mixed answers of a rolling restart never send a tab back. After the first sighting the tab asks again every 35 s
+  (`FORK_CONFIRM_MS`); an API reply naming any other build (not only a newer one) also prompts a check. Then the
+  same rules as above (same toast, never during a call / typed text / dialog / screen control, `WEB_AUTO_RELOAD=0`
+  = toast only; reload when hidden, on becoming visible, or after the thing in the way ended). Loop guard: the reload
+  goes through `attemptRollback` (fork method in `client-update.ts`; re-reads `/build-id`, must still be the
+  confirmed older build) and `claimRollbackReload` (session storage `rk:client-update-rollbacks`): once per target
+  build for the life of the tab, at most 3 per hour, none without session storage; the shared recovery guard (one
+  automatic reload per 30 s, never offline) applies as before, and a reload it refuses is not counted. A newer
+  build still needs no second sighting, and upstream's own paths (`noteServerBuild`, `tryAt`, the 426 path, its
+  `attempted` pair) are untouched: they only know "newer". A visible tab in use shows the toast and reloads when
+  hidden (upstream's navigation reload is not extended to rollbacks). Tests: `client-update-fork.test.ts` "a rollback
+  moves an open tab too" (10) and "the rollback reload guard" (3); 12 of them fail on the previous code.
+- **Known limits:** a rollback is followed only by tabs whose bundle has this code (from image `main-1126d` on). A `textarea` that shows saved text (an instructions editor left open)
   counts as typed text, so that tab shows the toast instead of reloading. A draft saved in another chat (local
   storage, it survives a reload) does not block a hidden or navigating reload, as upstream; it still blocks upstream's idle reload.
 - **Live check:** see `FIX-1126-reload-askfirst.md` in the stack repo (open a tab, deploy, come back to it).
