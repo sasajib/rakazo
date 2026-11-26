@@ -915,8 +915,12 @@ their siblings and fix `index.ts` exports.
    `packages/core/src`, `apps/api/src`, `apps/web/src/pages/shell`, `infra/updater/src/compose-env.test.ts`,
    `packages/testkit/src/runtime/executor-turn-checkpoint.test.ts`, mobile call tests. Compare failures against
    `git stash -u` / upstream (`desktop-runtime` (8), `infra/sandboxes/supervisor/src/focus-or-launch.test.ts` (1, since upstream
-   `dbc0c9d46`: no xdotool + screen-gateway marker on bee), `mcp-package-installer`, testkit journeys 4/4b/4d/13c/54 fail on bee
-   without the fork too). A pure-upstream worktree for comparison: `git worktree add --detach ../upstream-<mmdd> upstream/main`
+   `dbc0c9d46`: no xdotool + screen-gateway marker on bee), `mcp-package-installer` fail on bee without the fork too).
+   **Journeys are a fork debt, not an upstream baseline:** `packages/testkit/src/product/journeys.test.ts` (postgres,
+   `--spec=journeys`) passes 81/81 on pure upstream `50de80b1f` on bee, and fails 6 of 84 on the fork (4, 4b, 4d x2,
+   13c, "a bot_message run cannot rewrite a child's instructions"), the same set as before this sync. In journey 4 the
+   thread shows a second `follow_up` run asking for the takeover again after the reply; untraced (first suspect: the
+   1.3 "continue a run that announced work and used no tool" rule against the scripted runtime). A pure-upstream worktree for comparison: `git worktree add --detach ../upstream-<mmdd> upstream/main`
    + `pnpm install --frozen-lockfile` + `pnpm --filter @rakazo/db generate`.
 4. **Postgres tests against pgvector:** start a scratch `rakazo/postgres-graph:16-pgv-age1.6`, then for each of
    `row-security.postgres.test.ts`, `memory-ledger/{ledger,seams}.postgres.test.ts`, `shell-jobs.postgres.test.ts`,
@@ -1035,6 +1039,8 @@ Tell him: stale web tabs keep the old bundle until reloaded.
   `desktop-runtime` 8, `mcp-package-installer` 1, `focus-or-launch` 1. Mobile `apps/mobile` 380 files / 4,629 tests pass.
   Postgres specs on `rakazo/postgres-graph`, one fresh database each: numbers in stack `SYNC-1126.md`. 102 of 102
   `post-sync-check.py` markers.
+- **Journeys (extra, not a gate):** fork 78 passed / 6 failed of 84; pure upstream 81/81; pre-sync fork `main` in the
+  same container: see stack `SYNC-1126.md`. The six are the fork's old failures (see 3.4), none new.
 - **Dropped / changed in behaviour:** the `save_shared_memory` tool is gone (upstream removed it; `remember {shared:
   true}` replaces it, minus STANDING.md). Background work now yields a bot's free computer slot(s) to a waiting
   person's run (upstream #6817, slot-aware here). Nothing of the fork was dropped.
