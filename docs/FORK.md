@@ -638,6 +638,40 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   trusted) keeps it; the env only reaches agents on "Default". Not judged: whether a plan is wise.
 - **Conflicts:** as 1.20 / 1.22.
 
+### 1.26 An MCP server the owner asked for himself is connected without a question (`MCP_OWNER_REQUEST_AUTO_APPROVE`)
+- **Why:** same owner requirement as 1.25. `add_mcp_server` posted a pending approval card even when the owner had
+  just typed "add this server" in the chat: an obvious decision asked twice.
+- **Rule (`mcp/mcp-owner-request.ts`, `ownerRequestVerdict`):** with the env on, the new server is assigned to the
+  calling agent in the same transaction (`bot_mcp_servers`, all tools) and its card is posted already `connected` (a
+  notice, not a question) when ALL hold: the run is owner-started (`ctx.source.ownerStartedRun`) with the owner
+  present (trigger `user`, `follow_up` or `call_end`); it is not a messaging-channel run; no outside content has
+  entered the run (`ctx.trust.receivedOutsideMessage()` false, the check standing_set and the other owner-only tools
+  use; a failed lookup counts as tainted); the server needs no OAuth step (`needsOAuthProbe` false, i.e. the call
+  carries a static credential); `assign_to_self` is not false. Result `{ok, connected: true, server_id, next_step}`;
+  `next_step` says it is connected and whether its tools are usable now (run has the `connectors_*` catalog tools)
+  or from the next turn. Everything else keeps the pending card: another agent's request, a new agent's first task,
+  a routine, a webhook, a chat-app message, a tainted run, a server with no static credential.
+- **Env:** `MCP_OWNER_REQUEST_AUTO_APPROVE` (api + worker; default OFF = upstream behaviour; `1` / `true` / `on`
+  turns it on), literal-name read, in the three fork compose anchors.
+- **Log:** `mcp.server.auto_approved` (`run.id`, `bot.id`, `mcp.server_id`, `mcp.reason`: `owner_request` | `reused`;
+  the 1.23 reuse path logs it too). No names, endpoints or secrets.
+- **Files (fork):** `mcp/mcp-owner-request.ts`. **Seams:** `mcp/mcp-server-tool.ts` (verdict, assignment + card status
+  inside the existing transaction, result), `mcp/mcp-server-reuse.ts` (log), `runs/tools/run-tools-integrations.ts`
+  (passes the run's facts), compose anchors. **Migration:** none.
+- **Tests:** `mcp/mcp-owner-request.test.ts` (every branch of the rule; taint looked up last; unknown = tainted),
+  `mcp/mcp-owner-request.postgres.test.ts` (owner request -> assignment + connected card + log without the secret;
+  bot_message, routine, webhook, messaging channel, tainted, no credential, no facts, env off -> pending card and no
+  assignment; `assign_to_self: false` -> neither). FAILS on the old code (`expected { ok: true, … } to match
+  { ok: true, connected: true }`).
+- **Live check:** `.env MCP_OWNER_REQUEST_AUTO_APPROVE=1` (+ the line in the stack compose file). In an agent's own
+  chat: "add the MCP server <url> with this token": the card shows connected, no Approve button, api log
+  `mcp.server.auto_approved` with `owner_request`. The same request relayed through another agent: pending card.
+- **Known limits:** a server with no static credential always keeps the card, because without probing it the code
+  cannot tell "needs OAuth" from "needs nothing"; the agent's run does not get the new tools mid-turn unless it
+  already has the catalog tools (no continuation run is queued, unlike a card click); the rule trusts the model's
+  reading of the owner's words (he asked for *a* server; the URL the agent passes is the agent's).
+- **Conflicts:** upstream edits to `addMcpServerFromTool`'s transaction or to `isOwnerStartedRun` / `RunTrust`.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

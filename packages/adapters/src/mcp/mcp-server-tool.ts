@@ -7,6 +7,8 @@ import { getLogger } from "@rakazo/logging";
 import { toStringRecord } from "../memory/memory-provider-factory.js";
 import { persistMessageInTransaction, runLeaseFor } from "../runs/assembly/run-messages.js";
 import type { ExecutorDeps } from "../runs/executor/executor-deps.js";
+import type { OwnerRequestFacts } from "./mcp-owner-request.js";
+import { logMcpAutoApproved, ownerRequestVerdict } from "./mcp-owner-request.js";
 import { removeMcpServerInTransaction } from "./mcp-server-removal.js";
 import { mcpReuseEnabled, reuseApprovedMcpServer } from "./mcp-server-reuse.js";
 import { assertNoMcpEndpointCredential, assertSafeRemoteUrl } from "./remote-mcp.js";
@@ -134,7 +136,12 @@ export async function addMcpServerFromTool(
   args: Record<string, unknown>,
   executionId: string,
   /** The run's own catalog tools, when it has them: a reused server is then usable at once. */
-  options: { catalogSearchTool?: string; catalogExecuteTool?: string } = {},
+  options: {
+    catalogSearchTool?: string;
+    catalogExecuteTool?: string;
+    /** Fork (1.26): who asked, for the owner-request rule (mcp-owner-request.ts). */
+    ownerRequest?: OwnerRequestFacts;
+  } = {},
 ) {
   // A local server runs on the deployment's own hosts, so only an admin adds one.
   if (args.transport === "stdio") {
@@ -183,6 +190,12 @@ export async function addMcpServerFromTool(
     });
   }
   const oauthLikely = needsOAuthProbe(parsed);
+  // Fork (1.26): the owner asked for this server himself in this run, and it needs no
+  // authorization step of his: assign it now and post the card as a notice, not a question.
+  const autoApprove = ownerRequestVerdict(options.ownerRequest, {
+    needsOAuth: oauthLikely,
+    assignToSelf: parsed.assignToSelf,
+  }).autoApprove;
   let serverRow: McpServer;
   let approvalEventSeq: number | undefined;
   let approvalResponseRunId: string | undefined;
@@ -214,6 +227,18 @@ export async function addMcpServerFromTool(
         },
       });
       if (!parsed.assignToSelf) return { server };
+      if (autoApprove) {
+        await tx.botMcpServer.create({
+          data: {
+            spaceId: run.spaceId,
+            userId: run.userId,
+            botId,
+            serverId: server.id,
+            allowAllTools: true,
+            allowedTools: [],
+          },
+        });
+      }
       const blocks: MessageBlock[] = [
         {
           kind: "mcp_approval",
@@ -222,7 +247,7 @@ export async function addMcpServerFromTool(
           transport: parsed.transport,
           endpoint: parsed.endpoint,
           needsOAuth: oauthLikely,
-          status: "pending",
+          status: autoApprove ? "connected" : "pending",
         },
       ];
       const committed = await persistMessageInTransaction(
@@ -258,6 +283,24 @@ export async function addMcpServerFromTool(
       .catch((error) => {
         getLogger().error("MCP approval realtime notification", error);
       });
+  }
+  if (autoApprove) {
+    logMcpAutoApproved({
+      runId: run.id,
+      botId,
+      serverId: serverRow.id,
+      reason: "owner_request",
+    });
+    const now =
+      options.catalogSearchTool && options.catalogExecuteTool
+        ? `Its tools are available now: find them with ${options.catalogSearchTool} and run them with ${options.catalogExecuteTool}.`
+        : "Its tools join your tool list from your next turn (this turn's list was fixed before it was added). If the work needs them now, say in one sentence that it is connected and carry on with the next message; do not add it again.";
+    return {
+      ok: true,
+      connected: true,
+      server_id: serverRow.id,
+      next_step: `Connected: the owner asked for this server himself, so it is assigned to you and the card in the chat is a notice, not a question. Do not ask him to approve anything. ${now}`,
+    };
   }
   return {
     ok: true,

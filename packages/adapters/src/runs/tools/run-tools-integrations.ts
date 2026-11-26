@@ -10,6 +10,7 @@ import {
   sanitizeConnectorError,
 } from "../../integrations/connector-safety.js";
 import { mcpAppViewArguments, mcpAppViewResult } from "../../mcp/mcp-app.js";
+import { ownerRequestFacts } from "../../mcp/mcp-owner-request.js";
 import { addMcpServerFromTool, removeMcpServerFromTool } from "../../mcp/mcp-server-tool.js";
 import { serviceCallFromTool, serviceSearchFromTool } from "../../payments/paid-service-tools.js";
 import { collectLogIds } from "../../providers/integration/composio/composio-connector.js";
@@ -204,7 +205,18 @@ export const integrationTools: ToolHandlers = {
     const catalog = ctx.tools?.connector?.has(execute)
       ? { catalogSearchTool: search, catalogExecuteTool: execute }
       : {};
-    return call.finish(await addMcpServerFromTool(deps, run, bot.id, args, executionId, catalog));
+    // Fork (1.26): who asked. The owner's own request needs no card to answer.
+    const ownerRequest = await ownerRequestFacts(
+      run,
+      ctx.source,
+      ctx.trust?.receivedOutsideMessage,
+    );
+    return call.finish(
+      await addMcpServerFromTool(deps, run, bot.id, args, executionId, {
+        ...catalog,
+        ...(ownerRequest ? { ownerRequest } : {}),
+      }),
+    );
   },
   async remove_mcp_server(ctx, call) {
     return call.finish(await removeMcpServerFromTool(ctx.deps, ctx.run, call.args));

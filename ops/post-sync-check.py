@@ -60,7 +60,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("exportWorkspaceSkippingLarge(", 2), ("skipLargeFiles", 3), ("keepSavedVersion(", 2),
            ("computer.checkpoint_skipped_large", 1),
            # proactive agents (1.25+): plan mode notify + deployment default
-           ("planDefaultMode(", 2), ("PLAN_DEFAULT_MODE", 1), ("PLAN_NOTICE_FIRST_NOTE", 1), ("spokenNotice(", 1)]
+           ("planDefaultMode(", 2), ("PLAN_DEFAULT_MODE", 1), ("PLAN_NOTICE_FIRST_NOTE", 1), ("spokenNotice(", 1),
+           # an MCP server the owner asked for himself is connected without a card to answer (1.26)
+           ("ownerRequestVerdict(", 2), ("ownerRequestFacts(", 2), ("MCP_OWNER_REQUEST_AUTO_APPROVE", 1),
+           ("mcp.server.auto_approved", 1)]
 results = []
 
 

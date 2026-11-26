@@ -31,6 +31,7 @@
 import type { McpServer, Prisma, PrismaClient } from "@rakazo/db";
 import { availableInSpace } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { logMcpAutoApproved } from "./mcp-owner-request.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 type Scope = { spaceId: string; userId: string };
@@ -151,6 +152,13 @@ export async function reuseApprovedMcpServer(
     "mcp.newly_assigned": outcome.assigned,
     "mcp.all_bots": outcome.server.allBots,
   });
+  if (wanted.assignToSelf)
+    logMcpAutoApproved({
+      runId: run.id,
+      botId,
+      serverId: outcome.server.id,
+      reason: "reused",
+    });
   const name = outcome.server.name;
   if (!wanted.assignToSelf)
     return {
