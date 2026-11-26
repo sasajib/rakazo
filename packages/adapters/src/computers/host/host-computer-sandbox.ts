@@ -20,18 +20,22 @@ import { boundedSandboxCommandTimeoutMs } from "@rakazo/core/node/sandbox-comman
 import { describeDesktopSandbox } from "../../providers/computer/desktop/desktop-sandbox.js";
 import { shouldSkipPortableWorkspaceFile } from "../../storage/workspace-save-policy.js";
 import { boundedComputerActions, computerObservation } from "../screens/computer-support.js";
+import { omittedLargeFile } from "../workspace-large-files.js";
 import type {
   HostComputerEnvironment,
   HostComputerFrame,
   HostComputerRequest,
+  HostExportSkippedFrame,
 } from "./host-computer-protocol.js";
 import {
   HOST_COMPUTER_MAX_BYTES,
   HOST_COMPUTER_MAX_FILE_BYTES,
   hostComputerDeadlineMs,
   hostComputerFileTooLargeLimit,
+  hostExportSkipped,
 } from "./host-computer-protocol.js";
 import type { HostDisplayObservation } from "./host-display.js";
+import { reportSkippedLargeFiles } from "./host-export-skipped.js";
 
 /** Authenticated native host transport. Commands are never retried after a lost response. */
 export class HostComputerSandbox implements SandboxProvider {
@@ -214,10 +218,21 @@ export class HostComputerSandbox implements SandboxProvider {
     computer: ComputerRef,
     context: AdapterContext,
   ): AsyncIterable<PortableFile> {
-    for await (const file of this.request<{ path: string; content: string; executable?: boolean }>(
-      { method: "exportWorkspace", botId: computer.botId },
-      context,
-    )) {
+    // Fork (1.24): files over the protocol's per-file cap are left out and counted, so the rest of
+    // the home is still saved. A host that predates the flag fails the export as before.
+    for await (const file of this.request<
+      { path: string; content: string; executable?: boolean } | HostExportSkippedFrame
+    >({ method: "exportWorkspace", botId: computer.botId, skipLargeFiles: true }, context)) {
+      const skipped = hostExportSkipped(file);
+      if (skipped) {
+        reportSkippedLargeFiles(computer, skipped);
+        // The save keeps its earlier version of each (workspace-large-files.ts).
+        for (const skippedPath of skipped.paths) {
+          if (!shouldSkipPortableWorkspaceFile(skippedPath)) yield omittedLargeFile(skippedPath);
+        }
+        continue;
+      }
+      if (!("path" in file)) continue;
       if (shouldSkipPortableWorkspaceFile(file.path)) continue;
       yield { ...file, content: new Uint8Array(Buffer.from(file.content, "base64")) };
     }

@@ -45,6 +45,7 @@ import {
   stripStrayNoResponse,
 } from "../assembly/silent-reply.js";
 import { saveLatestStepScreenshot } from "../turn/tool-step-calls.js";
+import { notifyOpenOwnerCards } from "./owner-card-notice.js";
 import { enqueueSteeringContinuation, renewRunLease } from "./run-lifecycle.js";
 import {
   completionMarksUnread,
@@ -201,6 +202,8 @@ export async function completeRun(ctx: RunContext) {
       runId: run.id,
     });
   }
+  // Fork (1.21): a delegated or background run that leaves a card waiting on the person says so.
+  await notifyOpenOwnerCards(deps, run, bot);
   await enqueueConversationRetention(ctx, answeredMessageIds);
   // Memory ledger seam (fork): queue the writer for the owner's messages; returns at once.
   learnAfterRun(ctx);

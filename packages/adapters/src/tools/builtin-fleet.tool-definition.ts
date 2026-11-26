@@ -439,7 +439,7 @@ export const fleetTools: ConnectorTool[] = [
         replaces: {
           type: "string",
           description:
-            'Correcting a request you sent this bot earlier: its request id (from message_bot or bot_queue) or "latest". The old request is cancelled, or stopped if it is already running, and this one starts at once in its place; the recipient is told it replaces the earlier one.',
+            'Correcting a request you sent this bot earlier: its request id (from message_bot or bot_queue) or "latest". The old request is cancelled, or stopped if it is already running, and this one starts at once in its place; the recipient is told it replaces the earlier one. If it already finished, this is sent as a new request.',
         },
       },
       required: ["message"],

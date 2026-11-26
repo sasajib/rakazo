@@ -5,6 +5,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -23,6 +24,7 @@ import {
 } from "../computer-workspace.js";
 import { sandboxKindCapabilities } from "../sandbox/sandbox-kind-capabilities.js";
 import { assertSandboxReadLimit } from "../sandbox/sandbox-test-support.js";
+import { isOmittedLargeFile } from "../workspace-large-files.js";
 import {
   HOST_COMPUTER_MAX_BYTES,
   HOST_COMPUTER_MAX_FILE_BYTES,
@@ -319,9 +321,42 @@ describe("native host computer transport", () => {
     await expect(
       client.readFile(computer, "large.bin", context, { maxBytes: 10 * 1024 * 1024 }),
     ).rejects.toStrictEqual(tooLarge);
-    await expect(collect(client.exportWorkspace(computer, context))).rejects.toStrictEqual(
-      tooLarge,
+    // Fork (1.24): one file over the cap no longer fails the whole export. It is left out and the
+    // files after it are still exported (the walk does not stop at it).
+    await client.writeFile(
+      computer,
+      { path: "zz-after/kept.txt", content: new Uint8Array([1]) },
+      context,
     );
+    const exported = await collect(client.exportWorkspace(computer, context));
+    expect(
+      exported
+        .filter((file) => !isOmittedLargeFile(file))
+        .map((file) => file.path)
+        .sort(),
+    ).toEqual(["nested/file.bin", "zz-after/kept.txt"]);
+    // The file left out is named to the save (so it can keep its earlier version), with no bytes.
+    expect(exported.filter(isOmittedLargeFile)).toEqual([
+      { path: "large.bin", content: new Uint8Array(0), omitted: "too_large" },
+    ]);
+    // A caller that does not ask for it (an app older than the host) gets the old refusal, and
+    // one that does gets the count and bytes of what was left out, never a path or contents.
+    const controller = new AbortController();
+    await expect(
+      collect(
+        client.stream({ method: "exportWorkspace", botId: computer.botId }, controller.signal),
+      ),
+    ).rejects.toStrictEqual(tooLarge);
+    const frames = await collect(
+      client.stream<Record<string, unknown>>(
+        { method: "exportWorkspace", botId: computer.botId, skipLargeFiles: true },
+        controller.signal,
+      ),
+    );
+    expect(frames.at(-1)).toEqual({
+      skippedLarge: { count: 1, bytes: 8 * 1024 * 1024 + 1, paths: ["large.bin"] },
+    });
+    expect(frames.filter((frame) => "path" in frame)).toHaveLength(2);
     await expect(client.readFile(computer, "../../outside", context)).rejects.toThrow();
     await expect(
       client.writeFile(computer, { path: "../outside", content }, context),
@@ -368,7 +403,9 @@ describe("native host computer transport", () => {
     }
   });
 
-  it("preserves the saved workspace when a native file grows beyond the transfer limit", async () => {
+  // Fork (1.24): upstream failed this whole save ("exceeds 8388608 bytes"), every time, for as
+  // long as the large file existed. The saved copy must still never lose the file's last version.
+  it("saves the rest and keeps the saved version when a native file grows beyond the transfer limit", async () => {
     const home = new LocalAgentHomeStore(path.join(root, "saved"));
     const filePath = path.join(
       root,
@@ -388,13 +425,32 @@ describe("native host computer transport", () => {
       { path: "a-partial.txt", content: new TextEncoder().encode("unsaved change") },
       context,
     );
+    // A second large file that was never saved, in a folder with a small one.
+    await mkdir(path.join(path.dirname(filePath), "media"), { recursive: true });
+    await writeFile(
+      path.join(path.dirname(filePath), "media", "video.bin"),
+      Buffer.alloc(9 * 1024 * 1024),
+    );
+    await client.writeFile(
+      computer,
+      { path: "media/notes.txt", content: new TextEncoder().encode("small") },
+      context,
+    );
     await expect(
       checkpointComputerWorkspace(home, client, "test-bot", computer, context),
-    ).rejects.toThrow("exceeds 8388608 bytes");
-    expect(await readFile(path.join(home.pathFor("test-bot"), "result.bin"), "utf8")).toBe(
-      "saved result",
-    );
-    expect(await readdir(home.pathFor("test-bot"))).toEqual(["result.bin"]);
+    ).resolves.toEqual(expect.any(String));
+    const saved = home.pathFor("test-bot");
+    // The grown file keeps its last saved version; everything under the cap is saved.
+    expect(await readFile(path.join(saved, "result.bin"), "utf8")).toBe("saved result");
+    expect(await readFile(path.join(saved, "a-partial.txt"), "utf8")).toBe("unsaved change");
+    expect(await readFile(path.join(saved, "media/notes.txt"), "utf8")).toBe("small");
+    expect((await readdir(saved)).sort()).toEqual(["a-partial.txt", "media", "result.bin"]);
+    // The large file that was never saved is simply not in the copy (it stays on its computer).
+    expect(await readdir(path.join(saved, "media"))).toEqual(["notes.txt"]);
+    // The next save behaves the same, and the files are untouched on the computer itself.
+    await checkpointComputerWorkspace(home, client, "test-bot", computer, context);
+    expect(await readFile(path.join(saved, "result.bin"), "utf8")).toBe("saved result");
+    expect((await stat(filePath)).size).toBe(8 * 1024 * 1024 + 1);
   });
 
   it.each(["revoke", "cancel"])(

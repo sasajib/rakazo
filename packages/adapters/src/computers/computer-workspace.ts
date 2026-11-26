@@ -28,6 +28,7 @@ import {
 import { isSandboxDamagedError } from "./sandbox/sandbox-errors.js";
 import { sandboxKindCapabilities } from "./sandbox/sandbox-kind-capabilities.js";
 import { normalizeWorkspacePath, teamBotWorkspaceDirectory } from "./screens/computer-support.js";
+import { isOmittedLargeFile, keepSavedVersion } from "./workspace-large-files.js";
 
 export {
   shouldSkipPortableWorkspaceFile,
@@ -462,6 +463,18 @@ export async function checkpointComputerWorkspace(
     };
     for await (const file of sandbox.exportWorkspace(computer, context, limits)) {
       if (shouldSkipPortableWorkspaceFile(file.path)) continue;
+      // Fork (1.24): a file the transport could not carry keeps its earlier saved version.
+      if (isOmittedLargeFile(file)) {
+        const kept =
+          home instanceof LocalAgentHomeStore
+            ? await keepSavedVersion(home.pathFor(homeKey), staging.path, file.path)
+            : undefined;
+        if (kept === undefined) continue;
+        if (++copied.files > limits.maxFiles) throw new WorkspaceTooLargeError("files");
+        await use(FILE_DISK_OVERHEAD_BYTES);
+        await count(kept);
+        continue;
+      }
       if (++copied.files > limits.maxFiles) throw new WorkspaceTooLargeError("files");
       // Even an empty file takes an inode and usually a block.
       await use(FILE_DISK_OVERHEAD_BYTES);

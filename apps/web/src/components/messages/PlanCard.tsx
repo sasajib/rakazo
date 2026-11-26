@@ -11,6 +11,8 @@ import { BuiCard } from "../ai/primitives";
  * it will use) before it hands work to another agent. Approve starts it; Change opens the steps as
  * text to edit and sends them back for a revised plan; Reject drops it. Saying "yes" or "change
  * step 2 to …" in the chat or on a call does the same. Nothing waits on the card.
+ * A plan the agent may run without asking (a trusted workflow, or Notify mode) is a notice: no
+ * buttons, "Running: …".
  */
 export function PlanCard({
   block,
@@ -64,7 +66,9 @@ export function PlanCard({
     shown.status === "approved"
       ? t`Approved ${via}.`
       : shown.status === "auto"
-        ? t`Trusted workflow: running without asking.`
+        ? shown.decidedVia === "notify"
+          ? t`For your information: started without waiting. Say what to change if you want it done differently.`
+          : t`Trusted workflow: running without asking.`
         : shown.status === "changes"
           ? t`You asked for changes; a revised plan follows.`
           : shown.status === "rejected"

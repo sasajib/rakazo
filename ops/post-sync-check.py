@@ -46,7 +46,24 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # shellDescription(); job tools filtered before withShellScreenTool; LiveKit calls skip the
            # automatic-language transcriber check on mobile
            ("Fork (1.11 background shell jobs)", 1), ("JOB_TOOL_NAME_SET", 2),
-           ('autoLanguage && transport !== "livekit"', 1)]
+           ('autoLanguage && transport !== "livekit"', 1),
+           # 2026-11-26 audit fixes (FORK.md 1.21+): one core rule for cards that wait on the person, used by
+           # the server page filter, the live-event filter, the unread default and the owner notice
+           ("isNeedsPersonBlock", 3), ("isPeerRunVisibleBlock", 2), ("notifyOpenOwnerCards(", 2),
+           # one approval covers the task (1.22): gate by involved agents, recipients recorded, finished replaces
+           ("planGateCheck(", 2), ("recordPlanRecipient(", 2), ("planInvolves(", 2),
+           ("followsFinishedPreface(", 2),
+           # approved MCP server reused instead of a duplicate + card; spawn_bot inherits (1.23)
+           ("reuseApprovedMcpServer(", 2), ("copyApprovedMcpAssignments(", 2),
+           ("MCP_REUSE_APPROVED_SERVERS", 1), ("inheritMcpServers", 2),
+           # host checkpoint skips files over the protocol cap and saves the rest (1.24)
+           ("exportWorkspaceSkippingLarge(", 2), ("skipLargeFiles", 3), ("keepSavedVersion(", 2),
+           ("computer.checkpoint_skipped_large", 1),
+           # proactive agents (1.25+): plan mode notify + deployment default
+           ("planDefaultMode(", 2), ("PLAN_DEFAULT_MODE", 1), ("PLAN_NOTICE_FIRST_NOTE", 1), ("spokenNotice(", 1),
+           # an MCP server the owner asked for himself is connected without a card to answer (1.26)
+           ("ownerRequestVerdict(", 2), ("ownerRequestFacts(", 2), ("MCP_OWNER_REQUEST_AUTO_APPROVE", 1),
+           ("mcp.server.auto_approved", 1)]
 results = []
 
 
@@ -101,6 +118,8 @@ def migrations():
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
     check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")
     check("plan confirmation tables exist with row security", psql("select count(*) from pg_class where relname in ('agent_plans','plan_settings','plan_trust') and relrowsecurity") == "3")
+    check("agent_plans.recipients column exists (plan coverage)", psql("select 1 from information_schema.columns where table_name='agent_plans' and column_name='recipients'") == "1")
+    check("plan mode notify allowed by the database", "notify" in psql("select pg_get_constraintdef(oid) from pg_constraint where conname='plan_settings_mode_check'"))
 
 
 def live_queue_test():

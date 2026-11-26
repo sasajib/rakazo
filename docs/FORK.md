@@ -373,6 +373,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   or "change step 2 to …") -> status `changes`, the prompt tells the agent to `plan_propose {revises}`; the
   revision replaces the card. The approved plan is bound to the run that carries it out (`executingRunId`), and only
   such a run may `message_bot` a request (`planGateForMessageBot`; refusal = `ok:false` + `PLAN_REQUIRED_NOTE`).
+  **Changed by 1.22:** a live approved plan also covers later runs' requests to the agents it involves.
   (2) `message_bot {replaces: <request id | id prefix | "latest">}`: in the delivery transaction the earlier
   request of the SAME sender to the same recipient is cancelled (queued) or stopped (running; the run's 1 s lease
   watch aborts it, computer work torn down after commit, like threads/stop), its auto-return is suppressed
@@ -425,6 +426,251 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   only plans that name the workflow; mobile renders no plan card (decide on the web or say it).
 - **Conflicts:** `message_bot`/`bot-messages.ts` delivery transaction, the `agentSkillsLine` join in `run-assembly-context.ts`,
   `run-tools-messaging.ts` handlers, upstream message block kinds (exhaustive switches), pinned tool cap.
+
+### 1.21 Cards that wait on the person are never hidden with their run (2026-11-26 audit, finding 1)
+- **Why:** an agent that another agent had asked for work posted an approval card and said "approve the card in this
+  chat"; the card was in the database and never reached the client. The server page filter for runs with trigger
+  `bot_message` kept an explicit list (receipts, ask, text, chart, app, file, image, page) and dropped every other
+  card (`mcp_approval`, `app_connect`, `computer`, `choice`, `tool_question`, `connect`, fork `plan`, `learned_skill`,
+  `skill_draft`, `import_setup`), while the clients' fold already wanted them inline. Upstream has the same fault.
+- **Purpose:** ONE rule in `@rakazo/core` (`messages/message-visibility.ts`): `NEEDS_PERSON_BY_KIND`, a record keyed by
+  every `MessageBlock` kind (a new kind does not compile until it is classified), with `isNeedsPersonBlock`,
+  `isOpenNeedsPersonBlock` (still pending), `isPeerRunVisibleBlock` (receipts + needs-person + reply content) and
+  `NEEDS_PERSON_BLOCK_KINDS`. Every place that hides a run the person did not start uses it: `threads/get` and
+  `threads/messages` (`withoutPeerRunMessages`), live events (`shouldForwardPeerThreadEvent`,
+  `shouldForwardBackgroundThreadEvent`), the clients' `foldPeerReplies` (web + mobile), `isBackgroundInputBlock`
+  (now the same rule), and `publishMessage` (background filter + unread default). No agent, server or card is named.
+- **Unread + notification:** `defaultMarkUnread` (`runs/assembly/run-messages.ts`): a message from a `bot_message` run
+  marks the chat unread when it carries such a card (text replies of delegated work still do not). New
+  `runs/lifecycle/owner-card-notice.ts` `notifyOpenOwnerCards`, called from `completeRun`: a `bot_message` or
+  background run that ends with a card still open sends one `help` notification ("<Agent> needs you", the card's
+  name, never its contents) to the run's owner and logs `run.owner_card_waiting` (count, kinds). Ask, takeover and
+  tool-question cards keep their own notifications (they pause the run; it is not complete while they are open).
+- **Delegated run that posts a card:** unchanged on purpose: it ends, its reply goes back to the sender, the card now
+  shows in the recipient's chat, that chat turns unread and the owner is notified.
+- **Seams:** `apps/api/src/threads/thread-message-pages.ts` (two kind lists replaced by the core rule),
+  `packages/adapters/src/runs/assembly/run-messages.ts`, `runs/lifecycle/run-complete.ts` (one call).
+- **Env / migration:** none.
+- **Tests:** `apps/api/src/threads/thread-message-pages.test.ts` ("returns a %s card a delegated run posted, and
+  forwards it live": 7 kinds, all FAIL on the old code), `core/src/messages/message-visibility.test.ts` (a sample
+  for every kind in the list, fold keeps each, settled cards no longer open), `runs/lifecycle/owner-card-notice.test.ts`.
+- **Live check:** throwaway agents A and B; A asks B (message_bot) for something that makes B call `add_mcp_server`
+  for a new endpoint: the approval card is in B's chat without a reload (`threads/get` returns the `mcp_approval`
+  message), B's chat is unread, api log has `run.owner_card_waiting`. Marker `isNeedsPersonBlock`.
+- **Not changed:** sidebar preview text (`bot-previews.ts`) still takes text from asks only: a card has no preview
+  text; the unread dot is what shows. Mobile still has no renderer for `plan` / `learned_skill` cards (1.19, 1.20).
+- **Conflicts:** upstream adding a message block kind (add it to `NEEDS_PERSON_BY_KIND`; tsc fails until then) or
+  editing the two filters in `thread-message-pages.ts` (keep the core call, drop any re-grown kind list).
+
+### 1.22 One approval covers the task: follow-ups, corrections, `replaces` of a finished request (audit finding 2)
+- **Why:** an approved plan was bound to ONE run (`executingRunId`). The owner's next message in the same chat (a
+  correction, "tell it to use the existing server") started a new run with no plan bound, `message_bot` was refused
+  with `PLAN_REQUIRED_NOTE`, and the agent had to post a new card: 5 `plan.gate_refused` in 33 h, one card each.
+  `message_bot {replaces}` also failed ("Not replaced: no open request…") once the recipient had finished.
+- **Rule now (`planGateCheck` in `plans/plans.ts`; `planGateForMessageBot` returns its refusal note):** a request
+  goes out under (1) the plan bound to this run, or an approved plan of the chat still unbound (as before, any
+  agent); or (2) a plan of this chat approved less than `PLAN_LIVE_MS` (6 h, counted from the approval) ago that
+  **involves the recipient** (`planInvolves`): a step names the agent as who does it, or a request already went to
+  that agent under the plan. (2) holds for later owner-started runs, so corrections and follow-ups need no card.
+  An agent the plan does not involve still needs a plan, with or without `replaces`. Nothing is covered while a
+  NEWER plan of the chat waits for the owner's answer (pending / changes).
+- **Always ask stays strict (decision):** its documented meaning is "every hand-off waits for a plan card". Under
+  Always ask only a correction (`replaces`) of a request to an involved agent is covered; a plain follow-up needs a
+  new plan. Ask until trusted (the default for every agent) gets the full follow-up cover. Never ask: no gate.
+- **What a plan covers is recorded:** `agent_plans.recipients` (JSON array of agent ids), written by
+  `recordPlanRecipient` after every request `message_bot` sends under a plan (`store.addRecipient`, once per agent).
+- **`replaces` of a finished request:** `findReplaceableRequest` looks at open requests, then at ended ones of the
+  same sender. Ended (or it ends between lookup and cancel, or `latest` with nothing earlier): the correction is
+  delivered as a NEW request with the preface "This corrects my earlier request <id8> (…), which you already
+  finished…", the result carries `earlierRequestFinished: true` and says so in `note`. A named id that matches
+  nothing is still an error, and another sender's request can still not be replaced.
+- **Prompt:** `planInstruction` says an approved plan covers the whole task for the agents it involves; a later run
+  gets "Plan <id> … is approved and still covers this task for: <agents>… do not propose a new plan for that"
+  (`PlanPromptState.covering`, from `withCoveringPlan`). `PLAN_REQUIRED_NOTE` reworded. `message_bot.replaces`
+  description +55 bytes (pinned-tool cap 48_230 still holds: 48_228).
+- **Seams:** `runs/tools/run-tools-messaging.ts` (gate gets the recipient; records it after the send),
+  `messaging/bot-messages.ts` (finished branch, result fields), `messaging/bot-supersede.ts`,
+  `tools/builtin-fleet.tool-definition.ts`, prompt-surface snapshots (4 tool files: only the `message_bot` schema hash and byte totals).
+- **Migration:** `20270126090000_plan_coverage` (`ALTER TABLE agent_plans ADD COLUMN IF NOT EXISTS recipients JSONB
+  NOT NULL DEFAULT '[]'`; no new table, the RLS of `agent_plans` applies; rollback = previous image, column ignored).
+- **Logs:** `plan.gate_covered` (plan, basis follow_up|correction, recipient), `plan.gate_refused` (+ latest status,
+  replaces), `bot_message.correction_after_finished`.
+- **Tests:** `plans/plans.postgres.test.ts` second case (approve -> send -> new owner run -> follow-up to the same
+  agent allowed; an agent that only received a request is covered; an uninvolved agent refused with and without
+  replaces; replaces of a finished request by `latest` and by id delivers; foreign request refused; newer pending
+  plan blocks; rejected newer plan does not; Always ask strict; cover ends after 6 h). On the old code the follow-up
+  assertion fails with the old refusal note. `plans/plans.test.ts` (`planInvolves`, prompt lines).
+- **Live check:** planner A (Ask until trusted) + workers B and C: plan naming B -> Approve -> A messages B; then
+  type a correction: A sends it to B with no new card (`plan.gate_covered` in the api log); ask A to hand the same
+  thing to C: refused, new card. After B finished: "also do X" -> delivered, result says the earlier one had finished.
+- **Known limits:** plans approved before this deploy have no recorded recipients (covered only through the agent
+  names in their steps) for their remaining 6 h; "follow-up" is not judged by content: any request to an involved
+  agent within 6 h of the approval goes out; the executing run may still message any agent (unchanged).
+- **Conflicts:** as 1.20 (`message_bot` delivery transaction, `run-tools-messaging.ts`), pinned tool byte cap.
+
+### 1.23 An approved MCP server is reused, not approved again (`MCP_REUSE_APPROVED_SERVERS`) (audit finding 3)
+- **Why:** MCP access is per agent (`bot_mcp_servers`) unless `allBots`, and `add_mcp_server` always registered a NEW
+  `mcp_servers` row plus a pending card, even for an endpoint the same owner had already approved in the Space. A
+  second agent needed a second approval, and agents registered duplicates under new names. A `spawn_bot` child got
+  none of its creator's servers.
+- **Purpose:** (1) `add_mcp_server` (`addMcpServerFromTool`): when the endpoint, normalised (`normalizeMcpEndpoint`:
+  scheme, host, port, path, sorted query; no fragment, no trailing slash), matches a server that is available in this
+  Space, owned by the run's owner, enabled, not stdio, and approved (`allBots`, or at least one `bot_mcp_servers` row
+  of this owner in this Space), the EXISTING server is assigned to the calling agent (`allowAllTools`, as an approval
+  card grants; an existing assignment is left as it is) and the result is `{ok: true, reused: true, server_id, name,
+  next_step}`. No server row, no card, no credential stored (a secret or headers passed with the call are ignored).
+  (2) `spawn_bot` from a run the owner started (`ctx.source.ownerStartedRun`): the new agent gets the creator's
+  assignments to enabled remote servers with the same tool limits (`copyApprovedMcpAssignments`), before its first
+  run is queued. The UI's Duplicate already copies assignments; this follows it.
+- **Security boundary (documented in `mcp/mcp-server-reuse.ts`):** same owner AND same Space only
+  (`availableInSpace` of the run, the rule every MCP read uses); only enabled, already-approved servers (one still
+  waiting on its card is not reused); never stdio (reuse and inheritance both skip local servers); never another
+  owner's server; the approved server's own credential is used and cannot be read or replaced by the call.
+  **What changes for the owner:** approval is per endpoint for his agents in a Space, no longer per agent.
+- **Same run or next run:** the connector reads assignments from the database on every catalog call, so a run that
+  already has the MCP catalog tools (`connectors_search_tools` / `connectors_execute_tool`, i.e. the agent had more
+  than 20 MCP tools at assembly) can use the reused server at once, and `next_step` names those tools. A run without
+  them has a fixed tool list: `next_step` says the tools arrive on the agent's next turn. Not changed: no
+  continuation run is queued (the approval path's `queueMcpConnectedRun` lives in the API).
+- **Env:** `MCP_REUSE_APPROVED_SERVERS` (api + worker; default ON, unset = on; `0` / `false` / `off` restores
+  upstream behaviour for both parts). Listed in the three fork compose anchors.
+- **Files (fork):** `packages/adapters/src/mcp/mcp-server-reuse.ts`. **Seams:** `mcp/mcp-server-tool.ts` (one call
+  before the credential is stored, one optional parameter), `runs/tools/run-tools-integrations.ts` (passes the
+  catalog tool names when the run has them), `bots/child-bots.ts` (`inheritMcpServers`), `runs/tools/run-tools-fleet.ts`,
+  `infra/compose/docker-compose{,.prod,.images}.yml`.
+- **Migration:** none. **Logs:** `mcp.server_reused` (server, newly_assigned, all_bots), `mcp.assignments_inherited`.
+- **Tests:** `mcp/mcp-server-reuse.postgres.test.ts` (reuse with a differently spelled endpoint and a call-supplied
+  secret: one server, no card, nothing stored; narrowed assignment untouched; other Space, other owner, pending
+  server, disabled server: not reused; `allBots` needs no row; env `0` -> new server + card; spawn inherits remote
+  assignments with limits, not stdio, not from a run the owner did not start, not with the env off). FAILS on the
+  old code at the first reuse assertion. `mcp/mcp-server-reuse.test.ts` (env switch, endpoint normalising).
+- **Live check:** agent A has an approved remote server. Tell agent B to add the same URL: result `reused: true`, no
+  card, `select count(*) from mcp_servers` unchanged, a `bot_mcp_servers` row for B, api log `mcp.server_reused`;
+  B uses a tool of it on its next turn. `spawn_bot` from A in an owner chat: child has the row(s).
+- **Known limits:** a second ACCOUNT on the same endpoint cannot be added by an agent while reuse is on (the call's
+  secret is ignored): add it in Settings, or set the env to `0`. An endpoint whose first server still waits on its
+  card is not reused (a second request for it still registers its own). A child created by a delegated
+  (`bot_message`) run inherits nothing.
+- **Conflicts:** upstream edits to `addMcpServerFromTool` (keep the reuse call before `secretStore.put`) and to
+  `spawnBot`'s input; `availableInSpace` semantics.
+
+### 1.24 One large file no longer blocks every checkpoint of a host computer (audit finding 6)
+- **Why:** `computer.checkpoint_deferred` 55 times in 33 h with `SandboxFileTooLargeError` ("computer file exceeds
+  8388608 bytes"). A home on a host ("desktop") computer is saved through the host protocol; its export
+  (`walkDesktopWorkspace` with the runner's `maxFileBytes`) threw at the first file over 8 MiB, so the WHOLE home was
+  not saved, at every checkpoint, for as long as one such file (a video, a yt-dlp json) existed.
+- **The cap stays:** 8 MiB (`HOST_COMPUTER_MAX_FILE_BYTES`) is a transport limit of the host protocol only (one file
+  = one base64 JSON frame, frames capped at 12 MiB). Docker and other providers stream large files and are untouched.
+- **Purpose:** the export skips files over the cap and saves the rest. Request field `exportWorkspace
+  {skipLargeFiles: true}` (`host-computer-protocol.ts`); the runner (`host-computer-runner.ts`) walks with
+  `DesktopSandboxProvider.exportWorkspaceSkippingLarge` (size from `stat`, the file is never read) and ends with one
+  frame `{skippedLarge: {count, bytes, paths}}`; the client (`host-computer-sandbox.ts`) logs
+  `computer.checkpoint_skipped_large` (`files.skipped`, `files.skipped_bytes`, `file.max_bytes`, computer id;
+  no paths, no contents; once per computer per state, repeated after 6 h or when the numbers change:
+  `host-export-skipped.ts`) and hands each path to the save as an `omitted` entry. The save
+  (`checkpointComputerWorkspace`) keeps its EARLIER saved version of such a file when it has one
+  (`workspace-large-files.ts` `keepSavedVersion`): a file that grew past the cap is not dropped from the saved copy,
+  which is what upstream's failing save protected.
+- **Version skew is safe both ways:** an app with the flag talking to a host bundle without it: the old host drops
+  the unknown field and fails the export as before (still deferred, nothing lost). A host with the fix talking to an
+  older app: no flag, old behaviour. **Deploy: rebuild the stack's `host-computer` bundle and restart
+  `bee-rakazo-host-computer` after the app image, or the skip does not take effect.**
+- **What is not saved:** the skipped files themselves. They stay on the host computer's disk only; the saved copy
+  (used if the computer is ever replaced or moved to another kind) holds their last version from before they
+  grew, or nothing if they were always large. The warn log is the signal.
+- **Files (fork):** `computers/workspace-large-files.ts`, `computers/host/host-export-skipped.ts`. **Seams:**
+  `providers/computer/desktop/desktop-sandbox.ts` (`walkDesktopWorkspace` optional `skipped`, one new method),
+  `computers/host/{host-computer-protocol,host-computer-runner,host-computer-sandbox}.ts`,
+  `computers/computer-workspace.ts` (one branch in the export loop).
+- **Env / migration:** none.
+- **Tests:** `computers/host/host-computer.test.ts` (real server + client: export goes past the large file;
+  without the flag the old refusal; trailer frame has count, bytes, paths; **upstream's test "preserves the saved
+  workspace when a native file grows…" is rewritten**: the save now succeeds, the grown file keeps its saved version,
+  small files beside a never-saved large one are saved; both FAIL on the old code), `host-export-skipped.test.ts`
+  (one warn, no repeat, protocol parse), `workspace-large-files.test.ts` (kept version, link and outside path refused).
+- **Live check:** after the host bundle is rebuilt: `docker logs rakazo-worker-1 rakazo-api-1 | grep -c
+  computer.checkpoint_deferred` stops growing for `SandboxFileTooLargeError`; one `computer.checkpoint_skipped_large`
+  line with the count; `computers."homeRevision"` (or the saved home's mtime) advances after a run that wrote files.
+- **Conflicts:** upstream edits to `walkDesktopWorkspace`, the `exportWorkspace` case of the runner, the request union
+  in `host-computer-protocol.ts`, and the rewritten upstream test.
+
+### 1.25 Plan mode Notify and the deployment default `PLAN_DEFAULT_MODE`
+- **Why (owner, 2026-11-26):** "the system should be proactive; now everything asks for permission despite the obvious
+  decision… I don't want to babysit agents, they are my co-workers." Plan cards were one of the two prompts left.
+- **Purpose:** a fourth plan mode, `notify` (beside always / until_trusted / never). The agent still calls
+  `plan_propose` and the card is still posted (and its short version spoken on a call), but as a NOTICE: status `auto`,
+  `decidedVia: "notify"`, bound to the proposing run (`executingRunId`), which carries on in the same turn and may
+  `message_bot` at once. No question, no waiting. A revision (`revises`) is a notice too. The owner corrects
+  afterwards: `message_bot {replaces}` and the 1.22 cover apply unchanged. **Trust counters do not move** (a notice is
+  not his approval; `plan_trust` is only written by `applyPlanDecision`). Before the plan is posted a hand-off is
+  still held, with `PLAN_NOTICE_FIRST_NOTE` ("post the plan first… then send this again in the same turn").
+- **Deployment default:** env `PLAN_DEFAULT_MODE` (always | until_trusted | notify | never; unset, empty or unknown =
+  until_trusted as before), read by literal name in `planDefaultMode`; `effectivePlanMode(mode)` = the agent's own
+  setting, else that default. A per-agent setting always wins. Listed in the three fork compose anchors.
+- **Prompt:** `planInstruction` in notify mode: "Plans (notify, no approval needed): … approved at once: carry it out
+  in the same turn… Do NOT ask whether to go ahead, do not wait… do not end your turn for approval". The
+  `plan_propose` tool description no longer says "end your turn with one short question" (it now says the result
+  tells which); the tool result in notify mode says "Carry it out NOW in this same turn". Progress label "Writing
+  the plan". `spokenNotice` turns the spoken line into a statement ending "I am starting now." (a closing question
+  the agent wrote is dropped).
+- **Web:** agent settings -> Plans: option "Notify (show the plan, do not wait)" + one-line explanation; "Default
+  (…)" names the deployment default (`PlanSettings.defaultMode`). `PlanCard`: a notify plan renders like the
+  trusted-workflow notice ("Running: …", no buttons, "For your information: started without waiting…").
+- **Voice agent:** no change needed, example and deployed copy alike. `pending_plan_of` keys on `status == "pending"`
+  only, so a notify plan (`auto`) is never treated as waiting; `text_from_blocks` already speaks `auto` plans from
+  their `spoken` line, which is now a statement.
+- **Seams:** `contracts/src/plans/plans.ts` (enum, `decidedVia`, `defaultMode`), `adapters/src/plans/plans.ts`,
+  `apps/api/src/bots/plans.ts`, `tools/builtin-conversation.tool-definition.ts`, `runtime/pi/tools/pi-runtime-tools.ts`
+  (label), web `bot-plans-section.tsx`, `PlanCard.tsx`, compose anchors, 4 prompt-surface tool snapshots (-21 bytes).
+- **Migration:** `20270127090000_plan_notify` (widens two CHECK constraints: `plan_settings.mode` and
+  `agent_plans.decidedVia` accept `notify`; no table or column change). Rollback = previous image: it reads an
+  unknown mode as "no setting".
+- **Logs:** `plan.proposed` carries `plan.via` (trust | notify), `plan.gate_refused` carries `plan.mode`.
+- **Tests:** `plans/plans.postgres.test.ts` third case (env default -> propose -> `auto`/`notify`, bound, card a
+  notice with a statement, gate allows at once, trust unchanged, correction covered, revision a notice, per-agent
+  override both ways, unset = until_trusted). FAILS on the old code (`expected 'until_trusted' to be 'notify'`).
+  `plans/plans.test.ts` (env parsing, override, prompt wording, spoken notice).
+- **Live check:** set a throwaway agent to Notify (`plans/setMode {botId, mode: "notify"}`), ask it to hand work to
+  another agent: card shows "Running: …" with no buttons, the other agent's run starts in the same turn
+  (`plan.proposed` with `plan.via: notify`), nothing waits. To make it the default for every agent without a setting:
+  `.env PLAN_DEFAULT_MODE=notify` (+ the line in the stack's compose file).
+- **Known limits:** mobile draws no plan card (unchanged). An agent whose mode was set explicitly (e.g. Ask until
+  trusted) keeps it; the env only reaches agents on "Default". Not judged: whether a plan is wise.
+- **Conflicts:** as 1.20 / 1.22.
+
+### 1.26 An MCP server the owner asked for himself is connected without a question (`MCP_OWNER_REQUEST_AUTO_APPROVE`)
+- **Why:** same owner requirement as 1.25. `add_mcp_server` posted a pending approval card even when the owner had
+  just typed "add this server" in the chat: an obvious decision asked twice.
+- **Rule (`mcp/mcp-owner-request.ts`, `ownerRequestVerdict`):** with the env on, the new server is assigned to the
+  calling agent in the same transaction (`bot_mcp_servers`, all tools) and its card is posted already `connected` (a
+  notice, not a question) when ALL hold: the run is owner-started (`ctx.source.ownerStartedRun`) with the owner
+  present (trigger `user`, `follow_up` or `call_end`); it is not a messaging-channel run; no outside content has
+  entered the run (`ctx.trust.receivedOutsideMessage()` false, the check standing_set and the other owner-only tools
+  use; a failed lookup counts as tainted); the server needs no OAuth step (`needsOAuthProbe` false, i.e. the call
+  carries a static credential); `assign_to_self` is not false. Result `{ok, connected: true, server_id, next_step}`;
+  `next_step` says it is connected and whether its tools are usable now (run has the `connectors_*` catalog tools)
+  or from the next turn. Everything else keeps the pending card: another agent's request, a new agent's first task,
+  a routine, a webhook, a chat-app message, a tainted run, a server with no static credential.
+- **Env:** `MCP_OWNER_REQUEST_AUTO_APPROVE` (api + worker; default OFF = upstream behaviour; `1` / `true` / `on`
+  turns it on), literal-name read, in the three fork compose anchors.
+- **Log:** `mcp.server.auto_approved` (`run.id`, `bot.id`, `mcp.server_id`, `mcp.reason`: `owner_request` | `reused`;
+  the 1.23 reuse path logs it too). No names, endpoints or secrets.
+- **Files (fork):** `mcp/mcp-owner-request.ts`. **Seams:** `mcp/mcp-server-tool.ts` (verdict, assignment + card status
+  inside the existing transaction, result), `mcp/mcp-server-reuse.ts` (log), `runs/tools/run-tools-integrations.ts`
+  (passes the run's facts), compose anchors. **Migration:** none.
+- **Tests:** `mcp/mcp-owner-request.test.ts` (every branch of the rule; taint looked up last; unknown = tainted),
+  `mcp/mcp-owner-request.postgres.test.ts` (owner request -> assignment + connected card + log without the secret;
+  bot_message, routine, webhook, messaging channel, tainted, no credential, no facts, env off -> pending card and no
+  assignment; `assign_to_self: false` -> neither). FAILS on the old code (`expected { ok: true, … } to match
+  { ok: true, connected: true }`).
+- **Live check:** `.env MCP_OWNER_REQUEST_AUTO_APPROVE=1` (+ the line in the stack compose file). In an agent's own
+  chat: "add the MCP server <url> with this token": the card shows connected, no Approve button, api log
+  `mcp.server.auto_approved` with `owner_request`. The same request relayed through another agent: pending card.
+- **Known limits:** a server with no static credential always keeps the card, because without probing it the code
+  cannot tell "needs OAuth" from "needs nothing"; the agent's run does not get the new tools mid-turn unless it
+  already has the catalog tools (no continuation run is queued, unlike a card click); the rule trusts the model's
+  reading of the owner's words (he asked for *a* server; the URL the agent passes is the agent's).
+- **Conflicts:** upstream edits to `addMcpServerFromTool`'s transaction or to `isOwnerStartedRun` / `RunTrust`.
 
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.

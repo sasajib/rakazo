@@ -42,12 +42,19 @@ export const hostComputerRequest = z.discriminatedUnion("method", [
       "provision",
       "prepare",
       "isRunning",
-      "exportWorkspace",
       "snapshot",
       "stop",
       "destroy",
       "environment",
     ]),
+  }),
+  // Fork (1.24): `skipLargeFiles` leaves files over HOST_COMPUTER_MAX_FILE_BYTES out of the export
+  // and ends it with one `skippedLarge` frame, instead of failing the whole export. A host that
+  // predates the field drops it (unknown keys are stripped) and answers as before.
+  z.object({
+    ...base,
+    method: z.literal("exportWorkspace"),
+    skipLargeFiles: z.boolean().optional(),
   }),
   z.object({ ...base, method: z.literal("execute"), command }),
   z.object({ ...base, method: z.literal("workspaceDirectories"), directories }),
@@ -107,4 +114,22 @@ export function hostComputerDeadlineMs(request: HostComputerRequest) {
   return request.method.startsWith("screen") || request.method.startsWith("display")
     ? 2 * 60_000
     : 10 * 60_000;
+}
+
+/** Fork (1.24): the last frame of an export that left files over the per-file cap out. */
+export type HostExportSkippedFrame = {
+  skippedLarge: { count: number; bytes: number; paths: string[] };
+};
+
+export function hostExportSkipped(
+  frame: unknown,
+): HostExportSkippedFrame["skippedLarge"] | undefined {
+  if (!frame || typeof frame !== "object" || !("skippedLarge" in frame)) return undefined;
+  const value = frame.skippedLarge as { count?: unknown; bytes?: unknown; paths?: unknown } | null;
+  if (!value || typeof value.count !== "number" || typeof value.bytes !== "number")
+    return undefined;
+  const paths = Array.isArray(value.paths)
+    ? value.paths.filter((item): item is string => typeof item === "string")
+    : [];
+  return { count: value.count, bytes: value.bytes, paths };
 }

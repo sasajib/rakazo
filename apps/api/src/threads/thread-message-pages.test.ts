@@ -259,6 +259,93 @@ describe("thread message pages", () => {
     ]);
   });
 
+  // Fork (1.21): the card existed in the database and the client never got it.
+  it.each([
+    [
+      "mcp_approval",
+      {
+        kind: "mcp_approval",
+        name: "Any server",
+        serverId: "server-1",
+        transport: "streamable_http",
+        endpoint: "https://mcp.example.test/mcp",
+        needsOAuth: false,
+        status: "pending",
+      },
+    ],
+    [
+      "app_connect",
+      {
+        kind: "app_connect",
+        provider: "any",
+        name: "Any app",
+        description: "",
+        logo: null,
+        status: "pending",
+      },
+    ],
+    ["computer", { kind: "computer", state: "Needs you", text: "Sign in" }],
+    ["choice", { kind: "choice", question: "Which?", options: [] }],
+    [
+      "plan",
+      {
+        kind: "plan",
+        planId: "plan-1",
+        title: "Any plan",
+        steps: [{ text: "Do it" }],
+        revision: 1,
+        status: "pending",
+      },
+    ],
+    [
+      "learned_skill",
+      {
+        kind: "learned_skill",
+        proposalId: "proposal-1",
+        action: "create",
+        name: "any-skill",
+        description: "",
+        summary: "",
+        mode: "ask",
+        status: "pending",
+      },
+    ],
+    ["connect", { kind: "connect", name: "Any", initial: "A", color: "#000", status: "pending" }],
+  ])("returns a %s card a delegated run posted, and forwards it live", async (_kind, card) => {
+    const rows = [
+      { id: "peer-activity", blocks: [{ kind: "steps", steps: [{ label: "Tool", count: 1 }] }] },
+      { id: "peer-card", blocks: [card] },
+    ].map((row, index) => ({
+      ...row,
+      threadId: "thread-1",
+      seq: 2 - index,
+      role: "bot",
+      botId: "bot-1",
+      replyToMessageId: null,
+      runId: "run-peer",
+      createdAt: new Date("2026-11-26T00:00:00.000Z"),
+    }));
+    const prisma = {
+      message: { findMany: vi.fn(async () => rows) },
+      run: { findMany: vi.fn(async () => [{ id: "run-peer", trigger: "bot_message" }]) },
+    } as unknown as PrismaClient;
+
+    const page = await loadMessagePage(prisma, "thread-1", undefined, 2);
+
+    expect(page.messages.map((message) => message.id)).toEqual(["peer-card"]);
+    expect(page.messages[0]?.blocks[0]?.kind).toBe(card.kind);
+    for (const type of ["thread.message.created", "thread.message.updated"]) {
+      expect(shouldForwardPeerThreadEvent({ type, payload: { blocks: [card] } })).toBe(true);
+      expect(shouldForwardBackgroundThreadEvent({ type, payload: { blocks: [card] } })).toBe(true);
+    }
+    expect(
+      shouldForwardPeerThreadEvent({
+        type: "thread.message.created",
+        payload: { blocks: rows[0]?.blocks },
+      }),
+    ).toBe(false);
+  });
+
   it("caches background-run classification for live events", async () => {
     const findUnique = vi.fn(async () => ({ trigger: "tickets" }));
     const prisma = { run: { findUnique } } as unknown as PrismaClient;

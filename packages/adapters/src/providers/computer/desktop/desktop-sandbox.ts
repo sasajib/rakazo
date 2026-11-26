@@ -427,6 +427,19 @@ export class DesktopSandboxProvider implements SandboxProvider {
     yield* walkDesktopWorkspace(box.home, "", this.opts.maxFileBytes);
   }
 
+  /**
+   * Fork (1.24): the export a transport with a per-file cap asks for. A file over `maxFileBytes`
+   * is left out and counted in `skipped` (size from stat; it is never read) instead of failing
+   * the whole export, so one large file no longer keeps every other file from being saved.
+   */
+  async *exportWorkspaceSkippingLarge(
+    computer: ComputerRef,
+    skipped: SkippedLargeFiles,
+  ): AsyncIterable<PortableFile> {
+    const box = this.requiredBox(computer);
+    yield* walkDesktopWorkspace(box.home, "", this.opts.maxFileBytes, skipped);
+  }
+
   async importWorkspace(
     computer: ComputerRef,
     files: AsyncIterable<PortableFile>,
@@ -859,10 +872,21 @@ function hasErrorCode(error: unknown, code: string): error is NodeJS.ErrnoExcept
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/** Files an export left out because they are over the transport's per-file cap. */
+export interface SkippedLargeFiles {
+  count: number;
+  bytes: number;
+  /** Their workspace paths, up to SKIPPED_LARGE_PATHS_MAX (the count and bytes cover all). */
+  paths: string[];
+}
+export const SKIPPED_LARGE_PATHS_MAX = 2000;
+
 async function* walkDesktopWorkspace(
   home: string,
   directory: string,
   maxFileBytes?: number,
+  /** Given: a file over the cap is counted here and left out. Absent: it fails the export. */
+  skipped?: SkippedLargeFiles,
 ): AsyncIterable<PortableFile> {
   const target = await localWorkspaceTarget(home, directory, true);
   for (const entry of await readdir(target, { withFileTypes: true })) {
@@ -873,10 +897,15 @@ async function* walkDesktopWorkspace(
     if (shouldSkipPortableWorkspaceFile(relative, info.isDirectory())) continue;
     if (info.isDirectory()) {
       if (!(await isTaggedCacheDirectory(child)))
-        yield* walkDesktopWorkspace(home, relative, maxFileBytes);
+        yield* walkDesktopWorkspace(home, relative, maxFileBytes, skipped);
     } else if (info.isFile()) {
-      if (maxFileBytes !== undefined && info.size > maxFileBytes)
-        throw new SandboxFileTooLargeError(maxFileBytes);
+      if (maxFileBytes !== undefined && info.size > maxFileBytes) {
+        if (!skipped) throw new SandboxFileTooLargeError(maxFileBytes);
+        skipped.count += 1;
+        skipped.bytes += info.size;
+        if (skipped.paths.length < SKIPPED_LARGE_PATHS_MAX) skipped.paths.push(relative);
+        continue;
+      }
       yield {
         path: relative,
         content: new Uint8Array(await readFile(child)),

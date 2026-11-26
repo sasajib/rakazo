@@ -12,6 +12,7 @@ import { PanelSection, SettingsCard } from "./bot-settings-sections";
  * Fork: the agent's Plans setting (plan confirmation). Always ask: every hand-off to another
  * agent waits for your approval of a plan card. Ask until trusted (default): the same, but a known
  * workflow (skill) you approved N times runs without asking, still posting the plan as a notice.
+ * Notify: it posts every plan as a notice and carries on at once; you correct it afterwards.
  * Never ask: it hands work on without a plan. Trusted workflows are listed with their count.
  */
 export function BotPlansSection({ botId, ids }: { botId: string; ids: string }) {
@@ -25,6 +26,14 @@ export function BotPlansSection({ botId, ids }: { botId: string; ids: string }) 
   const [error, setError] = useState<string | null>(null);
   const settings = query.data;
   if (!settings) return null;
+  const modeLabel = (mode: PlanMode) =>
+    mode === "always"
+      ? t`Always ask`
+      : mode === "notify"
+        ? t`Notify (show the plan, do not wait)`
+        : mode === "never"
+          ? t`Never ask`
+          : t`Ask until trusted`;
 
   async function save(input: { mode: PlanMode | null; threshold?: number }) {
     setSaving(true);
@@ -68,10 +77,14 @@ export function BotPlansSection({ botId, ids }: { botId: string; ids: string }) 
               value={settings.mode ?? ""}
               onValueChange={(value) => void save({ mode: value ? (value as PlanMode) : null })}
               options={[
-                { value: "", label: t`Default (Ask until trusted)` },
-                { value: "always", label: t`Always ask` },
-                { value: "until_trusted", label: t`Ask until trusted` },
-                { value: "never", label: t`Never ask` },
+                {
+                  value: "",
+                  label: t`Default (${modeLabel(settings.defaultMode ?? "until_trusted")})`,
+                },
+                { value: "always", label: modeLabel("always") },
+                { value: "until_trusted", label: modeLabel("until_trusted") },
+                { value: "notify", label: modeLabel("notify") },
+                { value: "never", label: modeLabel("never") },
               ]}
             />
           </label>
@@ -129,6 +142,11 @@ export function BotPlansSection({ botId, ids }: { botId: string; ids: string }) 
           <p className="pb-3 text-caption text-muted-foreground">
             {settings.effective === "never" ? (
               <Trans>It hands work to other agents without showing you a plan first.</Trans>
+            ) : settings.effective === "notify" ? (
+              <Trans>
+                It shows you its plan as a notice and starts at once, without waiting for you. Tell
+                it what to change afterwards if you want something different.
+              </Trans>
             ) : settings.effective === "always" ? (
               <Trans>
                 Before it hands work to another agent it shows you a plan card; approve it on the

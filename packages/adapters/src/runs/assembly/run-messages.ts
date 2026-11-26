@@ -2,6 +2,7 @@ import type { HistoryToolStep, MessageBlock } from "@rakazo/contracts";
 import {
   callIdFromClientNonce,
   isBackgroundRunTrigger,
+  isNeedsPersonBlock,
   redactSecrets,
   splitToolHistory,
 } from "@rakazo/core";
@@ -93,12 +94,24 @@ export function redactBlocks(blocks: MessageBlock[], secrets: string[]): Message
   });
 }
 
+/**
+ * What a run's message does to the chat's unread state when the caller does not say: `false`
+ * keeps the chat read, `undefined` leaves it to the message's role. Agent-to-agent work is not
+ * news to the person. Fork (1.21): a card that waits on them is, whoever started the run.
+ */
+export function defaultMarkUnread(
+  trigger: string,
+  blocks: readonly MessageBlock[],
+): false | undefined {
+  return trigger === "bot_message" && !blocks.some(isNeedsPersonBlock) ? false : undefined;
+}
+
 export async function publishMessage(
   deps: ExecutorDeps,
   run: { id: string; spaceId: string; threadId: string; botId: string; trigger: string },
   role: "user" | "bot" | "system",
   blocks: MessageBlock[],
-  markUnread: boolean | undefined = run.trigger === "bot_message" ? false : undefined,
+  markUnread: boolean | undefined = defaultMarkUnread(run.trigger, blocks),
   clientNonce?: string,
   stoppedHelper?: Extract<MessageBlock, { kind: "subagent" }> & {
     status: "failed";
@@ -106,7 +119,7 @@ export async function publishMessage(
   },
 ) {
   if (isBackgroundRunTrigger(run.trigger)) {
-    blocks = blocks.filter((block) => block.kind === "ask" || block.kind === "computer");
+    blocks = blocks.filter(isNeedsPersonBlock);
     if (blocks.length === 0 && !stoppedHelper) return null;
   }
   const lease = runLeaseFor(deps, run.id);

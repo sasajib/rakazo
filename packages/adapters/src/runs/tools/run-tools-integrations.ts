@@ -2,6 +2,7 @@ import type { ConnectorApp } from "@rakazo/adapter-kit";
 import { isBackgroundRunTrigger, redactSecrets } from "@rakazo/core";
 import { normalizedHttpUrl } from "@rakazo/core/egress";
 import { getLogger } from "@rakazo/logging";
+import { catalogExecuteToolName, catalogToolPrefix } from "../../approvals/approval-effect.js";
 import { executeCloudAgentTool } from "../../cloud-agents/cloud-agent-service.js";
 import { connectApp } from "../../integrations/connect-app.js";
 import {
@@ -9,6 +10,7 @@ import {
   sanitizeConnectorError,
 } from "../../integrations/connector-safety.js";
 import { mcpAppViewArguments, mcpAppViewResult } from "../../mcp/mcp-app.js";
+import { ownerRequestFacts } from "../../mcp/mcp-owner-request.js";
 import { addMcpServerFromTool, removeMcpServerFromTool } from "../../mcp/mcp-server-tool.js";
 import { serviceCallFromTool, serviceSearchFromTool } from "../../payments/paid-service-tools.js";
 import { collectLogIds } from "../../providers/integration/composio/composio-connector.js";
@@ -197,7 +199,24 @@ export const integrationTools: ToolHandlers = {
   async add_mcp_server(ctx, call) {
     const { deps, run, bot } = ctx;
     const { args, executionId } = call;
-    return call.finish(await addMcpServerFromTool(deps, run, bot.id, args, executionId));
+    // Fork (1.23): with the MCP catalog tools in this run, a reused server is usable at once.
+    const execute = catalogExecuteToolName("mcp");
+    const search = `${catalogToolPrefix("mcp")}_search_tools`;
+    const catalog = ctx.tools?.connector?.has(execute)
+      ? { catalogSearchTool: search, catalogExecuteTool: execute }
+      : {};
+    // Fork (1.26): who asked. The owner's own request needs no card to answer.
+    const ownerRequest = await ownerRequestFacts(
+      run,
+      ctx.source,
+      ctx.trust?.receivedOutsideMessage,
+    );
+    return call.finish(
+      await addMcpServerFromTool(deps, run, bot.id, args, executionId, {
+        ...catalog,
+        ...(ownerRequest ? { ownerRequest } : {}),
+      }),
+    );
   },
   async remove_mcp_server(ctx, call) {
     return call.finish(await removeMcpServerFromTool(ctx.deps, ctx.run, call.args));
