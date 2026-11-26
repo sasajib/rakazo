@@ -9,6 +9,8 @@ export const FLEET_TOOL_NAMES = [
   "set_child_instructions",
   "set_child_bot_model",
   "create_child_routine",
+  // Fork: attach and remove another agent's skills (adapters bot-skill-assign.ts).
+  "bot_skills",
 ] as const;
 
 export const FLEET_WRITE_TOOL_NAMES = FLEET_TOOL_NAMES.filter(

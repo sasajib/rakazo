@@ -117,6 +117,7 @@ function builtinParameters(tool: ConnectorTool) {
       instructions: Type.Optional(Type.String()),
       prompt: Type.Optional(Type.String()),
       computer_mode: Type.Optional(stringEnum(["team", "dedicated"], {})),
+      skills: Type.Optional(Type.Array(Type.String())),
     });
   }
   if (tool.name === "update_bot") {
@@ -461,6 +462,19 @@ export function prepareFleetArguments(
   // A routine's timing fields are numbers and one-of branches; only the blanks are dropped.
   if (toolName === "create_child_routine") {
     return Object.fromEntries(Object.entries(raw).filter(([, value]) => argumentGiven(value)));
+  }
+  // Fork: bot_skills has its own argument names.
+  if (toolName === "bot_skills") {
+    return {
+      ...Object.fromEntries(
+        ["action", "bot_id", "bot_name"]
+          .filter((key) => argumentGiven(raw[key]))
+          .map((key) => [key, String(raw[key])]),
+      ),
+      ...(Array.isArray(raw.skills) ? { skills: raw.skills.map(String) } : {}),
+      ...(typeof raw.all === "boolean" ? { all: raw.all } : {}),
+      ...(typeof raw.exact_builtins === "boolean" ? { exact_builtins: raw.exact_builtins } : {}),
+    };
   }
   const out: Record<string, unknown> = {};
   for (const key of FLEET_STRING_ARGS) {

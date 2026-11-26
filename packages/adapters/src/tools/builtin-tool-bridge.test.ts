@@ -32,6 +32,7 @@ describe("built-in tool bridge", () => {
       "ask_user",
       "attach_file",
       "bot_queue",
+      "bot_skills",
       "connect_app",
       "find_tool",
       "job_list",
@@ -83,8 +84,9 @@ describe("built-in tool bridge", () => {
     // Fork: standing_set, bot_queue, call_user, schedule_cancel, schedule_update and the five
     // scratchpad tools are listed on every run, message_bot takes lane, force and replaces,
     // shell carries the background-job wording and flag, the four job tools and plan_propose are
-    // pinned (measured 48_173).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(48_230);
+    // pinned (measured 48_173). Fork: bot_skills is listed for a bot with bot management on, and
+    // update_bot points at it (measured 49_047).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(49_100);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

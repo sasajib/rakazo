@@ -127,6 +127,12 @@ describe("toolRequiresApproval", () => {
     expect(toolRequiresApproval("organize_bot", true)).toBe(false);
   });
 
+  it("never asks before a managing bot changes another bot's skills (fork)", () => {
+    expect(toolRequiresApproval("bot_skills", false)).toBe(false);
+    expect(toolRequiresApproval("bot_skills", true)).toBe(false);
+    expect(toolRequiresExplicitApproval("bot_skills")).toBe(false);
+  });
+
   it("gates connector executes except obvious reads", () => {
     expect(toolRequiresApproval("gmail_send_email", true)).toBe(true);
     expect(toolRequiresApproval("crm_create_note", true)).toBe(true);

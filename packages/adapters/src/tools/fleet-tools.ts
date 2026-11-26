@@ -65,11 +65,16 @@ import {
 /** The fleet writes resolved up front so an approval card can show what will run. */
 export type FleetApprovalToolName = Exclude<
   (typeof FLEET_WRITE_TOOL_NAMES)[number],
-  "organize_bot"
+  // Fork: bot_skills, like organize_bot, is a fleet write with no card of its own.
+  "organize_bot" | "bot_skills"
 >;
 
 export function isFleetApprovalTool(name: string): name is FleetApprovalToolName {
-  return name !== "organize_bot" && (FLEET_WRITE_TOOL_NAMES as readonly string[]).includes(name);
+  return (
+    name !== "organize_bot" &&
+    name !== "bot_skills" &&
+    (FLEET_WRITE_TOOL_NAMES as readonly string[]).includes(name)
+  );
 }
 
 /** All scope comes from the run; no tool argument may name a space or user. */

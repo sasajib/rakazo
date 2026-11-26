@@ -28,6 +28,11 @@ import {
   parseBotSettingsPatch,
 } from "../../bots/update-bot-patch.js";
 import {
+  botSkillsFromTool,
+  resolveNewBotSkills,
+  writeBotSkillSelection,
+} from "../../tools/bot-skill-assign.js";
+import {
   createChildRoutine,
   createFleetGroup,
   listFleet,
@@ -201,6 +206,17 @@ export const fleetTools: ToolHandlers = {
       }
       computerMode = value;
     }
+    // Fork: skills named for the new bot are resolved before it exists (a wrong name creates
+    // nothing) and stored in its creation transaction, so its first run already has them.
+    const skillsGiven = Array.isArray(args.skills) && args.skills.length > 0;
+    const skills = skillsGiven
+      ? await resolveNewBotSkills(
+          deps.prisma,
+          { spaceId: bot.spaceId, userId: run.userId },
+          args.skills,
+        )
+      : undefined;
+    if (skills && !skills.ok) return call.finish({ error: skills.error });
     const spawned = await spawnBot(deps, {
       spawnedBy: {
         id: bot.id,
@@ -215,8 +231,32 @@ export const fleetTools: ToolHandlers = {
       instructions: args.instructions ? String(args.instructions) : undefined,
       prompt: args.prompt ? String(args.prompt) : undefined,
       computerMode,
+      ...(skills?.ok
+        ? {
+            seed: (tx, botId) =>
+              writeBotSkillSelection(tx, {
+                botId,
+                spaceId: bot.spaceId,
+                userId: run.userId,
+                storedIds: skills.storedIds,
+                excludedBuiltins: [],
+              }),
+          }
+        : {}),
     });
     if ("error" in spawned) return call.finish(spawned);
+    if (skills?.ok && !("duplicate" in spawned)) {
+      getLogger().info("bot_skills.changed", {
+        actorBotId: bot.id,
+        targetBotId: spawned.botId,
+        spaceId: run.spaceId,
+        runId: run.id,
+        action: "spawn",
+        all: false,
+        added: skills.storedIds.length,
+        removed: 0,
+      });
+    }
     if (!(await call.persistEffectResult(spawned))) return uncertainEffectResult(name);
     try {
       await publishMessage(deps, run, "bot", [
@@ -260,6 +300,10 @@ export const fleetTools: ToolHandlers = {
     const { deps } = ctx;
     const { args } = call;
     return call.finish(await updateFleetGroup(deps, ctx.fleetRun, args));
+  },
+  // Fork: the same write as the settings screen's Skills section.
+  async bot_skills(ctx, call) {
+    return call.finish(await botSkillsFromTool(ctx.deps, ctx.fleetRun, call.args));
   },
   async set_child_instructions(ctx, call) {
     const { deps } = ctx;

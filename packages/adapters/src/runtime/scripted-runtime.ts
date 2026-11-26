@@ -327,6 +327,17 @@ export function inferScript(
       },
     ];
   }
+  // Fork: a bot reading one of its skills by name.
+  const skillRead = /\bread the skill named\s+([^\n<&]+)/i.exec(prompt);
+  if (skillRead) {
+    return [
+      {
+        assistant: "reading that skill.",
+        toolCalls: [{ name: "skill_read", args: { name: clean(skillRead[1]!) } }],
+        complete: true,
+      },
+    ];
+  }
   const childEdit = childEditCalls(prompt);
   if (childEdit) {
     return [{ assistant: "updating your bots.", toolCalls: childEdit, complete: true }];
@@ -635,6 +646,13 @@ code-b
     lower.includes("create a child bot")
   ) {
     const name = namedBot(prompt) ?? "Helper";
+    // Fork: "... with the skills named a, b" passes spawn_bot's skills, and the new bot's first
+    // run reads the first one, so a journey sees whether it was open to that run.
+    const spawnSkills = /with the skills? named\s+([^\n<&]+)/i
+      .exec(prompt)?.[1]
+      ?.replace(/[.!?]+$/, "")
+      .split(/\s*,\s*/)
+      .filter(Boolean);
     return [
       {
         assistant: "creating a bot for that.",
@@ -645,7 +663,10 @@ code-b
               name,
               title: `${name} specialist`,
               instructions: `You are ${name}.`,
-              prompt: "Start on the assigned work.",
+              prompt: spawnSkills?.length
+                ? `read the skill named ${spawnSkills[0]}`
+                : "Start on the assigned work.",
+              ...(spawnSkills?.length ? { skills: spawnSkills } : {}),
             },
           },
         ],
@@ -968,6 +989,27 @@ function fleetCall(prompt: string): { name: string; args: Record<string, unknown
         inChat: false,
       },
     };
+  }
+  // Fork: bot_skills journeys.
+  const skillChange =
+    /\b(attach|detach) the skills? named\s+([^\n<&]+?)\s+(?:to|from) the bot named\s+([^\n<&]+)/i.exec(
+      prompt,
+    );
+  if (skillChange) {
+    return {
+      name: "bot_skills",
+      args: {
+        action: skillChange[1]!.toLowerCase() === "attach" ? "add" : "remove",
+        bot_name: clean(skillChange[3]!),
+        skills: clean(skillChange[2]!)
+          .split(/\s*,\s*/)
+          .filter(Boolean),
+      },
+    };
+  }
+  const skillList = /\blist the skills of the bot named\s+([^\n<&]+)/i.exec(prompt);
+  if (skillList) {
+    return { name: "bot_skills", args: { action: "list", bot_name: clean(skillList[1]!) } };
   }
   const pinned = /\b(un)?pin the (bot|group) named\s+([^\n<&]+)/i.exec(prompt);
   if (pinned) {

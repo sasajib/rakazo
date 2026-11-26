@@ -225,6 +225,33 @@ describe("schedule tools on another bot's routines", () => {
     },
   );
 
+  // Fork: bot_skills follows the bot management rule of every fleet write.
+  it("bot_skills needs bot management, runs with no card for the owner, and waits when unattended", async () => {
+    const args = { action: "add", bot_name: "Child", skills: ["Skill X"] };
+    const off = managedRoutineCall({ fleetManagement: false })("bot_skills", args);
+    await expect(off.prepared).resolves.toEqual({ error: "This tool is disabled for this bot." });
+    const fromOthers = managedRoutineCall({ ownerStartedRun: false })("bot_skills", args);
+    await expect(fromOthers.prepared).resolves.toEqual({
+      error: "Bot management tools need a run you started.",
+    });
+    const owner = managedRoutineCall({})("bot_skills", args);
+    await expect(owner.prepared).resolves.toBeUndefined();
+    expect(owner.request.heldForApproval).toBeUndefined();
+    expect(owner.request.fleetSummary).toBeUndefined();
+    expect(owner.request.args).toEqual(args);
+    for (const trigger of ["routine", "webhook", "bot_message"]) {
+      const unattended = managedRoutineCall({ ownerStartedRun: false, trigger })(
+        "bot_skills",
+        args,
+      );
+      await expect(unattended.prepared).resolves.toBeUndefined();
+      expect(unattended.request).toMatchObject({ heldForApproval: true, ignoresAllowRules: true });
+    }
+    const outside = managedRoutineCall({ outsideMessage: true })("bot_skills", args);
+    await expect(outside.prepared).resolves.toBeUndefined();
+    expect(outside.request).toMatchObject({ heldForApproval: true, ignoresAllowRules: true });
+  });
+
   it("acts on the named bot's id, and treats passing its own id as its own routines", async () => {
     const byName = managedRoutineCall({})("schedule_cancel", { bot_name: "Child", name: "r" });
     await expect(byName.prepared).resolves.toBeUndefined();

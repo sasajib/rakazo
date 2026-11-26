@@ -1,5 +1,5 @@
 # Tool surface: owner-chat
-68 tools, 84212 bytes of definitions
+69 tools, 85347 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -20,6 +20,10 @@ schema e33890e83dfe (134 bytes)
 ## bot_queue
 Look at a bot's work queue: what it is doing now and what waits (age, lane, who asked, first words). Check it before assigning work so you do not send a duplicate, and to see why a report has not arrived. Defaults to your own queue.
 schema 1b4667ec0868 (195 bytes)
+
+## bot_skills
+See or change the skills of a bot in this space, by bot_id or exact bot_name (yourself too), instead of asking the owner to attach them. list: its skills and the space's. add, remove: the named ones. set: replace its stored skills, or all: true for every skill. Applies from its next run.
+schema 59e866480922 (508 bytes)
 
 ## complete_reminder
 Complete one reminder in exactly one list on the owner's phone. Use list_reminders to resolve both ids.
@@ -238,8 +242,8 @@ Update a user-created skill by name or id. Builtin and plugin skills are read-on
 schema bb0a5a0b6e5b (292 bytes)
 
 ## spawn_bot
-Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. To give the new bot more than instructions (skills, routines, memories, apps to connect) or a task the user wants started, put it in prompt; the bot sets itself up from it. Otherwise creating the bot is the whole action.
-schema debc4756622b (776 bytes)
+Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. Pass skills to give it existing skills of this space from its first run; do not ask the owner to attach them. To give the new bot more than that (routines, memories, apps to connect) or a task the user wants started, put it in prompt; the bot sets itself up from it. Otherwise creating the bot is the whole action.
+schema f6dfda7b6ba6 (943 bytes)
 
 ## standing_set
 Record or change one of the user's standing orders, shared by every bot. kind `rule` = how to behave; `decision` = something the user settled (a figure, recipient, text, plan). Use ONLY when the user says it in a direct chat or call. The key names the topic (`salary`, `r3-calls`); setting an existing key REPLACES its line, so a change never leaves the old version behind. Empty text removes the entry; omit text to change only tier or links. One short entry, the user's exact values. After saving, relay any review points to the user. With review:true it only checks the list.
@@ -251,7 +255,7 @@ schema 8243f0af367f (33 bytes)
 
 ## update_bot
 Read or change your own settings. Call with no fields to read them and the models and thinking levels you can pick. Long instructions come in pages; follow instructionsNextOffset before replacing them. If a read comes back with contextTruncated, it was shortened: say so, do not rewrite. Pass fields to change them, only when the user asks; setting your name, description and first instructions when you have none is fine. Never claim a change without calling this.
-schema 6e2406965579 (2233 bytes)
+schema b52104c5dfbb (2257 bytes)
 
 ## update_group
 Rename a group or add and remove its members. Works on any group of this user, not only ones you created. Identify it by group_id or group_name (exact). A group keeps 2 to 10 members.

@@ -30,6 +30,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ('"BotSkillSelection",', 1),
            # new agents start with built-in skills only (RAKAZO_NEW_BOT_SKILLS=builtins)
            ("newBotSkillsBuiltinsOnly(", 2),
+           # agents assign skills to other agents: bot_skills tool (contracts name, definition, pin, approval
+           # lists, pi arguments, handler), the shared write behind agentSkills/setForBot, spawn_bot's skills seam
+           ("botSkillsFromTool(", 2), ("resolveNewBotSkills(", 2), ("writeBotSkillSelection(", 2),
+           ("setBotSkills(", 2), ('"bot_skills"', 10), ("seed: input.seed", 1),
            # skill curator (auto-learned skills, chat teaching): run-finished hook, prompt seam, RPC,
            # card block, web card + Learning section + lesson bar, desktop-host teaching gate
            ("curateAfterRun(ctx)", 1), ("skillLearningPromptState(", 2), ("skillLearningInstruction(", 2),

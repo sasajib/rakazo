@@ -46,6 +46,8 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
   "schedule_cancel",
   "list_fleet",
   "organize_bot",
+  // Fork: the owner's delegation, as organize_bot; an unattended run still waits (run-tool-request).
+  "bot_skills",
   // The wallet owner approves every purchase in the wallet itself; a card here would ask twice.
   "request_purchase",
 ]);
@@ -314,6 +316,8 @@ const OWN_STATE_RESULT_TOOLS = new Set([
   "feedback",
   "generate_secret",
   "list_fleet",
+  // Fork: skill names and one-line descriptions of the bot's own Space, as skill_read.
+  "bot_skills",
   "list_secrets",
   "message_user",
   "read_history",
