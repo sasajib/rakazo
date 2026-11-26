@@ -70,6 +70,8 @@ function fakeMcpBrowser(
     slug?: string;
     refuseFill?: () => boolean;
     dropFill?: () => boolean;
+    /** The source label its tools carry; upstream labels an MCP server by its display name. */
+    label?: string;
     /** The name this server gives its run-a-script tool; null = it has none. */
     scriptTool?: string | null;
   } = {},
@@ -83,7 +85,12 @@ function fakeMcpBrowser(
       name: `mcp__${slug}__${name}`,
       description: name,
       inputSchema: { type: "object", properties, required, additionalProperties: false },
-      route: { connectorId: "mcp", resourceId: "srv-1", toolName: name, catalogGroup: slug },
+      route: {
+        connectorId: "mcp",
+        resourceId: "srv-1",
+        toolName: name,
+        catalogGroup: options.label ?? slug,
+      },
     }) satisfies ConnectorTool;
   const tools: ConnectorTool[] = [
     tool(
@@ -557,6 +564,41 @@ describe("vault_fill only types through a server the deployment named", () => {
     expect(error).toContain("The evaluate_in_page tool of");
     expect(error).not.toContain("tried:");
     expect(older.fillsSent()).toEqual([]);
+  });
+
+  it("knows the server by its slug when its source is labelled by display name", async () => {
+    // Upstream labels an MCP source by the server's name ("Browser MCP"), not its slug; the
+    // deployment names the slug, which the tools' ids carry (mcp__<slug>__<tool>).
+    const config = vaultFillConfig({ VAULT_FILL_MCP_BROWSERS: SERVER });
+    const named = fakeMcpBrowser({}, { label: "Browser MCP" });
+    const other = fakeMcpBrowser({}, { slug: "notes-mcp", label: "Notes" }).tools;
+    expect(vaultFillBrowserInRun(named.tools, config)).toBe(true);
+    expect(vaultFillBrowserInRun(other, config)).toBe(false);
+    // Folded into the catalog, with too many names for its text to list them: the catalog
+    // still says which servers it holds.
+    const many = Array.from({ length: 400 }, (_, index) => ({
+      ...other[0]!,
+      name: `mcp__notes-mcp__tool_${index}`,
+      route: { ...other[0]!.route!, toolName: `tool_${index}` },
+    }));
+    const folded = lazyCatalogTools(
+      "connectors",
+      "mcp",
+      "MCP",
+      catalogEntries([...named.tools, ...many]),
+    );
+    expect(folded[0]!.description).not.toContain(SERVER);
+    expect(vaultFillBrowserInRun(folded, config)).toBe(true);
+    expect(
+      vaultFillBrowserInRun(
+        lazyCatalogTools("connectors", "mcp", "MCP", catalogEntries(many)),
+        config,
+      ),
+    ).toBe(false);
+    // And the fill itself reaches it.
+    const { fill, both, fillsSent } = await setup({ browser: { label: "Browser MCP" } });
+    expect((await fill(both)).result.ok).toBe(true);
+    expect(fillsSent()).toHaveLength(2);
   });
 
   it("is offered only to a run that reaches such a server", () => {

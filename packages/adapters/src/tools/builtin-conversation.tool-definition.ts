@@ -36,8 +36,11 @@ export const RememberInputSchema = z.object({
   shared: z
     .boolean()
     .optional()
+    // Fork: upstream offers shared memory for "rules, decisions and facts". Here a rule or a
+    // decision that binds every bot is a standing order (standing_set: replaced by key, changed
+    // only on the user's own word), so shared memory is named for facts only.
     .describe(
-      "Edit the Space's shared memory, read by every bot here: rules, decisions and facts about the user or team that all bots should follow. Your own role and how you work stay in yours.",
+      "Edit the Space's shared memory, read by every bot here: facts about the user or team that all bots should know. A standing rule or a settled decision goes to standing_set, not here. Your own role and how you work stay in yours.",
     ),
 });
 

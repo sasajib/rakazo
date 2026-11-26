@@ -8,6 +8,7 @@ import type {
 import { getLogger } from "@rakazo/logging";
 import { z } from "zod";
 import { sanitizeConnectorError } from "../../integrations/connector-safety.js";
+import { connectorToolServerKey } from "../../tools/catalog-sources.js";
 import { parseConnectorToolArgs } from "../../tools/lazy-tool-catalog.js";
 import { CATALOG_EXECUTE, CATALOG_SEARCH } from "../../tools/lazy-tool-catalog.tool-definition.js";
 
@@ -196,13 +197,30 @@ export function vaultFillBrowserInRun(
   return discovered.some((tool) => {
     const route = tool.route;
     if (!route || (route.connectorId !== "mcp" && route.connectorId !== "installed")) return false;
-    if (route.resourceId) {
-      return config.servers.some((server) => sameServer(server, route.catalogGroup ?? ""));
-    }
+    if (route.resourceId) return config.servers.some((server) => toolOfServer(tool, server));
     if (route.toolName !== CATALOG_SEARCH) return false;
+    // The folded catalog says which servers it holds; its text is the fallback (a connector
+    // that folds its list without saying so still names its sources there).
+    const sources = route.catalogSources ?? [];
     const listed = tool.description.toLowerCase();
-    return config.servers.some((server) => listed.includes(server.toLowerCase()));
+    return config.servers.some(
+      (server) =>
+        sources.some((source) => sameServer(source, server)) ||
+        listed.includes(server.toLowerCase()),
+    );
   });
+}
+
+/**
+ * Whether a tool is the configured server's. The server is named as its tools' ids name it
+ * (`mcp__<slug>__<tool>`), or by its source label. Upstream labels an MCP source by the server's
+ * display name, so the label alone no longer says which slug a tool belongs to.
+ */
+function toolOfServer(tool: Pick<ConnectorTool, "name" | "route">, server: string): boolean {
+  return (
+    sameServer(tool.route?.catalogGroup ?? "", server) ||
+    sameServer(connectorToolServerKey(tool) ?? "", server)
+  );
 }
 
 const PROBE_END = "|END";
@@ -414,7 +432,7 @@ async function callStep(
           route?.connectorId === connectorId &&
           route.resourceId &&
           route.toolName === name &&
-          sameServer(route.catalogGroup ?? "", server)
+          toolOfServer(resolved!.tool, server)
         ) {
           call = resolved!.call;
           target.found.set(name, resolved!.tool);

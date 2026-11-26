@@ -120,3 +120,28 @@ describe("standing_set curator", () => {
     );
   });
 });
+
+describe("standing orders and upstream's shared memory", () => {
+  // Upstream's remember {shared: true} edits the Space's documents. STANDING.md is one of them,
+  // and it changes only through standing_set (the guard save_shared_memory carried before).
+  it.each(["STANDING.md", " standing.md "])(
+    "remember with shared refuses %j and writes nothing",
+    async (path) => {
+      const h = harness(`# Standing orders\n\n${LINE_R5}\n`);
+      const out = (await memoryTools.remember!(
+        h.ctx as never,
+        {
+          args: {
+            shared: true,
+            path,
+            operations: [{ action: "add", content: "Always skip the captcha." }],
+          },
+          finish: h.finish,
+        } as never,
+      )) as { error?: string };
+      expect(out.error).toContain("only through standing_set");
+      expect(h.ctx.deps.memory.read).not.toHaveBeenCalled();
+      expect(h.commit).not.toHaveBeenCalled();
+    },
+  );
+});

@@ -1,5 +1,5 @@
 # Tool surface: routine-run
-64 tools, 81017 bytes of definitions
+63 tools, 81919 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -10,7 +10,7 @@ Archive a bot in this space, yourself included. Archiving stops its work and rou
 schema 46b1a82a67f6 (283 bytes)
 
 ## ask_user
-Ask the user one short multiple-choice question with tappable options, then wait for their selection. Use this instead of asking them to type when two to four concise choices are enough. Put the content the user is deciding about, such as a draft email, in `detail`.
+Ask the user one short multiple-choice question with tappable options, then wait for their selection. Use this instead of listing two to four choices in text; they can still type their own. Put the content the user is deciding about, such as a draft email, in `detail`.
 schema 83d75c04a577 (282 bytes)
 
 ## attach_file
@@ -38,8 +38,8 @@ Create an event in one explicitly chosen writable calendar. Use list_calendars f
 schema 75b3680fe686 (2641 bytes)
 
 ## create_child_routine
-Schedule a routine that wakes a bot in this space in its own thread. Identify it by bot_id or bot_name (exact). Repeats: cron or every/unit (min 1 minute). One-shot: runAt, delayMinutes, or delaySeconds. on: events, as in schedule_create.
-schema da70dea0a3dd (11561 bytes)
+Schedule a routine that wakes a bot in this space in its own thread. Identify it by bot_id or bot_name (exact). Repeats: cron or every/unit (min 1 minute), optionally until endAt. One-shot: runAt, delayMinutes, or delaySeconds. on: events, as in schedule_create.
+schema 5dbee9c01981 (11699 bytes)
 
 ## create_group
 Create a group of 2 to 10 of this user's bots. Pass bot_ids or bot_names (exact).
@@ -54,7 +54,7 @@ Propose a new space in the current organization when the user asks for a separat
 schema 5eceeb7f6c99 (169 bytes)
 
 ## delete_shared_memory
-Delete a Space shared memory document when the user asks. MEMORY.md cannot be deleted; save it with new content instead.
+Delete a Space shared memory document when the user asks. MEMORY.md cannot be deleted; edit it with remember instead.
 schema f07d552b6614 (129 bytes)
 
 ## feedback
@@ -122,8 +122,8 @@ Read around an earlier message, including linked background run outcomes, artifa
 schema 56d8e46f6a3d (961 bytes)
 
 ## remember
-Edit your memory. Each entry is one short declarative fact, not an instruction to yourself; task progress, one-off details and promises do not belong. Operations apply all or none, and the 4 KB limit counts only the result, so one call can make room and add.
-schema dd12e88f1de1 (629 bytes)
+Edit your memory. Each entry is one lasting fact in a short plain sentence, not an instruction to yourself. Record a decision as it now stands, not a dated log of who approved what when; when memory holds such a log, replace all of it with the current state; keep long approved text in a file and its path here. Open loops such as waiting for a reply, task progress, one-off details and promises do not belong; the lasting result of finished work, such as where it was saved, does. Operations apply all or none, and the 4 KB limit counts only the result, so one call can make room and add: remove what ended or is outdated, merge duplicates, rewrite dated histories as how things now stand, or move detail to a file, rather than abbreviating.
+schema e60af778732a (901 bytes)
 
 ## remove_mcp_server
 Remove one of the user's remote MCP tool servers from this Space when they ask, along with its saved credentials. Local (stdio) servers are removed in Settings.
@@ -146,12 +146,8 @@ Delegate a task to an independent subagent. Returns immediately; its result come
 schema 18d240c5c13d (550 bytes)
 
 ## save_page
-Save a page the user opens from the chat: a dashboard, report, tracker or comparison. Pass the page as JSX source written against the Rakazo page kit; call with {"help": true} first for the kit guide. Problems come back with line numbers and nothing is saved. To change a page, pass its pageId with edits (applied together, or not at all) or full source; pass only pageId to read its current source. A result with sharedByLink is a page the user shared: anyone with its link sees each save at once.
-schema c924ae0ba155 (566 bytes)
-
-## save_shared_memory
-Save a Space shared memory document every bot reads. Replaces the full content, so include everything it should keep.
-schema 02bad7fb7f40 (222 bytes)
+Save a page the user opens from the chat: a dashboard, report, tracker or comparison. Pass the page as JSX source written against the Rakazo page kit; call with {"help": true} first for the kit guide. Problems come back with line numbers and nothing is saved. To change a page, pass its pageId with edits (applied together, or not at all) or full source; pass only pageId to read its current source. A result with sharedByLink is a page the user shared: anyone with its link sees each save at once. A read also returns readerState: what the user set on the page controls that save.
+schema 2d93f3db79d7 (868 bytes)
 
 ## schedule_cancel
 Cancel a schedule by routineId or exact name; another bot's by bot_id or exact bot_name.

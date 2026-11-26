@@ -91,8 +91,9 @@ describe("built-in tool bridge", () => {
     // update_bot points at it (measured 49_047). Fork 1126 merge: message_bot's replaces wording
     // (+55) and plan_propose's notify wording (-21) land beside bot_skills (measured 49_081).
     // vault_fill is pinned too but only offered with a configured MCP browser, so it is not in
-    // this owner chat (its own test caps it at 1_400 bytes).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(49_140);
+    // this owner chat (its own test caps it at 1_400 bytes). Upstream sync 1126b: remember's longer
+    // description and shared flag, ask_user and schedule wording (measured 49_820).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(49_880);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

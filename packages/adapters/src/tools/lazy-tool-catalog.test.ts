@@ -822,7 +822,8 @@ describe("catalog wrapper tool definitions", () => {
           },
         },
         readOnly: true,
-        route: route("__catalog_search"),
+        // Fork: the search tool also says which servers the catalog holds (catalog-sources.ts).
+        route: { ...route("__catalog_search"), catalogSources: ["gmail", "hubspot"] },
       },
       {
         name: "installed_load_tool",

@@ -374,6 +374,11 @@ export interface ConnectorRoute {
   connectionId?: string;
   /** Source label for lazy catalog name indexes. Never exposed as a model schema field. */
   catalogGroup?: string;
+  /**
+   * Fork: on a folded catalog's search tool, the names of the servers behind the catalog (the
+   * id part of their tools and their source labels). Never exposed to the model.
+   */
+  catalogSources?: readonly string[];
   /** The `ui://` resource that shows this tool's result; see ConnectorApp. */
   appResourceUri?: string;
 }

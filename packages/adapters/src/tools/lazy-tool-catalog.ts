@@ -6,6 +6,7 @@ import type {
 } from "@rakazo/adapter-kit";
 import { z } from "zod";
 import { catalogIdForRoute } from "../approvals/approval-effect.js";
+import { catalogSourceKeys } from "./catalog-sources.js";
 import type { CatalogNameGroup } from "./lazy-tool-catalog.tool-definition.js";
 import {
   CATALOG_EXECUTE,
@@ -86,7 +87,15 @@ export function lazyCatalogTools(
   label: string,
   entries: CatalogEntry[] = [],
 ): ConnectorTool[] {
-  return lazyCatalogToolDefinitions(prefix, connectorId, label, groupedNames(entries));
+  const tools = lazyCatalogToolDefinitions(prefix, connectorId, label, groupedNames(entries));
+  // Fork: the search tool says which servers the catalog holds (vault_fill's offer reads it).
+  const catalogSources = catalogSourceKeys(entries.map((entry) => entry.tool));
+  if (catalogSources.length === 0) return tools;
+  return tools.map((tool) =>
+    tool.route?.toolName === CATALOG_SEARCH
+      ? { ...tool, route: { ...tool.route, catalogSources } }
+      : tool,
+  );
 }
 
 export function isLazyCatalogControlRoute(route: ConnectorRoute | undefined): boolean {

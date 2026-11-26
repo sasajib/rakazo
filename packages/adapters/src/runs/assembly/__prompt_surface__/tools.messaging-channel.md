@@ -1,5 +1,5 @@
 # Tool surface: messaging-channel
-50 tools, 58866 bytes of definitions
+50 tools, 59416 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -10,7 +10,7 @@ Archive a bot in this space, yourself included. Archiving stops its work and rou
 schema 46b1a82a67f6 (283 bytes)
 
 ## ask_user
-Ask the user one short multiple-choice question with tappable options, then wait for their selection. Use this instead of asking them to type when two to four concise choices are enough. Put the content the user is deciding about, such as a draft email, in `detail`.
+Ask the user one short multiple-choice question with tappable options, then wait for their selection. Use this instead of listing two to four choices in text; they can still type their own. Put the content the user is deciding about, such as a draft email, in `detail`.
 schema 83d75c04a577 (282 bytes)
 
 ## attach_file
@@ -38,8 +38,8 @@ Create an event in one explicitly chosen writable calendar. Use list_calendars f
 schema 75b3680fe686 (2641 bytes)
 
 ## create_child_routine
-Schedule a routine that wakes a bot in this space in its own thread. Identify it by bot_id or bot_name (exact). Repeats: cron or every/unit (min 1 minute). One-shot: runAt, delayMinutes, or delaySeconds. on: events, as in schedule_create.
-schema da70dea0a3dd (11561 bytes)
+Schedule a routine that wakes a bot in this space in its own thread. Identify it by bot_id or bot_name (exact). Repeats: cron or every/unit (min 1 minute), optionally until endAt. One-shot: runAt, delayMinutes, or delaySeconds. on: events, as in schedule_create.
+schema 5dbee9c01981 (11699 bytes)
 
 ## create_group
 Create a group of 2 to 10 of this user's bots. Pass bot_ids or bot_names (exact).
@@ -150,8 +150,8 @@ Delegate a task to an independent subagent. Returns immediately; its result come
 schema 18d240c5c13d (550 bytes)
 
 ## save_page
-Save a page the user opens from the chat: a dashboard, report, tracker or comparison. Pass the page as JSX source written against the Rakazo page kit; call with {"help": true} first for the kit guide. Problems come back with line numbers and nothing is saved. To change a page, pass its pageId with edits (applied together, or not at all) or full source; pass only pageId to read its current source. A result with sharedByLink is a page the user shared: anyone with its link sees each save at once.
-schema c924ae0ba155 (566 bytes)
+Save a page the user opens from the chat: a dashboard, report, tracker or comparison. Pass the page as JSX source written against the Rakazo page kit; call with {"help": true} first for the kit guide. Problems come back with line numbers and nothing is saved. To change a page, pass its pageId with edits (applied together, or not at all) or full source; pass only pageId to read its current source. A result with sharedByLink is a page the user shared: anyone with its link sees each save at once. A read also returns readerState: what the user set on the page controls that save.
+schema 2d93f3db79d7 (868 bytes)
 
 ## search_history
 Search literal keywords in earlier messages in this chat and their file names; every word of a query must match the same message. Returns at most five matches, newest first, grouped by chat; matchedQueryIndexes are zero-based indexes into queries. Then read_history around the best hits using their threadId. When nextSearch is present, call search_history with those arguments to continue. Coverage applies only to the requested literal query and range; an empty narrower query does not exhaust an unfinished broader query. Use read_history to check surrounding messages and corrections. Read a listed attachment at its path and name it in your answer.
