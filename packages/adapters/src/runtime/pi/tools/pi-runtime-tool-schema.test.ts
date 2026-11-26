@@ -823,6 +823,28 @@ describe("bot management tool parameters", () => {
     ).toEqual(args);
   });
 
+  it("bot_skills keeps its action, target, skills and flags (fork)", () => {
+    const args = {
+      bot_name: "Scout",
+      action: "set",
+      skills: ["venue-notes", "builtin:Deep research"],
+      all: false,
+      exact_builtins: true,
+    };
+    expect(prepareFleetArguments("bot_skills", { ...args, bot_id: null, extra: "x" })).toEqual(
+      args,
+    );
+    expect(Object.keys(wireFor("bot_skills").properties as object).sort()).toEqual([
+      "action",
+      "all",
+      "bot_id",
+      "bot_name",
+      "exact_builtins",
+      "skills",
+    ]);
+    expect(Object.keys(wireFor("spawn_bot").properties as object)).toContain("skills");
+  });
+
   it("keeps the instruction text exactly as sent", () => {
     const args = { bot_id: "b1", instructions: "  Keep\n spacing ", expected_version: "v1" };
     expect(prepareFleetArguments("set_child_instructions", args)).toEqual(args);

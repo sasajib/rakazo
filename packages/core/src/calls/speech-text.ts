@@ -309,6 +309,7 @@ export function narrateTool(toolName: string): string | null {
     [/^create_group$/, "creating a group"],
     [/^update_group$/, "updating a group"],
     [/^organize_bot$/, "organizing the sidebar"],
+    [/^bot_skills$/, "updating a bot's skills"],
     [/^set_child_instructions$/, "rewriting a bot's instructions"],
     [/^set_child_bot_model$/, "setting a bot's model"],
     [/^create_child_routine$/, "scheduling a routine"],

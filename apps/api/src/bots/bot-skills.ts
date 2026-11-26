@@ -5,9 +5,10 @@
 import { ORPCError } from "@orpc/server";
 import {
   botMaySeeSkill,
-  isBuiltinSkillId,
   listAgentSkillRecords,
-  loadBotSkillSelection,
+  readBotSkills,
+  setBotSkills,
+  UnknownBotSkillsError,
 } from "@rakazo/adapters";
 import type { Actor, BotSkills, SkillAgents } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
@@ -28,73 +29,25 @@ export function createBotSkillsService(prisma: PrismaClient) {
     return listAgentSkillRecords(prisma, { spaceId: actor.spaceId, userId: actor.userId });
   }
 
-  async function read(actor: Actor, botId: string): Promise<BotSkills> {
-    const [selection, catalog] = await Promise.all([
-      loadBotSkillSelection(prisma, botId),
-      spaceCatalog(actor),
-    ]);
-    if (!selection) return { botId, all: true, skillIds: [] };
-    return {
-      botId,
-      all: false,
-      skillIds: catalog.filter((skill) => botMaySeeSkill(selection, skill)).map((s) => s.id),
-    };
-  }
-
   return {
     async forBot(actor: Actor, input: { botId: string }): Promise<BotSkills> {
       await ownedBot(actor, input.botId);
-      return read(actor, input.botId);
+      return readBotSkills(prisma, actor, input.botId);
     },
 
+    // The write itself is shared with the bot_skills tool (adapters bot-skill-assign.ts).
     async setForBot(
       actor: Actor,
       input: { botId: string; all: boolean; skillIds?: string[] },
     ): Promise<BotSkills> {
       await ownedBot(actor, input.botId);
-      if (input.all) {
-        // Deleting the selection removes its chosen skills (bot_skills cascades).
-        await prisma.botSkillSelection.deleteMany({ where: { botId: input.botId } });
-        return read(actor, input.botId);
+      try {
+        return await setBotSkills(prisma, actor, input);
+      } catch (error) {
+        if (error instanceof UnknownBotSkillsError)
+          throw new ORPCError("BAD_REQUEST", { message: error.message });
+        throw error;
       }
-      const catalog = await spaceCatalog(actor);
-      const byId = new Map(catalog.map((skill) => [skill.id, skill]));
-      const wanted = [...new Set(input.skillIds ?? [])];
-      const unknown = wanted.filter((id) => !byId.has(id));
-      if (unknown.length > 0) {
-        throw new ORPCError("BAD_REQUEST", {
-          message: "Some of those skills are not available in this agent's space.",
-        });
-      }
-      const chosen = new Set(wanted);
-      const storedIds = wanted.filter((id) => !isBuiltinSkillId(id));
-      const excludedBuiltins = catalog
-        .filter((skill) => isBuiltinSkillId(skill.id) && !chosen.has(skill.id))
-        .map((skill) => skill.name);
-      await prisma.$transaction(async (tx) => {
-        await tx.botSkillSelection.upsert({
-          where: { botId: input.botId },
-          create: {
-            botId: input.botId,
-            spaceId: actor.spaceId,
-            userId: actor.userId,
-            excludedBuiltins,
-          },
-          update: { excludedBuiltins },
-        });
-        await tx.botSkill.deleteMany({ where: { botId: input.botId } });
-        if (storedIds.length > 0) {
-          await tx.botSkill.createMany({
-            data: storedIds.map((skillId) => ({
-              botId: input.botId,
-              skillId,
-              spaceId: actor.spaceId,
-              userId: actor.userId,
-            })),
-          });
-        }
-      });
-      return read(actor, input.botId);
     },
 
     async agents(actor: Actor): Promise<SkillAgents> {

@@ -12,6 +12,7 @@ import {
   FakeComposioClient,
   FakeSandboxProvider,
   handoffToGroupBot,
+  listAgentSkillRecords,
   listPiCatalog,
   loadRunOrigin,
   organizeBot,
@@ -4761,6 +4762,184 @@ describeJourneys("required product journeys", () => {
           select: { pinned: true },
         }),
       ).toEqual({ pinned: false });
+    });
+
+    // Fork: bot_skills and spawn_bot's skills (adapters bot-skill-assign.ts).
+    describe("skills of other bots", () => {
+      const skillDoc = (name: string) =>
+        `---\nname: ${name}\ndescription: How to do ${name}\n---\n\nMARK-${name}\n`;
+      const previousDefault = process.env.RAKAZO_NEW_BOT_SKILLS;
+      beforeAll(() => {
+        // Bee's setting: a new bot starts with the built-in skills only.
+        process.env.RAKAZO_NEW_BOT_SKILLS = "builtins";
+      });
+      afterAll(() => {
+        if (previousDefault === undefined) delete process.env.RAKAZO_NEW_BOT_SKILLS;
+        else process.env.RAKAZO_NEW_BOT_SKILLS = previousDefault;
+      });
+
+      const chosen = async (botId: string) =>
+        (
+          await prisma.botSkill.findMany({
+            where: { botId },
+            select: { skill: { select: { name: true } } },
+          })
+        )
+          .map((row) => row.skill.name)
+          .sort();
+      const catalogNames = async (bot: { id: string; spaceId: string }, userId: string) =>
+        (
+          await runAsSystem("test check", () =>
+            listAgentSkillRecords(appPrisma, { spaceId: bot.spaceId, userId, botId: bot.id }),
+          )
+        ).map((skill) => skill.name);
+
+      it("a managing bot attaches and removes a skill on another bot, with no approval card", async () => {
+        const { cookie, me, chief } = await fleetOwner("skills-attach");
+        await rpc(app, cookie, "agentSkills/create", { content: skillDoc("venue-notes") });
+        await rpc(app, cookie, "agentSkills/create", { content: skillDoc("invoice-check") });
+        const alpha = await createBot(cookie, "Alpha");
+        expect(await chosen(alpha.id)).toEqual([]);
+        expect(await catalogNames(alpha, me.userId)).not.toContain("venue-notes");
+
+        const attached = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "attach the skills named venue-notes, invoice-check to the bot named Alpha",
+        );
+        expect(await toolOutcomes(attached.run.id, "bot_skills")).toEqual([
+          expect.objectContaining({ outcome: "succeeded" }),
+        ]);
+        expect(await chosen(alpha.id)).toEqual(["invoice-check", "venue-notes"]);
+        // What the next run of Alpha is assembled from, and the settings screen's own read.
+        expect(await catalogNames(alpha, me.userId)).toEqual(
+          expect.arrayContaining(["venue-notes", "invoice-check"]),
+        );
+        const shown = await rpc<{ all: boolean; skillIds: string[] }>(
+          app,
+          cookie,
+          "agentSkills/forBot",
+          { botId: alpha.id },
+        );
+        expect(shown.all).toBe(false);
+        expect(shown.skillIds.filter((id) => !id.startsWith("builtin:"))).toHaveLength(2);
+        // Alpha's own next run can load it.
+        const read = await sendAndWait(app, cookie, alpha.id, "read the skill named venue-notes");
+        expect(await toolOutcomes(read.run.id, "skill_read")).toEqual([
+          expect.objectContaining({ outcome: "succeeded" }),
+        ]);
+
+        await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "detach the skill named venue-notes from the bot named Alpha",
+        );
+        expect(await chosen(alpha.id)).toEqual(["invoice-check"]);
+        expect(await catalogNames(alpha, me.userId)).not.toContain("venue-notes");
+
+        // A name that is no skill of the space changes nothing and names the close ones.
+        const wrong = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "attach the skill named venue-note to the bot named Alpha",
+        );
+        const [refused] = await toolOutcomes(wrong.run.id, "bot_skills");
+        expect(refused).toMatchObject({ outcome: "error" });
+        expect(refused?.error).toMatch(/No skill in this space matches "venue-note"/);
+        expect(refused?.error).toContain("venue-notes");
+        expect(await chosen(alpha.id)).toEqual(["invoice-check"]);
+      });
+
+      it("refuses a bot without bot management and a bot of another space", async () => {
+        const { cookie, chief } = await fleetOwner("skills-refuse");
+        await rpc(app, cookie, "agentSkills/create", { content: skillDoc("venue-notes") });
+        const alpha = await createBot(cookie, "Alpha");
+        const outsider = await signup(app, `bot-skills-other-${stamp}@rakazo.test`, "Other");
+        const stranger = await createBot(outsider, "Stranger");
+        await rpc(app, outsider, "agentSkills/create", { content: skillDoc("venue-notes") });
+
+        const foreign = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "attach the skill named venue-notes to the bot named Stranger",
+        );
+        expect(await toolOutcomes(foreign.run.id, "bot_skills")).toEqual([
+          expect.objectContaining({
+            outcome: "error",
+            error: 'No bot named "Stranger". Call list_fleet and pass bot_id.',
+          }),
+        ]);
+        expect(await chosen(stranger.id)).toEqual([]);
+
+        await rpc(app, cookie, "bots/update", { botId: chief.id, fleetManagement: false });
+        const off = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "attach the skill named venue-notes to the bot named Alpha",
+        );
+        // Not offered at all, and refused if called anyway.
+        expect(await toolOutcomes(off.run.id, "bot_skills")).toEqual([
+          expect.objectContaining({ outcome: "error" }),
+        ]);
+        expect(await chosen(alpha.id)).toEqual([]);
+      });
+
+      it("spawn_bot with skills: the new bot's first run already has them", async () => {
+        const { cookie, me, chief } = await fleetOwner("skills-spawn");
+        await rpc(app, cookie, "agentSkills/create", { content: skillDoc("venue-notes") });
+        await rpc(app, cookie, "agentSkills/create", { content: skillDoc("invoice-check") });
+
+        await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "spawn a bot named Scout with the skill named venue-notes",
+        );
+        const scout = (await rpc<Bot[]>(app, cookie, "bots/list")).find((b) => b.name === "Scout");
+        expect(scout).toBeTruthy();
+        await waitFor(
+          app,
+          cookie,
+          scout!.id,
+          (s) => !s.run || ["completed", "failed", "cancelled"].includes(s.run.status),
+        );
+        expect(await chosen(scout!.id)).toEqual(["venue-notes"]);
+        const names = await catalogNames(scout!, me.userId);
+        expect(names).toContain("venue-notes");
+        expect(names).not.toContain("invoice-check");
+        // The selection was stored with the bot, before its first run existed.
+        const selection = await prisma.botSkillSelection.findUniqueOrThrow({
+          where: { botId: scout!.id },
+        });
+        const firstRun = await prisma.run.findFirstOrThrow({
+          where: { botId: scout!.id },
+          orderBy: { createdAt: "asc" },
+        });
+        expect(firstRun.trigger).toBe("spawn");
+        expect(selection.createdAt.getTime()).toBeLessThanOrEqual(firstRun.createdAt.getTime());
+        // That first run read the skill; without the selection it is "not assigned to this agent".
+        expect(await toolOutcomes(firstRun.id, "skill_read")).toEqual([
+          expect.objectContaining({ outcome: "succeeded" }),
+        ]);
+
+        // A wrong name creates no bot.
+        const wrong = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "spawn a bot named Ghost with the skill named no-such-skill",
+        );
+        const [refused] = await toolOutcomes(wrong.run.id, "spawn_bot");
+        expect(refused?.error).toMatch(/No skill in this space matches "no-such-skill"/);
+        expect((await rpc<Bot[]>(app, cookie, "bots/list")).some((b) => b.name === "Ghost")).toBe(
+          false,
+        );
+      });
     });
 
     async function createManagedBot(cookie: string, name: string) {

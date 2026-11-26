@@ -157,7 +157,7 @@ export const fleetTools: ConnectorTool[] = [
   {
     name: "spawn_bot",
     description:
-      "Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. To give the new bot more than instructions (skills, routines, memories, apps to connect) or a task the user wants started, put it in prompt; the bot sets itself up from it. Otherwise creating the bot is the whole action.",
+      "Create a full, regular bot — the same kind the user creates from the + button. It gets its own thread, computer, and memory, and appears as a peer in the bot list. Do not also call run_subagent. Pass skills to give it existing skills of this space from its first run; do not ask the owner to attach them. To give the new bot more than that (routines, memories, apps to connect) or a task the user wants started, put it in prompt; the bot sets itself up from it. Otherwise creating the bot is the whole action.",
     inputSchema: {
       type: "object",
       properties: {
@@ -184,6 +184,12 @@ export const fleetTools: ConnectorTool[] = [
           enum: ["team", "dedicated"],
           description:
             "Optional. team shares one screen with other Team bots; dedicated (Private) gets its own. Defaults to team.",
+        },
+        skills: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional. Exact names or ids of skills in this space to attach now. Built-in skills are always on.",
         },
       },
       required: ["name"],
@@ -277,7 +283,8 @@ export const fleetTools: ConnectorTool[] = [
         },
         bot_id: {
           type: "string",
-          description: "A bot in this space, to change it instead of yourself.",
+          description:
+            "A bot in this space, to change it instead of yourself. Its skills: bot_skills.",
         },
       },
     },
@@ -341,6 +348,30 @@ export const fleetTools: ConnectorTool[] = [
         clear_section: { type: "boolean", description: "Take it out of its section." },
         pinned: { type: "boolean" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bot_skills",
+    description:
+      "See or change the skills of a bot in this space, by bot_id or exact bot_name (yourself too), instead of asking the owner to attach them. list: its skills and the space's. add, remove: the named ones. set: replace its stored skills, or all: true for every skill. Applies from its next run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...fleetBotTargetProperties,
+        action: { type: "string", enum: ["list", "add", "remove", "set"] },
+        skills: {
+          type: "array",
+          items: { type: "string" },
+          description: "Exact names or ids; a built-in as builtin:<name>.",
+        },
+        all: { type: "boolean" },
+        exact_builtins: {
+          type: "boolean",
+          description: "set: also turn off built-ins not named.",
+        },
+      },
+      required: ["action"],
       additionalProperties: false,
     },
   },

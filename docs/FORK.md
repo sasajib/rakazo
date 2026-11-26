@@ -352,6 +352,49 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `skill-tools.ts` (catalog/read functions), the Promise.all in `run-assembly-records.ts`,
   `skills-rpc.ts` `agentSkills` object, `memory.ts` handlers, the `bot-panel.tsx` section list.
 
+### 1.17a Agents assign skills to other agents (`bot_skills`, `spawn_bot` `skills`)
+- **Purpose:** a bot that manages other bots attaches and removes their skills itself instead of telling the owner to
+  tick them in settings. `bot_skills {action: list|add|remove|set, bot_id|bot_name, skills[], all, exact_builtins}`:
+  `list` = the target's skills + every skill of the Space (name, 140-char description, `builtin`, `assigned`);
+  `add`/`remove` take names (any case), ids or `builtin:<name>`; `set` replaces the stored skills (`all: true` = drop
+  the selection = every Space skill; built-ins keep their state unless `exact_builtins: true`, which is the settings
+  screen's exact-list behaviour). An unknown name changes nothing and the error names up to 3 close matches. `add` on
+  an agent that has every skill is a no-op (never narrows it). `spawn_bot {skills: [...]}` stores the selection in the
+  bot's creation transaction (`createBot`'s `seed`), i.e. before its first run row exists; a wrong name creates no bot.
+- **Permission (decision):** `bot_skills` is a member of `FLEET_TOOL_NAMES`, so it gets upstream's bot-management rule
+  unchanged: offered only when the bot's `fleetManagement` is on (default on) and the run is the owner's or unattended;
+  checked live per call (`run-tool-request.ts`); refused for subagents; target resolved by `resolveBot` = an active
+  bot of the run's Space. On top, the settings screen's rule: the target must belong to the run's member (upstream's
+  fleet tools reach any member's bot in the Space; this one does not). Self is allowed (a manager is a bot of its
+  Space). With the switch off a bot has no `bot_skills`, also not for bots it created; `spawn_bot`'s `skills` still
+  works because `spawn_bot` is not behind the switch.
+- **Approval:** none in an owner-started run (`action-approval.ts` approval-exempt list, like `organize_bot`; not a
+  `isFleetApprovalTool`, so no card summary). Unattended runs (routine/webhook/bot_message/spawn/tickets) and runs that
+  received outside text hold it for the owner like every fleet write. Result is own-state (does not taint the run).
+- **Files (fork):** `packages/adapters/src/tools/bot-skill-assign.ts` (`readBotSkills`, `setBotSkills`,
+  `writeBotSkillSelection`, `resolveSkillRefs`, `resolveNewBotSkills`, `botSkillsFromTool`); `apps/api/src/bots/bot-skills.ts`
+  now calls `readBotSkills`/`setBotSkills` (one write path for UI and tool).
+- **Seams:** `contracts/src/bots/builtin-tools.ts` (`FLEET_TOOL_NAMES` +1), `adapters/src/tools/fleet-tools.ts`
+  (`isFleetApprovalTool` excludes it), `tools/builtin-fleet.tool-definition.ts` (definition; `spawn_bot.skills`; `spawn_bot`
+  and `update_bot.bot_id` wording), `tools/builtin-tool-bridge.ts` (pinned; only bots with bot management are offered it)
+  + test cap 49_100 (measured 49_047, +874), `runs/tools/run-tools-fleet.ts` (handler; `spawn_bot` resolves skills and
+  passes `seed`), `bots/child-bots.ts` (`spawnBot` `seed` passthrough, 3 lines), `runtime/pi/tools/pi-runtime-tools.ts`
+  (label, sequential, `spawn_bot.skills`), `pi-runtime-tool-parameters.ts` (`spawn_bot.skills`, `prepareFleetArguments`
+  branch), `core/src/runs/action-approval.ts` (2 lists), `core/src/calls/speech-text.ts`, `runtime/scripted-runtime.ts`
+  (test phrases), `adapters/src/index.ts`, prompt-surface snapshots (4 tool files).
+- **Audit:** log line `bot_skills.changed {actorBotId, targetBotId, spaceId, runId, action, all, added, removed, total}`
+  (counts only; `action: "spawn"` for `spawn_bot`), written only when something changed.
+- **Tests:** `adapters/src/tools/bot-skill-assign.test.ts`, `apps/api/src/bots/bot-skill-assign.postgres.test.ts` (RLS:
+  add/remove/set/list, other member, other Space, unknown name, spawn order), `testkit/src/product/journeys.test.ts`
+  "skills of other bots" (3 journeys through the real gate and executor), `run-tool-request.test.ts`,
+  `action-approval.test.ts`, `pi-runtime-tool-schema.test.ts`, `builtin-tool-bridge.test.ts`.
+- **Web:** nothing new; agent settings -> Skills reads `agentSkills/forBot` on open, so a tool-made change shows after a
+  reload (no live push to an already-open panel).
+- **Live check:** ask a managing agent "attach skill X to <agent>": `bot_skills.changed` in the api/worker container logs,
+  no approval card, the agent's settings -> Skills shows X ticked, its next run lists X.
+- **Conflicts:** `FLEET_TOOL_NAMES`, the pinned list + byte cap (re-measure), `spawn_bot` definition/arguments, the two
+  `action-approval.ts` lists, `spawnBot` input in `child-bots.ts`.
+
 ### 1.19 Skill curator: auto-learned skills, chat teaching, taught -> skill
 - **Purpose:** Hermes-style procedural memory. After an owner-started chat run (`user`/`follow_up`) that was non-trivial
   (>= `SKILL_CURATOR_MIN_TOOL_CALLS` tool calls, default 6), or where the owner corrected HOW the work is done ("no, always

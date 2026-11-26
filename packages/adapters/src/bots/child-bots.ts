@@ -77,6 +77,8 @@ export async function spawnBot(
     };
     runId: string;
     spawnKey: string;
+    /** Fork: runs in the creation transaction (spawn_bot's skills), before any run exists. */
+    seed?: (tx: Prisma.TransactionClient, botId: string) => Promise<void>;
     name: string;
     description?: string;
     instructions?: string;
@@ -110,6 +112,7 @@ export async function spawnBot(
       parentBotId: input.spawnedBy.id,
       spawnKey: input.spawnKey,
       computerMode: input.computerMode,
+      seed: input.seed,
       initialMessage: {
         role: "system",
         blocks: [{ kind: "meta", text: `Created by ${input.spawnedBy.name}` }],

@@ -283,6 +283,10 @@ export function describeToolActivity(
   if (toolName === "update_group")
     return `Updating group: ${detail(record.group_name ?? record.name)}`;
   if (toolName === "organize_bot") return "Organizing the sidebar";
+  if (toolName === "bot_skills")
+    return record.action && record.action !== "list"
+      ? "Changing a bot's skills"
+      : "Checking a bot's skills";
   if (toolName === "set_child_instructions") return "Rewriting a bot's instructions";
   if (toolName === "set_child_bot_model") return "Setting a bot's model";
   if (toolName === "create_child_routine") return `Scheduling routine: ${detail(record.name)}`;
@@ -412,6 +416,8 @@ function toAgentTool(
     ...(SCHEDULE_TOOL_NAMES.has(tool.name) ||
     tool.name === "remember" ||
     tool.name === "standing_set" ||
+    // Fork: add/remove read the selection, then write it.
+    tool.name === "bot_skills" ||
     tool.name === "request_secret" ||
     PAGE_CHANGING_TOOL_NAMES.has(tool.name)
       ? { executionMode: "sequential" as const }
@@ -510,6 +516,9 @@ function toAgentTool(
           prompt: raw.prompt ? String(raw.prompt) : "",
           // Left out means Team; an empty string would fail the mode's enum.
           ...(raw.computer_mode ? { computer_mode: String(raw.computer_mode) } : {}),
+          ...(Array.isArray(raw.skills) && raw.skills.length
+            ? { skills: raw.skills.map(String) }
+            : {}),
         };
       }
       if (tool.name === "update_bot" || FLEET_TOOL_NAMES.some((name) => name === tool.name)) {
