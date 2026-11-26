@@ -214,7 +214,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `core/src/runs/run-supervision.ts`, `db/src/database/row-security.ts` (`memory_facts`, `memory_fact_links`, `memory_ledger_jobs`).
   Fork dir: `packages/adapters/src/memory-ledger/` (NOTICE: concepts adapted, see file).
 - **Env:** `MEMORY_LEDGER=1`, `MEMORY_LEDGER_MODEL_URL`, `MEMORY_LEDGER_MODEL`, `MEMORY_LEDGER_MODEL_API_KEY[_FILE]`,
-  `MEMORY_LEDGER_MODEL_CONNECTION`, `MEMORY_LEDGER_MODEL_TIMEOUT_MS`, `MEMORY_LEDGER_MODEL_MAX_TOKENS`, `MEMORY_EMBEDDINGS_URL/_MODEL/_API_KEY[_FILE]/_TIMEOUT_MS`,
+  `MEMORY_LEDGER_MODEL_CONNECTION`, `MEMORY_LEDGER_MODEL_TIMEOUT_MS`, `MEMORY_LEDGER_MODEL_MAX_TOKENS`,
+  `MEMORY_LEDGER_MODEL_RETRIES`, `MEMORY_EMBEDDINGS_URL/_MODEL/_API_KEY[_FILE]/_TIMEOUT_MS`,
   `MEMORY_LEDGER_PACK_BUDGET_MS` (2500 on bee), `MEMORY_LEDGER_CORE_MAX_BYTES`, `MEMORY_LEDGER_PACK_MAX_BYTES`,
   `MEMORY_LEDGER_PACK_LIMIT`, `MEMORY_LEDGER_FAST_PACK_LIMIT`.
 - **Migration:** `20261231235500_memory_ledger` (raw SQL tables, no Prisma models; hard-requires pgvector);
@@ -236,6 +237,23 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   its own timeout. Tests: `memory-ledger/model.test.ts` ("a reasoning model that spends the whole budget thinking", 4
   cases + the env), `skill-curator/curator.test.ts` (same for the curator), `compose-env.test.ts`. Stack: add the
   `MEMORY_LEDGER_MODEL_MAX_TOKENS:` line to the stack compose anchor only if the default is to be changed.
+- **Fix 2026-11-27 (`fix/leftovers-1126`): the memory model call survives overload.** Live 2026-11-26: 3 of 24
+  jobs failed on their first attempt (`http.status 429` twice, `TimeoutError` once); only an empty `length` answer was
+  repeated. `chatWithBudget` (`model.ts`, shared with the skill curator) now repeats HTTP 429/408/425/5xx, a timeout
+  and a failed connection up to `MEMORY_LEDGER_MODEL_RETRIES` times (default 3, clamp 0..8; `config.ts`, literal-name
+  read, in the three compose anchors), waiting 1 s, 2 s, 4 s ... times a random 0.5-1, or what `Retry-After` asks
+  (seconds or a date). Everything stays inside a wall budget: 5 minutes for a ledger or curator job
+  (`MODEL_CALL_BUDGET_MS`, well under the 15 minutes after which a running job is taken again), 20 s for the
+  `remember` tool; a repeat that could not finish in what is left, or a `Retry-After` over 60 s, is not waited for
+  and each late attempt gets only the remaining time as its timeout. HTTP 400/401/404 and the caller's own cancel
+  are not repeated. Log `memory.ledger.model_retry` / `skill.curator.model_retry` `{reason: rate_limited |
+  server_error | timeout | network | length, attempt, wait_ms, http.status}` (`gave_up: budget` when it stops
+  early). A job whose model still fails is `failed`, and the catch-up pass offers it again after 10, then 20
+  minutes, up to 3 attempts (it was never final after one failure: the row seen `failed` after 1 attempt was
+  waiting for the next learning run of that person in the Space, which is what triggers catch-up). With the
+  idempotency fix a repeated job cannot write twice. Tests: `memory-ledger/model-retry.test.ts` (11; 8 fail on the
+  old code), `compose-env.test.ts`. Stack: add `MEMORY_LEDGER_MODEL_RETRIES:` to the stack compose anchor only to
+  change the default.
 - **Fix 2026-11-27 (`fix/leftovers-1126`): a ledger job writes once.** Live 2026-11-26: 18 live facts were copies
   of another live fact (14 word for word, written in the same second by two or three jobs), all from late jobs. Cause:
   `loadOwnerMessages` read "the run's source message and everything after it" as the run's own words, taken from the
@@ -540,6 +558,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Migration:** `20270120090000_skill_learning` (raw SQL, no Prisma models: `skill_learning_settings`, `skill_learning_jobs`,
   `skill_learning_proposals`, `learned_skills`, `skill_teaching_sessions`; RLS by `spaceId` + system bypass; cascades on
   space/bot; `learned_skills` cascades with its skill).
+- **Fix 2026-11-27:** the curator's model call repeats on HTTP 429/5xx, timeout and network failure like the ledger's
+  (`MEMORY_LEDGER_MODEL_RETRIES`, same helper, 5-minute budget; see 1.10).
 - **Fix 2026-11-26:** the curator model's `max_tokens` is the ledger's `MEMORY_LEDGER_MODEL_MAX_TOKENS` (default 16000,
   was a fixed 8000) with the same one retry at twice the budget (see 1.10); log `skill.curator.model_retry`.
 - **Logs:** `skill.curator.decided` (reason, mode, outcome, why, action, proposal, skill, ms), `skill.curator.decision`,

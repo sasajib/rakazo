@@ -5,7 +5,13 @@ export const EMBEDDING_DIMENSIONS = 1024;
 export type FetchLike = (
   url: string,
   init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal },
-) => Promise<{ ok: boolean; status?: number; json: () => Promise<unknown> }>;
+) => Promise<{
+  ok: boolean;
+  status?: number;
+  /** Present on a real fetch response; the model call reads `retry-after` from it. */
+  headers?: { get(name: string): string | null } | undefined;
+  json: () => Promise<unknown>;
+}>;
 
 export interface Embedder {
   /** The text's vector, or undefined when the service is slow, down or answers oddly. Never throws. */

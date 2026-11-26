@@ -18,7 +18,7 @@ import { resolveModelEndpoint } from "./connection.js";
 import type { Embedder } from "./embeddings.js";
 import { createEmbedder } from "./embeddings.js";
 import type { MemoryModel } from "./model.js";
-import { createOpenAiMemoryModel } from "./model.js";
+import { createOpenAiMemoryModel, MODEL_CALL_BUDGET_MS } from "./model.js";
 import { assemblePack, within } from "./pack.js";
 import type { LedgerJob, LedgerStore } from "./store.js";
 import { createSqlLedgerStore } from "./store.js";
@@ -52,12 +52,16 @@ async function memoryModel(
   deps: Deps,
   userId: string,
   config: LedgerConfig,
+  /** Wall time for the model calls, repeats included: what the caller itself will wait. */
+  budgetMs: number,
 ): Promise<MemoryModel | undefined> {
   const endpoint = await resolveModelEndpoint(deps, userId, config.model);
   return endpoint
     ? createOpenAiMemoryModel(endpoint, {
         timeoutMs: config.model.timeoutMs,
         maxTokens: config.model.maxTokens,
+        retries: config.model.retries,
+        budgetMs,
       })
     : undefined;
 }
@@ -309,7 +313,8 @@ async function runLedgerJob(
       // A job caught up later carries the time its run finished and reads up to it only.
       until: job.createdAt,
     });
-    const model = await memoryModel(deps, job.userId, config);
+    // Well inside the 15 minutes after which a job still marked running is started again.
+    const model = await memoryModel(deps, job.userId, config, MODEL_CALL_BUDGET_MS);
     const result = await learnFromMessages(
       {
         store,
@@ -614,7 +619,8 @@ export async function rememberViaLedger(
           return learnFromMessages(
             {
               store,
-              model: await memoryModel(deps, run.userId, config),
+              // The tool call waits REMEMBER_BUDGET_MS at most; no repeat outlives that.
+              model: await memoryModel(deps, run.userId, config, REMEMBER_BUDGET_MS),
               embedder: embedder(config),
               config,
               // A conflict with a confirmed fact can only be settled by the owner's answer to a

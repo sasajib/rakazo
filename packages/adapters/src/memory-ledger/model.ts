@@ -10,7 +10,7 @@ import { getLogger } from "@rakazo/logging";
 import * as z from "zod";
 import { parseModelJson } from "../models/model-json.js";
 import type { LedgerConfig } from "./config.js";
-import { DEFAULT_MODEL_MAX_TOKENS } from "./config.js";
+import { DEFAULT_MODEL_MAX_TOKENS, DEFAULT_MODEL_RETRIES } from "./config.js";
 import type { FetchLike } from "./embeddings.js";
 import type { Fact, FactCandidate, OwnerMessage } from "./types.js";
 import { FACT_AREAS } from "./types.js";
@@ -158,12 +158,65 @@ export type ChatAnswer =
 
 const emptyAnswer = (content: unknown) => typeof content !== "string" || content.trim() === "";
 
+/** Every model call of one job attempt, retries and waits included, ends within this. */
+export const MODEL_CALL_BUDGET_MS = 5 * 60_000;
+/** First wait before a repeat; doubles each time. */
+const RETRY_BASE_MS = 1_000;
+/** No single wait is longer, whatever the server asks for. */
+const RETRY_MAX_WAIT_MS = 60_000;
+/** An attempt that could not get at least this long is not started. */
+const RETRY_MIN_ATTEMPT_MS = 1_000;
+
+type RetryReason = "rate_limited" | "server_error" | "timeout" | "network";
+
+/** Overloaded or briefly broken: worth asking again. Any other status is the caller's mistake. */
+function retryableStatus(status: number): RetryReason | undefined {
+  if (status === 429) return "rate_limited";
+  if (status === 408 || status === 425) return "timeout";
+  return status >= 500 && status <= 599 ? "server_error" : undefined;
+}
+
+/** A timeout or a failed connection; never the caller's own cancellation. */
+function retryableError(error: unknown, signal: AbortSignal | undefined): RetryReason | undefined {
+  if (signal?.aborted) return undefined;
+  if (!(error instanceof Error)) return undefined;
+  if (error.name === "TimeoutError") return "timeout";
+  if (error.name === "AbortError") return undefined;
+  const code = String(
+    (error as { code?: unknown }).code ??
+      (error.cause as { code?: unknown } | undefined)?.code ??
+      "",
+  );
+  if (/^(?:ECONN|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|UND_ERR)/.test(code))
+    return code === "ETIMEDOUT" || /TIMEOUT/.test(code) ? "timeout" : "network";
+  // fetch reports a connection that failed as a TypeError ("fetch failed").
+  return error instanceof TypeError || /fetch failed|network|socket/i.test(error.message)
+    ? "network"
+    : undefined;
+}
+
+/** `Retry-After` in milliseconds: seconds, or an HTTP date. */
+export function retryAfterMs(value: string | null | undefined, now: number): number | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(text)) return Math.round(Number(text) * 1000);
+  const at = Date.parse(text);
+  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
+}
+
 /**
- * One chat completion with a completion budget. A reasoning model (GLM) spends completion tokens
- * thinking before it answers: when the call stops on the budget (`finish_reason: "length"`) with
- * an empty answer, the whole budget went on thinking, so it is asked once more with twice as
- * much before the caller gives up. Any other outcome (an answer, a cut-off answer, an HTTP
- * error) is returned as it is. Each call gets its own timeout. Shared with the skill curator.
+ * One chat completion with a completion budget, repeated when the service is overloaded.
+ *
+ * Budget: a reasoning model (GLM) spends completion tokens thinking before it answers: when the
+ * call stops on the budget (`finish_reason: "length"`) with an empty answer, the whole budget
+ * went on thinking, so it is asked once more with twice as much before the caller gives up.
+ *
+ * Overload: HTTP 429, 408, 425, 5xx, a timeout or a failed connection is repeated up to
+ * `retries` times, waiting 1 s, 2 s, 4 s ... (half to all of it, at random, so jobs that failed
+ * together do not return together), or as long as `Retry-After` asks. All of it stays inside
+ * `budgetMs`: a repeat that could not finish in what is left is not started, and the last
+ * failure is returned (or thrown) as before. Any other outcome (an answer, a cut-off answer,
+ * HTTP 400/401/404) is returned as it is. Shared with the skill curator.
  */
 export async function chatWithBudget(input: {
   fetchImpl: FetchLike;
@@ -173,12 +226,32 @@ export async function chatWithBudget(input: {
   maxTokens: number;
   timeoutMs: number;
   signal?: AbortSignal | undefined;
-  /** Log event of the retry, e.g. `memory.ledger.model_retry`. */
+  /** Log event of a repeat, e.g. `memory.ledger.model_retry`. */
   retryEvent: string;
+  /** Repeats after an overload failure (MEMORY_LEDGER_MODEL_RETRIES); 0 turns them off. */
+  retries?: number | undefined;
+  /** Wall time for everything this call does; default MODEL_CALL_BUDGET_MS. */
+  budgetMs?: number | undefined;
+  /** Test seams. */
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+  random?: (() => number) | undefined;
+  now?: (() => number) | undefined;
 }): Promise<ChatAnswer> {
   const { endpoint } = input;
-  const once = async (maxTokens: number, retried: boolean): Promise<ChatAnswer> => {
-    const timeout = AbortSignal.timeout(input.timeoutMs);
+  const now = input.now ?? Date.now;
+  const random = input.random ?? Math.random;
+  const sleep =
+    input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const retries = Math.max(0, input.retries ?? DEFAULT_MODEL_RETRIES);
+  const deadline = now() + Math.max(0, input.budgetMs ?? MODEL_CALL_BUDGET_MS);
+  const once = async (
+    maxTokens: number,
+    retried: boolean,
+  ): Promise<ChatAnswer & { retryAfter?: string | null }> => {
+    // Never past the deadline, and never 0 (which would mean no timeout at all).
+    const timeout = AbortSignal.timeout(
+      Math.max(RETRY_MIN_ATTEMPT_MS, Math.min(input.timeoutMs, deadline - now())),
+    );
     const response = await input.fetchImpl(input.url, {
       method: "POST",
       headers: {
@@ -194,7 +267,12 @@ export async function chatWithBudget(input: {
       }),
       signal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
     });
-    if (!response.ok) return { ok: false, status: response.status ?? 0 };
+    if (!response.ok)
+      return {
+        ok: false,
+        status: response.status ?? 0,
+        retryAfter: response.headers?.get("retry-after"),
+      };
     const body = (await response.json()) as {
       choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
     };
@@ -207,21 +285,79 @@ export async function chatWithBudget(input: {
       retried,
     };
   };
-  const first = await once(input.maxTokens, false);
+  /** `once`, repeated while the failure is an overload and the deadline allows. */
+  const call = async (maxTokens: number, retried: boolean): Promise<ChatAnswer> => {
+    for (let attempt = 1; ; attempt += 1) {
+      let answer: (ChatAnswer & { retryAfter?: string | null }) | undefined;
+      let failure: unknown;
+      let reason: RetryReason | undefined;
+      try {
+        answer = await once(maxTokens, retried);
+        reason = answer.ok ? undefined : retryableStatus(answer.status);
+      } catch (error) {
+        failure = error;
+        reason = retryableError(error, input.signal);
+      }
+      const settle = (): ChatAnswer => {
+        if (!answer) throw failure;
+        return answer.ok ? answer : { ok: false, status: answer.status };
+      };
+      if (!reason || attempt > retries) return settle();
+      const backoff = Math.min(RETRY_MAX_WAIT_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
+      const asked = answer && !answer.ok ? retryAfterMs(answer.retryAfter, now()) : undefined;
+      // The server's own figure is honoured as it is; our own is spread over its upper half.
+      const wait = Math.round(
+        asked !== undefined ? Math.max(asked, RETRY_BASE_MS / 2) : backoff * (0.5 + 0.5 * random()),
+      );
+      // Asked to stay away longer than we may wait, or no time left for another attempt: stop.
+      if (wait > RETRY_MAX_WAIT_MS || now() + wait + RETRY_MIN_ATTEMPT_MS > deadline) {
+        getLogger().info(input.retryEvent, {
+          reason,
+          attempt,
+          wait_ms: wait,
+          gave_up: "budget",
+          ...(answer && !answer.ok ? { "http.status": answer.status } : {}),
+        });
+        return settle();
+      }
+      getLogger().info(input.retryEvent, {
+        reason,
+        attempt,
+        wait_ms: wait,
+        ...(answer && !answer.ok ? { "http.status": answer.status } : {}),
+      });
+      await sleep(wait);
+      if (input.signal?.aborted) return settle();
+    }
+  };
+  const first = await call(input.maxTokens, false);
   if (!first.ok || first.finishReason !== "length" || !emptyAnswer(first.content)) return first;
   const doubled = input.maxTokens * 2;
   getLogger().info(input.retryEvent, {
+    reason: "length",
     "llm.finish_reason": first.finishReason,
     "llm.max_tokens": input.maxTokens,
     "llm.retry_max_tokens": doubled,
   });
-  return once(doubled, true);
+  return call(doubled, true);
+}
+
+/** How one model is called; the retry fields are chatWithBudget's. */
+export interface ModelCallOptions {
+  timeoutMs: number;
+  maxTokens?: number | undefined;
+  retries?: number | undefined;
+  budgetMs?: number | undefined;
+  fetchImpl?: FetchLike;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+  random?: (() => number) | undefined;
+  now?: (() => number) | undefined;
 }
 
 /** Chat completions against one OpenAI-compatible endpoint. */
 export function createOpenAiMemoryModel(
   endpoint: ModelEndpoint,
-  options: { timeoutMs: number; maxTokens?: number | undefined; fetchImpl?: FetchLike },
+  options: ModelCallOptions,
 ): MemoryModel {
   const fetchImpl = options.fetchImpl ?? (fetch as unknown as FetchLike);
   const url = `${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -243,6 +379,11 @@ export function createOpenAiMemoryModel(
           timeoutMs: options.timeoutMs,
           signal,
           retryEvent: "memory.ledger.model_retry",
+          retries: options.retries,
+          budgetMs: options.budgetMs,
+          sleep: options.sleep,
+          random: options.random,
+          now: options.now,
         });
         if (!answer.ok) {
           getLogger().warn("memory.ledger.model_failed", { "http.status": answer.status });

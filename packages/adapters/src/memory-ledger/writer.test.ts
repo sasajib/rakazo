@@ -43,6 +43,7 @@ function services(overrides: Partial<LedgerServices> = {}) {
         connection: undefined,
         timeoutMs: 1000,
         maxTokens: 16_000,
+        retries: 3,
         disabled: false,
       },
     },

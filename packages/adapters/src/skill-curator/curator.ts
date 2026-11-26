@@ -617,6 +617,7 @@ export async function curate(
         ? createOpenAiCuratorModel(endpoint, {
             timeoutMs: config.model.timeoutMs,
             maxTokens: config.model.maxTokens,
+            retries: config.model.retries,
           })
         : undefined,
     ));

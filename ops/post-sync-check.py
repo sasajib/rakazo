@@ -102,7 +102,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # memory ledger idempotency (1.10, 2026-11-27): a late job reads its own run's messages, the
            # write stage is one transaction claimed once per job, one live fact per text and meaning
            ("until: job.createdAt", 1), ("claimWrite(", 3), ("writeTransaction(", 3), ("insertFactOnce(", 3),
-           ("NEAR_DUPLICATE_SIMILARITY", 2), ("memory_facts_live_text_key", 1)]
+           ("NEAR_DUPLICATE_SIMILARITY", 2), ("memory_facts_live_text_key", 1),
+           # the memory and curator model calls repeat on 429/5xx/timeout inside a time budget
+           ("MEMORY_LEDGER_MODEL_RETRIES", 1), ("retryAfterMs(", 2), ("MODEL_CALL_BUDGET_MS", 2)]
 results = []
 
 

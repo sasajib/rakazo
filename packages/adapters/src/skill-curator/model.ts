@@ -8,7 +8,7 @@ import { getLogger } from "@rakazo/logging";
 import * as z from "zod";
 import { DEFAULT_MODEL_MAX_TOKENS } from "../memory-ledger/config.js";
 import type { FetchLike } from "../memory-ledger/embeddings.js";
-import type { ModelEndpoint } from "../memory-ledger/model.js";
+import type { ModelCallOptions, ModelEndpoint } from "../memory-ledger/model.js";
 import { chatWithBudget } from "../memory-ledger/model.js";
 import { parseModelJson } from "../models/model-json.js";
 import type { OutlineStep } from "./outline.js";
@@ -171,7 +171,7 @@ export function parseProposal(
 /** Chat completions against one OpenAI-compatible endpoint. */
 export function createOpenAiCuratorModel(
   endpoint: ModelEndpoint,
-  options: { timeoutMs: number; maxTokens?: number | undefined; fetchImpl?: FetchLike },
+  options: ModelCallOptions,
 ): CuratorModel {
   const fetchImpl = options.fetchImpl ?? (fetch as unknown as FetchLike);
   const url = `${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -193,6 +193,12 @@ export function createOpenAiCuratorModel(
           timeoutMs: options.timeoutMs,
           signal,
           retryEvent: "skill.curator.model_retry",
+          // Overload (429/5xx/timeout) is repeated the ledger's way: MEMORY_LEDGER_MODEL_RETRIES.
+          retries: options.retries,
+          budgetMs: options.budgetMs,
+          sleep: options.sleep,
+          random: options.random,
+          now: options.now,
         });
         if (!answer.ok) {
           getLogger().warn("skill.curator.model_failed", { "http.status": answer.status });
