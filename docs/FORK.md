@@ -835,6 +835,54 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   reading of the owner's words (he asked for *a* server; the URL the agent passes is the agent's).
 - **Conflicts:** upstream edits to `addMcpServerFromTool`'s transaction or to `isOwnerStartedRun` / `RunTrust`.
 
+### 1.27 An open tab moves onto a new deploy by itself (`WEB_AUTO_RELOAD`)
+- **Why:** after every deploy the owner had to be told to reload his open tabs. Upstream already has the handshake
+  (`x-rakazo-build` on every API reply, `/build-id` on the web server, `lib/platform/client-update.ts`), but it learns
+  the new build only from API replies and reloads only a tab that is hidden, navigating, or five minutes idle with
+  no draft anywhere; a tab the owner comes back to stayed on old code, with nothing on screen saying so.
+- **What the fork adds (`client-update-fork.ts`, pure rule `decideClientUpdate`):** the tab reads `/build-id` when it
+  becomes visible or its window gets focus (not more often than 5 s), every 5 min, and (30 s apart) after an API reply
+  that names a newer build or is a 400/404 (a likely contract mismatch). When the web server serves a newer build:
+  an idle, safe tab that just became visible/focused reloads at once; a tab that cannot reload shows a toast
+  "New version available / Reload" (takes no focus, blocks nothing) and reloads by itself about 3-6 s after the
+  thing in the way ended; a visible tab in use with nothing at stake shows the toast and reloads on its next
+  navigation (upstream's rule). **Never automatic** while: a call is ringing/connecting/live, any `textarea` or
+  editable element on the page holds text, a send is in flight or attachments are picked, dictation is
+  recording/transcribing, a dialog is open, or this person controls a computer's screen (`holdReload()`). These rules
+  also bind upstream's own hidden/navigation/idle reloads (`forkAllows` in `safe()`); upstream's "refused build"
+  (HTTP 426) path is untouched. Every reload still goes through upstream's guarded path (web server must serve the
+  newer build, one attempt per build pair, one automatic reload per 30 s, never offline), so no loop is possible.
+- **Service worker:** unchanged. Navigations always go to the network and `/build-id` is not precached, so a reload
+  under the old worker gets the new `index.html` and its new hashed assets; the new worker takes over on the next
+  navigation of the last open window (upstream's `SKIP_WAITING` pattern).
+- **Env:** `WEB_AUTO_RELOAD` (web server only; default on; `0` = open tabs only show the toast, never reload
+  themselves). Read by literal name in `apps/web/server/preview-middleware.ts`; sent to tabs as the response header
+  `x-rakazo-auto-reload: 0` on `/build-id`, which every tab reads before any automatic reload, so the switch works
+  on tabs already open and needs no rebuild. In the `web` service of `docker-compose.yml`, `.prod.yml`, `.images.yml`,
+  `.standalone.yml` (the web container has its own short list, not the `x-app-environment` anchor). No new route, no
+  CSP change (`/build-id` is same-origin).
+- **Files (fork):** `apps/web/src/lib/platform/{client-update-fork,client-update-fork-wiring,auto-reload-header}.ts`,
+  `apps/web/server/auto-reload.ts`. **Seams:** `client-update.ts` (moments `visible`/`released`, `forkAllows` in
+  `safe()`, `attempt()`, `installFork`, `servedBuild` through the fork), `server/preview-middleware.ts` (setting +
+  one middleware), `pages/shell/computers/use-computer-controls.tsx` (one `holdReload` effect),
+  `server/screen-proxy-token.test.ts` (settings literal), 4 compose files. **Migration:** none.
+- **Tests:** `client-update-fork.test.ts` (rule table; the fork tracker linked to upstream's real tracker: same build
+  -> nothing; idle + visible/focus -> reload; typed text -> toast, no reload on navigation, reload after it clears;
+  live call -> toast only through every moment, reload after it ends; failed check -> nothing; API ahead of web
+  server -> waits; 404 -> check; no API traffic -> background check; switch off -> toast only, also when upstream's
+  check is the one that reads it; no build id -> off), `server/auto-reload.test.ts` (header on `/build-id` only when
+  off), `infra/updater/src/compose-web-env.fork.test.ts` (literal read + 4 compose files).
+- **Not on mobile or desktop:** the desktop app bundles its renderer (a reload cannot change it; the fork tracker is
+  off when `window.rakazoDesktop` is set; it updates through the app's own updater). The mobile app downloads an
+  over-the-air update when it returns to the foreground and runs it on the next launch (`apps/mobile/lib/api/client-update.ts`).
+- **Known limits:** only a *newer* build counts (upstream's ordering): after a rollback to an older image, open tabs
+  keep the newer bundle until reloaded by hand. A `textarea` that shows saved text (an instructions editor left open)
+  counts as typed text, so that tab shows the toast instead of reloading. A draft saved in another chat (local
+  storage, it survives a reload) does not block a hidden or navigating reload, as upstream; it still blocks upstream's idle reload.
+- **Live check:** see `FIX-1126-reload-askfirst.md` in the stack repo (open a tab, deploy, come back to it).
+- **Conflicts:** upstream edits to `client-update.ts` (`safe()`, `clientUpdates()` factory, `install()`), to the
+  web server's settings object, or a new upstream "update available" UI (then drop the fork toast, keep the rules).
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
@@ -853,6 +901,7 @@ Not in this fork, but a sync/deploy must keep them working:
   `RAKAZO_CSP_CONNECT_SRC`, `STANDING_EMBEDDINGS_URL`, `MEMORY_LEDGER`, `MEMORY_LEDGER_MODEL_URL`, `MEMORY_LEDGER_MODEL`,
   `MEMORY_LEDGER_MODEL_API_KEY`, `MEMORY_EMBEDDINGS_URL`, `MEMORY_EMBEDDINGS_MODEL`, `MEMORY_LEDGER_PACK_BUDGET_MS`,
   `SHELL_BACKGROUND_JOBS`, `SANDBOX_HOST_URL`, `SANDBOX_HOST_TOKEN`, `SANDBOX_HOST_SCREEN`, `RAKAZO_DISABLED_BUILTIN_TOOLS`, `VAULT_FILL_MCP_BROWSERS`, `SKILL_CURATOR`,
+  `WEB_AUTO_RELOAD` (web service only, optional; the stack's compose copy needs the line in its `web` service),
   `RAKAZO_IMAGE_TAG`, `RAKAZO_COMPUTER_IMAGE`, `RAKAZO_COMPUTER_IMAGE_TAG`, `POSTGRES_IMAGE` (= `rakazo/postgres-graph:16-pgv-age1.6`).
 - **Host units (user systemd):** `bee-rakazo-host-computer` (host computer + screen, 1.15), `bee-rakazo-audit`
   (`sasajib/rakazo-audit`), `bee-rakazo-watch` (`sasajib/rakazo-watch`, Watch MCP + webhooks).

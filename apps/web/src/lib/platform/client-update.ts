@@ -13,6 +13,8 @@ import {
 } from "../composer/composer-draft";
 import { onRpcResponse } from "../query/rpc";
 import { CLIENT_BUILD } from "./client-build";
+import type { UpdateMoment } from "./client-update-fork";
+import { forkClientUpdates } from "./client-update-fork-wiring";
 import { hasOpenDialog } from "./has-open-dialog";
 import { recoveryReload } from "./preload-recovery";
 
@@ -26,7 +28,7 @@ export const CLIENT_UPDATE_REQUIRED_RETRIES = 10;
 const INPUT_EVENTS = ["keydown", "pointerdown", "input", "wheel", "touchstart"] as const;
 
 /** `required`: the server refused this build. */
-type Moment = "hidden" | "navigation" | "idle" | "required";
+type Moment = "hidden" | "navigation" | "idle" | "required" | "visible" | "released";
 
 export type ClientUpdateDeps = {
   build: string;
@@ -53,6 +55,10 @@ export type ClientUpdateDeps = {
   now: () => number;
   setInterval: (callback: () => void, ms: number) => unknown;
   clearInterval: (handle: unknown) => void;
+  /** Fork: stricter rules and the kill switch for every automatic reload (client-update-fork.ts). */
+  forkAllows?: (moment: UpdateMoment) => boolean;
+  /** Fork: starts the fork's own checks beside this tracker's; returns its stop. */
+  installFork?: () => () => void;
 };
 
 /**
@@ -97,6 +103,8 @@ export function createClientUpdates(deps: ClientUpdateDeps) {
   };
   const safe = (moment: Moment): boolean => {
     if (moment === "hidden" && deps.document.visibilityState !== "hidden") return false;
+    // Fork: a refused build keeps upstream's rule; every other reload also asks the fork's.
+    if (moment !== "required" && deps.forkAllows && !deps.forkAllows(moment)) return false;
     const held = moment === "required" ? deps.holdsWorkInFlight() : deps.holdsUnsavedWork();
     if (editing() || held) return false;
     if (hasOpenDialog(deps.document)) {
@@ -184,12 +192,18 @@ export function createClientUpdates(deps: ClientUpdateDeps) {
     navigated() {
       tryAt("navigation");
     },
+    /** Fork: a guarded reload at a moment the fork chose; false when it did not reload. */
+    attempt(moment: "hidden" | "visible" | "released"): Promise<boolean> {
+      if (!target || checking || !safe(moment)) return Promise.resolve(false);
+      return reloadOntoServedBuild(moment);
+    },
     install(): () => void {
       if (!deps.build) return () => {};
       const noteInput = () => {
         lastInput = deps.now();
       };
       const stops = [
+        ...(deps.installFork ? [deps.installFork()] : []),
         deps.responses((response) => {
           if (response.status === CLIENT_UPDATE_REQUIRED_STATUS) updates.updateRequired();
           else updates.noteServerBuild(response.headers.get(SERVER_BUILD_HEADER));
@@ -225,7 +239,16 @@ function sessionStorageOrNull(): Storage | null {
 
 /** The tab's one update tracker. */
 export function clientUpdates(): ReturnType<typeof createClientUpdates> {
-  shared ??= createClientUpdates({
+  if (shared) return shared;
+  // Fork: the served-build read and the safety rules go through the fork's tracker.
+  const fork = forkClientUpdates({
+    note: (build) => clientUpdates().noteServerBuild(build),
+    attempt: (moment) =>
+      moment === "hidden" || moment === "visible" || moment === "released"
+        ? clientUpdates().attempt(moment)
+        : Promise.resolve(false),
+  });
+  shared = createClientUpdates({
     build: typeof window === "undefined" ? "" : CLIENT_BUILD,
     document: globalThis.document,
     storage: typeof window === "undefined" ? null : sessionStorageOrNull(),
@@ -235,10 +258,9 @@ export function clientUpdates(): ReturnType<typeof createClientUpdates> {
       return () => target.removeEventListener(type, listener, { capture: true });
     },
     responses: onRpcResponse,
-    servedBuild: async () => {
-      const response = await fetch("/build-id", { cache: "no-store", credentials: "omit" });
-      return response.ok ? (await response.text()).trim() : null;
-    },
+    servedBuild: fork.servedBuild,
+    forkAllows: fork.allows,
+    installFork: fork.install,
     reload: recoveryReload,
     holdsUnsavedWork: () => activeCall() !== null || composerHoldsUnsavedWork(),
     holdsWorkInFlight: () => activeCall() !== null || composerHoldsWorkInFlight(),

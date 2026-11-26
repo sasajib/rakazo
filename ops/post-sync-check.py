@@ -78,7 +78,11 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # as they need them; vault_fill reads the server from the tool id (upstream labels sources by
            # display name); remember {shared} cannot write STANDING.md
            ("backgroundYieldsSlot(", 2), ("connectorToolServerKey(", 2), ("catalogSources", 3),
-           ("parsed.data.shared &&", 1)]
+           ("parsed.data.shared &&", 1),
+           # an open tab moves onto a new deploy by itself (1.27): upstream tracker seams, the screen-control
+           # hold, the web server's kill switch
+           ("forkClientUpdates(", 2), ("installFork", 2), ("forkAllows", 2), ("holdReload(", 2),
+           ("autoReloadHeaderMiddleware(", 2), ("WEB_AUTO_RELOAD", 2)]
 results = []
 
 

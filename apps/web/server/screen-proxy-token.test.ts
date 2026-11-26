@@ -172,6 +172,7 @@ async function startProxy() {
     log: logger,
     api: authorityOrigin,
     allowedHosts: [],
+    autoReload: true,
     screenProxySecret: () => secret,
     performanceAssetDelayMs: 0,
     desktopStackToken: "",

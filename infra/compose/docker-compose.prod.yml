@@ -743,6 +743,8 @@ services:
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set SCREEN_PROXY_SECRET in .env}
       RAKAZO_CSP_SCRIPT_SRC: ${RAKAZO_CSP_SCRIPT_SRC:-}
       RAKAZO_CSP_CONNECT_SRC: ${RAKAZO_CSP_CONNECT_SRC:-}
+      # Fork: 0 = open tabs only show the "New version" notice, never reload themselves.
+      WEB_AUTO_RELOAD: ${WEB_AUTO_RELOAD:-}
       RAKAZO_THEME: ${RAKAZO_THEME:-}
       CRISP_WEBSITE_ID:
     expose:

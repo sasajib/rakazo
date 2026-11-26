@@ -16,6 +16,7 @@ import { ComputerMaintenanceActions } from "../../../components/computers/Comput
 import { computersAreUnavailable } from "../../../components/computers/ComputersUnavailableHint";
 import { screenlessUserMachine } from "../../../lib/computers/computer-sandbox";
 import { bootComputerOnce, embeddableScreenUrl } from "../../../lib/computers/computer-screen";
+import { holdReload } from "../../../lib/platform/client-update-fork";
 import type { createSpaceRpc } from "../../../lib/query/rpc";
 import {
   computerBusyWithRun,
@@ -318,6 +319,8 @@ export function useComputerControls({
   // names it, so a late one from an old page never ends newer control.
   const heldBotId = hasControl && computerOpen ? computerBot?.id : undefined;
   const heldLeaseId = heldBotId ? computer?.controlLeaseId : undefined;
+  // Fork: a tab on an old build never reloads itself while this person controls the screen.
+  useEffect(() => (heldBotId ? holdReload() : undefined), [heldBotId]);
   const handBack = (botId: string, leaseId: string) =>
     void rpc.computer
       .release({ botId, leaseId }, { context: { keepalive: true } })
