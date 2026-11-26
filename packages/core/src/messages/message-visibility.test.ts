@@ -4,7 +4,12 @@ import { projectMessageReactions } from "./message-reactions.js";
 import {
   expandPeerReplies,
   foldPeerReplies,
+  isBackgroundInputBlock,
+  isNeedsPersonBlock,
+  isOpenNeedsPersonBlock,
+  isPeerRunVisibleBlock,
   jumpTargetId,
+  NEEDS_PERSON_BLOCK_KINDS,
   userVisibleMessages,
 } from "./message-visibility.js";
 
@@ -490,5 +495,139 @@ describe("user-visible messages", () => {
     expect(
       userVisibleMessages(background, { backgroundRunIds: ["run-ticket"] }).map((m) => m.id),
     ).toEqual(["ask", "computer", "approval", "connect", "user"]);
+  });
+});
+
+// Fork (1.21): one rule for cards that wait on the person, shared by server and clients.
+describe("cards that wait on the person", () => {
+  type Block = ThreadMessage["blocks"][number];
+  const cards: Block[] = [
+    { kind: "ask", text: "Send it?", status: "pending" },
+    { kind: "choice", question: "Which one?", options: [{ id: "a", letter: "A", label: "One" }] },
+    { kind: "computer", state: "Needs you", text: "Sign in" },
+    {
+      kind: "mcp_approval",
+      name: "Any server",
+      serverId: "server-1",
+      transport: "streamable_http",
+      endpoint: "https://mcp.example.test/mcp",
+      needsOAuth: false,
+      status: "pending",
+    },
+    {
+      kind: "app_connect",
+      provider: "any",
+      name: "Any app",
+      description: "",
+      logo: null,
+      status: "pending",
+    },
+    { kind: "connect", name: "Any", initial: "A", color: "#000", status: "pending" },
+    {
+      kind: "tool_question",
+      question: { source: "Any tool", message: "Which account?", fields: [] },
+      status: "pending",
+      expiresAt: "2026-11-26T00:00:00.000Z",
+      publicKey: "key",
+    } as unknown as Block,
+    {
+      kind: "plan",
+      planId: "plan-1",
+      title: "Any plan",
+      steps: [{ text: "Do it" }],
+      revision: 1,
+      status: "pending",
+    },
+    {
+      kind: "learned_skill",
+      proposalId: "proposal-1",
+      action: "create",
+      name: "any-skill",
+      description: "",
+      summary: "",
+      mode: "ask",
+      status: "pending",
+    },
+    {
+      kind: "skill_draft",
+      skillId: "skill-1",
+      name: "Any",
+      goal: "",
+      playbook: {
+        whenToUse: "",
+        inputs: [],
+        steps: [],
+        howToCheck: "",
+        whatToReturn: "",
+        approvalBoundaries: "",
+        failureHandling: "",
+      },
+      status: "draft",
+    },
+    { kind: "import_setup", items: [{ kind: "routine", routineId: "r", name: "n" }] } as Block,
+    {
+      kind: "call_request",
+      callId: "call-1",
+      reason: "Need a word",
+      opening: "Hi",
+      status: "ringing",
+      expiresAt: "2026-11-26T00:00:00.000Z",
+    },
+  ];
+
+  it("has a sample for every kind in the list", () => {
+    expect(cards.map((card) => card.kind).sort()).toEqual([...NEEDS_PERSON_BLOCK_KINDS].sort());
+  });
+
+  it.each(cards.map((card) => [card.kind, card] as const))(
+    "keeps a %s card posted by a run another agent started",
+    (_kind, card) => {
+      const delegated = [
+        received,
+        message("activity", "run-peer", [{ kind: "steps", steps: [{ label: "Tool", count: 1 }] }]),
+        message("card", "run-peer", [card]),
+      ];
+      // Chat transcript (web and mobile fold with receipts kept).
+      expect(
+        foldPeerReplies(delegated, { includePeerReceipts: true }).messages.map((item) => item.id),
+      ).toEqual(["received", "card"]);
+      // What the server sends for the same run, and for a background run.
+      expect(isPeerRunVisibleBlock(card)).toBe(true);
+      expect(isBackgroundInputBlock(card)).toBe(true);
+      expect(isNeedsPersonBlock(card)).toBe(true);
+      expect(isOpenNeedsPersonBlock(card)).toBe(true);
+      // A run whose receipt is outside the loaded page is still known to be a peer run.
+      expect(
+        userVisibleMessages([message("card", "run-old", [card])], {
+          includePeerReceipts: true,
+          knownPeerRunIds: ["run-old"],
+        }).map((item) => item.id),
+      ).toEqual(["card"]);
+    },
+  );
+
+  it("keeps activity of the same runs hidden", () => {
+    for (const kind of ["steps", "progress", "meta", "subagent", "delivery"]) {
+      expect(isNeedsPersonBlock({ kind })).toBe(false);
+      expect(isPeerRunVisibleBlock({ kind })).toBe(false);
+    }
+    expect(isPeerRunVisibleBlock({ kind: "text", text: "Done" })).toBe(true);
+    expect(isPeerRunVisibleBlock({ kind: "bot_message_received" })).toBe(true);
+    expect(isNeedsPersonBlock({ kind: "a_kind_from_the_future" })).toBe(false);
+    expect(isNeedsPersonBlock({ kind: "toString" })).toBe(false);
+    expect(isNeedsPersonBlock(null)).toBe(false);
+  });
+
+  it("knows when a card no longer waits", () => {
+    const settled: Block[] = [
+      { kind: "ask", text: "Send it?", status: "answered" },
+      { ...(cards[3] as Extract<Block, { kind: "mcp_approval" }>), status: "connected" },
+      { ...(cards[3] as Extract<Block, { kind: "mcp_approval" }>), status: "dismissed" },
+      { ...(cards[7] as Extract<Block, { kind: "plan" }>), status: "approved" },
+      { ...(cards[8] as Extract<Block, { kind: "learned_skill" }>), mode: "auto", status: "saved" },
+      { kind: "computer", state: "Done", text: "Signed in" },
+      { kind: "text", text: "Hello" },
+    ];
+    expect(settled.map(isOpenNeedsPersonBlock)).toEqual(settled.map(() => false));
   });
 });

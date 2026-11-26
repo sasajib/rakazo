@@ -46,7 +46,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # shellDescription(); job tools filtered before withShellScreenTool; LiveKit calls skip the
            # automatic-language transcriber check on mobile
            ("Fork (1.11 background shell jobs)", 1), ("JOB_TOOL_NAME_SET", 2),
-           ('autoLanguage && transport !== "livekit"', 1)]
+           ('autoLanguage && transport !== "livekit"', 1),
+           # 2026-11-26 audit fixes (FORK.md 1.21+): one core rule for cards that wait on the person, used by
+           # the server page filter, the live-event filter, the unread default and the owner notice
+           ("isNeedsPersonBlock", 3), ("isPeerRunVisibleBlock", 2), ("notifyOpenOwnerCards(", 2)]
 results = []
 
 

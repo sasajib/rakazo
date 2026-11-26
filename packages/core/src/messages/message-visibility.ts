@@ -1,4 +1,5 @@
 import type { MessageBlock } from "@rakazo/contracts";
+import { TAKEOVER_COMPUTER_PENDING_STATE } from "../threads/thread-message-updates.js";
 import { messageReaction } from "./message-reactions.js";
 
 type PresentableMessage = {
@@ -43,23 +44,119 @@ export function isPeerReceiptBlocks(blocks: readonly MessageBlock[]): boolean {
   );
 }
 
-/** User-input cards remain visible when their run otherwise stays in the background. */
-export function isBackgroundInputBlock(block: unknown): boolean {
+/**
+ * Fork (1.21): the ONE rule for "this block is a card that waits on the person". Every filter that
+ * hides the work of a run the person did not start (a run another agent started, a background
+ * run) must keep these, on the server (message pages, live events, unread, notifications) and in
+ * the clients (transcript folding, previews). The record is keyed by every block kind, so a new
+ * kind does not compile until someone decides which side it is on.
+ */
+const NEEDS_PERSON_BY_KIND: Record<MessageBlock["kind"], boolean> = {
+  // Cards with a button, a field or a link the person has to use.
+  ask: true,
+  choice: true,
+  computer: true,
+  mcp_approval: true,
+  app_connect: true,
+  connect: true,
+  tool_question: true,
+  plan: true,
+  learned_skill: true,
+  skill_draft: true,
+  import_setup: true,
+  call_request: true,
+  // Content and activity: shown or hidden by the rules of the run they belong to.
+  text: false,
+  card: false,
+  chart: false,
+  app: false,
+  image: false,
+  file: false,
+  page: false,
+  voice_call: false,
+  meta: false,
+  routine_event: false,
+  delivery: false,
+  progress: false,
+  steps: false,
+  subagent: false,
+  child_bot: false,
+  cloud_agent: false,
+  handoff: false,
+  channel_message: false,
+  bot_message_sent: false,
+  bot_message_received: false,
+};
+
+/** Block kinds that wait on the person, whatever run posted them. */
+export const NEEDS_PERSON_BLOCK_KINDS: readonly MessageBlock["kind"][] = (
+  Object.keys(NEEDS_PERSON_BY_KIND) as MessageBlock["kind"][]
+).filter((kind) => NEEDS_PERSON_BY_KIND[kind]);
+
+function blockKind(block: unknown): string | undefined {
+  // Also reads stored JSON and event payloads, whose elements are not checked.
+  if (!block || typeof block !== "object" || !("kind" in block)) return undefined;
+  return typeof block.kind === "string" ? block.kind : undefined;
+}
+
+/** A card the person has to act on: it stays visible when the rest of its run is hidden. */
+export function isNeedsPersonBlock(block: unknown): boolean {
+  const kind = blockKind(block);
+  return kind !== undefined && Object.hasOwn(NEEDS_PERSON_BY_KIND, kind)
+    ? NEEDS_PERSON_BY_KIND[kind as MessageBlock["kind"]]
+    : false;
+}
+
+/** The card is still waiting: nobody has answered, approved, connected or dismissed it. */
+export function isOpenNeedsPersonBlock(block: MessageBlock): boolean {
+  switch (block.kind) {
+    case "ask":
+      return block.status === "pending";
+    case "choice":
+      return block.answerId === undefined;
+    case "computer":
+      return block.state === TAKEOVER_COMPUTER_PENDING_STATE;
+    case "mcp_approval":
+    case "app_connect":
+    case "connect":
+    case "tool_question":
+    case "plan":
+      return block.status === "pending";
+    case "learned_skill":
+      return block.status === "pending" && block.mode === "ask";
+    case "skill_draft":
+      return block.status === "draft";
+    case "import_setup":
+      return block.undone !== true && block.items.length > 0;
+    case "call_request":
+      return block.status === "ringing";
+    default:
+      return false;
+  }
+}
+
+/**
+ * What a client is sent from a run another agent started: the receipts (chips), every card that
+ * waits on the person, and the agent's own reply content. Steps, progress and the rest stay out.
+ */
+export function isPeerRunVisibleBlock(block: unknown): boolean {
+  if (isNeedsPersonBlock(block)) return true;
+  const kind = blockKind(block);
   return (
-    !!block &&
-    typeof block === "object" &&
-    "kind" in block &&
-    (block.kind === "ask" ||
-      block.kind === "computer" ||
-      block.kind === "mcp_approval" ||
-      block.kind === "app_connect" ||
-      block.kind === "tool_question")
+    kind === "bot_message_sent" ||
+    kind === "bot_message_received" ||
+    kind === "text" ||
+    kind === "chart" ||
+    kind === "app" ||
+    kind === "file" ||
+    kind === "image" ||
+    kind === "page"
   );
 }
 
-/** Cards a peer run stays inline for: the user has to act on them. */
-function isPeerInputBlock(block: MessageBlock): boolean {
-  return isBackgroundInputBlock(block) || block.kind === "choice";
+/** User-input cards remain visible when their run otherwise stays in the background. */
+export function isBackgroundInputBlock(block: unknown): boolean {
+  return isNeedsPersonBlock(block);
 }
 
 function isAskBlock(block: MessageBlock): boolean {
@@ -168,7 +265,7 @@ export function foldPeerReplies<T extends PresentableMessage>(
       return fold(parentMarkerId, message);
     if (!message.runId || !peerRunIds.has(message.runId)) return true;
     // User-input cards stay inline; previews without receipts keep only asks.
-    if (message.blocks.some(includePeerReceipts ? isPeerInputBlock : isAskBlock)) return true;
+    if (message.blocks.some(includePeerReceipts ? isNeedsPersonBlock : isAskBlock)) return true;
     // A relay is the bot's own reply to the user, so previews show it too.
     if (
       (!includeText && !relayRunIds.has(message.runId)) ||

@@ -426,6 +426,41 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** `message_bot`/`bot-messages.ts` delivery transaction, the `agentSkillsLine` join in `run-assembly-context.ts`,
   `run-tools-messaging.ts` handlers, upstream message block kinds (exhaustive switches), pinned tool cap.
 
+### 1.21 Cards that wait on the person are never hidden with their run (2026-11-26 audit, finding 1)
+- **Why:** an agent that another agent had asked for work posted an approval card and said "approve the card in this
+  chat"; the card was in the database and never reached the client. The server page filter for runs with trigger
+  `bot_message` kept an explicit list (receipts, ask, text, chart, app, file, image, page) and dropped every other
+  card (`mcp_approval`, `app_connect`, `computer`, `choice`, `tool_question`, `connect`, fork `plan`, `learned_skill`,
+  `skill_draft`, `import_setup`), while the clients' fold already wanted them inline. Upstream has the same fault.
+- **Purpose:** ONE rule in `@rakazo/core` (`messages/message-visibility.ts`): `NEEDS_PERSON_BY_KIND`, a record keyed by
+  every `MessageBlock` kind (a new kind does not compile until it is classified), with `isNeedsPersonBlock`,
+  `isOpenNeedsPersonBlock` (still pending), `isPeerRunVisibleBlock` (receipts + needs-person + reply content) and
+  `NEEDS_PERSON_BLOCK_KINDS`. Every place that hides a run the person did not start uses it: `threads/get` and
+  `threads/messages` (`withoutPeerRunMessages`), live events (`shouldForwardPeerThreadEvent`,
+  `shouldForwardBackgroundThreadEvent`), the clients' `foldPeerReplies` (web + mobile), `isBackgroundInputBlock`
+  (now the same rule), and `publishMessage` (background filter + unread default). No agent, server or card is named.
+- **Unread + notification:** `defaultMarkUnread` (`runs/assembly/run-messages.ts`): a message from a `bot_message` run
+  marks the chat unread when it carries such a card (text replies of delegated work still do not). New
+  `runs/lifecycle/owner-card-notice.ts` `notifyOpenOwnerCards`, called from `completeRun`: a `bot_message` or
+  background run that ends with a card still open sends one `help` notification ("<Agent> needs you", the card's
+  name, never its contents) to the run's owner and logs `run.owner_card_waiting` (count, kinds). Ask, takeover and
+  tool-question cards keep their own notifications (they pause the run; it is not complete while they are open).
+- **Delegated run that posts a card:** unchanged on purpose: it ends, its reply goes back to the sender, the card now
+  shows in the recipient's chat, that chat turns unread and the owner is notified.
+- **Seams:** `apps/api/src/threads/thread-message-pages.ts` (two kind lists replaced by the core rule),
+  `packages/adapters/src/runs/assembly/run-messages.ts`, `runs/lifecycle/run-complete.ts` (one call).
+- **Env / migration:** none.
+- **Tests:** `apps/api/src/threads/thread-message-pages.test.ts` ("returns a %s card a delegated run posted, and
+  forwards it live": 7 kinds, all FAIL on the old code), `core/src/messages/message-visibility.test.ts` (a sample
+  for every kind in the list, fold keeps each, settled cards no longer open), `runs/lifecycle/owner-card-notice.test.ts`.
+- **Live check:** throwaway agents A and B; A asks B (message_bot) for something that makes B call `add_mcp_server`
+  for a new endpoint: the approval card is in B's chat without a reload (`threads/get` returns the `mcp_approval`
+  message), B's chat is unread, api log has `run.owner_card_waiting`. Marker `isNeedsPersonBlock`.
+- **Not changed:** sidebar preview text (`bot-previews.ts`) still takes text from asks only: a card has no preview
+  text; the unread dot is what shows. Mobile still has no renderer for `plan` / `learned_skill` cards (1.19, 1.20).
+- **Conflicts:** upstream adding a message block kind (add it to `NEEDS_PERSON_BY_KIND`; tsc fails until then) or
+  editing the two filters in `thread-message-pages.ts` (keep the core call, drop any re-grown kind list).
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
