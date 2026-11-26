@@ -55,7 +55,10 @@ async function memoryModel(
 ): Promise<MemoryModel | undefined> {
   const endpoint = await resolveModelEndpoint(deps, userId, config.model);
   return endpoint
-    ? createOpenAiMemoryModel(endpoint, { timeoutMs: config.model.timeoutMs })
+    ? createOpenAiMemoryModel(endpoint, {
+        timeoutMs: config.model.timeoutMs,
+        maxTokens: config.model.maxTokens,
+      })
     : undefined;
 }
 

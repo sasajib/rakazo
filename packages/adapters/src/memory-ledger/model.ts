@@ -10,6 +10,7 @@ import { getLogger } from "@rakazo/logging";
 import * as z from "zod";
 import { parseModelJson } from "../models/model-json.js";
 import type { LedgerConfig } from "./config.js";
+import { DEFAULT_MODEL_MAX_TOKENS } from "./config.js";
 import type { FetchLike } from "./embeddings.js";
 import type { Fact, FactCandidate, OwnerMessage } from "./types.js";
 import { FACT_AREAS } from "./types.js";
@@ -143,10 +144,84 @@ export function parseExtraction(
   });
 }
 
+export type ChatAnswer =
+  | { ok: false; status: number }
+  | {
+      ok: true;
+      content: unknown;
+      finishReason: string;
+      /** The budget of the call this answer came from. */
+      maxTokens: number;
+      /** True when the first call ran out of budget with no answer and this is the second. */
+      retried: boolean;
+    };
+
+const emptyAnswer = (content: unknown) => typeof content !== "string" || content.trim() === "";
+
+/**
+ * One chat completion with a completion budget. A reasoning model (GLM) spends completion tokens
+ * thinking before it answers: when the call stops on the budget (`finish_reason: "length"`) with
+ * an empty answer, the whole budget went on thinking, so it is asked once more with twice as
+ * much before the caller gives up. Any other outcome (an answer, a cut-off answer, an HTTP
+ * error) is returned as it is. Each call gets its own timeout. Shared with the skill curator.
+ */
+export async function chatWithBudget(input: {
+  fetchImpl: FetchLike;
+  url: string;
+  endpoint: ModelEndpoint;
+  messages: Array<{ role: "system" | "user"; content: string }>;
+  maxTokens: number;
+  timeoutMs: number;
+  signal?: AbortSignal | undefined;
+  /** Log event of the retry, e.g. `memory.ledger.model_retry`. */
+  retryEvent: string;
+}): Promise<ChatAnswer> {
+  const { endpoint } = input;
+  const once = async (maxTokens: number, retried: boolean): Promise<ChatAnswer> => {
+    const timeout = AbortSignal.timeout(input.timeoutMs);
+    const response = await input.fetchImpl(input.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(endpoint.headers ?? {}),
+        ...(endpoint.apiKey ? { authorization: `Bearer ${endpoint.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: endpoint.model,
+        temperature: 0,
+        max_tokens: maxTokens,
+        messages: input.messages,
+      }),
+      signal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
+    });
+    if (!response.ok) return { ok: false, status: response.status ?? 0 };
+    const body = (await response.json()) as {
+      choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
+    };
+    const choice = body.choices?.[0];
+    return {
+      ok: true,
+      content: choice?.message?.content,
+      finishReason: String(choice?.finish_reason ?? "none"),
+      maxTokens,
+      retried,
+    };
+  };
+  const first = await once(input.maxTokens, false);
+  if (!first.ok || first.finishReason !== "length" || !emptyAnswer(first.content)) return first;
+  const doubled = input.maxTokens * 2;
+  getLogger().info(input.retryEvent, {
+    "llm.finish_reason": first.finishReason,
+    "llm.max_tokens": input.maxTokens,
+    "llm.retry_max_tokens": doubled,
+  });
+  return once(doubled, true);
+}
+
 /** Chat completions against one OpenAI-compatible endpoint. */
 export function createOpenAiMemoryModel(
   endpoint: ModelEndpoint,
-  options: { timeoutMs: number; fetchImpl?: FetchLike },
+  options: { timeoutMs: number; maxTokens?: number | undefined; fetchImpl?: FetchLike },
 ): MemoryModel {
   const fetchImpl = options.fetchImpl ?? (fetch as unknown as FetchLike);
   const url = `${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -154,41 +229,33 @@ export function createOpenAiMemoryModel(
     async extract(input, signal) {
       const { payload, idOf } = extractionPayload(input);
       try {
-        const timeout = AbortSignal.timeout(options.timeoutMs);
-        const response = await fetchImpl(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(endpoint.headers ?? {}),
-            ...(endpoint.apiKey ? { authorization: `Bearer ${endpoint.apiKey}` } : {}),
-          },
-          body: JSON.stringify({
-            model: endpoint.model,
-            temperature: 0,
-            // Reasoning models (GLM) spend completion tokens thinking first; 2000 ran out on longer
-            // chats and returned an empty answer, which read as "nothing to learn".
-            max_tokens: 8000,
-            messages: [
-              { role: "system", content: EXTRACTION_INSTRUCTIONS },
-              { role: "user", content: JSON.stringify(payload) },
-            ],
-          }),
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        // Reasoning models (GLM) spend completion tokens thinking first; 2000, then 8000, ran out
+        // on longer chats and returned an empty answer, which read as "nothing to learn".
+        const answer = await chatWithBudget({
+          fetchImpl,
+          url,
+          endpoint,
+          messages: [
+            { role: "system", content: EXTRACTION_INSTRUCTIONS },
+            { role: "user", content: JSON.stringify(payload) },
+          ],
+          maxTokens: options.maxTokens ?? DEFAULT_MODEL_MAX_TOKENS,
+          timeoutMs: options.timeoutMs,
+          signal,
+          retryEvent: "memory.ledger.model_retry",
         });
-        if (!response.ok) {
-          getLogger().warn("memory.ledger.model_failed", { "http.status": response.status ?? 0 });
+        if (!answer.ok) {
+          getLogger().warn("memory.ledger.model_failed", { "http.status": answer.status });
           return undefined;
         }
-        const body = (await response.json()) as {
-          choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
-        };
-        const choice = body.choices?.[0];
-        const content = choice?.message?.content;
+        const { content } = answer;
         const parsed = typeof content === "string" ? parseExtraction(content, idOf) : undefined;
         if (!parsed)
           getLogger().warn("memory.ledger.model_unusable", {
-            "llm.finish_reason": String(choice?.finish_reason ?? "none"),
+            "llm.finish_reason": answer.finishReason,
             "llm.content_length": typeof content === "string" ? content.length : -1,
+            "llm.max_tokens": answer.maxTokens,
+            "llm.retried": answer.retried,
           });
         return parsed;
       } catch (error) {

@@ -276,7 +276,8 @@ describe("vault_fill through the MCP connector", () => {
     try {
       const result = await fill();
       expect(result).toMatchObject({ ok: false, completed: 0 });
-      expect(String(result.error)).toContain("evaluate tool of web-driver is not available");
+      expect(String(result.error)).toContain("tried on web-driver is available to this bot");
+      expect(String(result.error)).toContain("tried: evaluate_in_page, evaluate");
       expect(state.calls.some((call) => call.args.kind === "fill")).toBe(false);
     } finally {
       await mcp.close();

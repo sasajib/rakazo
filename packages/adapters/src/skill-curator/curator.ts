@@ -614,7 +614,10 @@ export async function curate(
     model ??
     (await resolveModelEndpoint(deps, job.userId, config.model).then((endpoint) =>
       endpoint
-        ? createOpenAiCuratorModel(endpoint, { timeoutMs: config.model.timeoutMs })
+        ? createOpenAiCuratorModel(endpoint, {
+            timeoutMs: config.model.timeoutMs,
+            maxTokens: config.model.maxTokens,
+          })
         : undefined,
     ));
   if (!curatorModel) return { outcome: "failed", why: "no_model", usedModel: false };

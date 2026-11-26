@@ -155,9 +155,17 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 ### 1.9 Prompt-surface snapshot + ops scripts
 - **Commit:** `7f19c885d` (+ `bce118de8`, `a5d42086d` extend `post-sync-check.py`).
 - **Files:** `packages/adapters/src/runs/assembly/prompt-surface.test.ts` + `__prompt_surface__/`, `ops/post-sync-check.py`,
-  `ops/rakazo_rpc.py` (opens and closes its OWN Neo tab), `ops/weekly-self-audit.py`, `ops/standing-graph.py`,
+  `ops/rakazo_rpc.py` (opens and closes its OWN Neo tab; same file as the stack repo's `ops/rakazo_rpc.py`, keep both
+  in step; test `ops/test_rakazo_rpc.py` + `ops/testdata/neo-run-samples.json`), `ops/weekly-self-audit.py`, `ops/standing-graph.py`,
   `ops/pgvector-swap.sh`, `ops/postgres-graph/Dockerfile` (`rakazo/postgres-graph:16-pgv-age1.6`, pgvector + AGE),
   `ops/memory-ledger-eval/`.
+- **Fix 2026-11-26 (`fix/post-live-1126`): `ops/rakazo_rpc.py`.** The fork copy was stale (`page.evaluate`, which neo
+  no longer has; it broke the live part of `post-sync-check.py`): replaced by the stack copy (`page.evaluateInPage`).
+  In both copies `_run` now reads both result shapes of neo's `run` tool (`read_result`): inline
+  `{ok, value}` and, over ~20 KB, `{ok, writtenToFile, path, contentLength}` whose file holds `ok\nreturn: <value as
+  JSON>`. Before, a large result (`threads/get` on a long thread) raised "neo run failed: None" after a pointless
+  retry. Test without a browser: `python3 ops/test_rakazo_rpc.py` (recorded SSE answers of both shapes + a failed
+  run; 3 of 5 fail on the old `_run`).
 - **Conflicts:** none in upstream code; the snapshot fails on every upstream prompt change (review, then `-u`).
 
 ### 1.10 Memory ledger (shared Space fact ledger, phases 1–2)
@@ -170,7 +178,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `core/src/runs/run-supervision.ts`, `db/src/database/row-security.ts` (`memory_facts`, `memory_fact_links`, `memory_ledger_jobs`).
   Fork dir: `packages/adapters/src/memory-ledger/` (NOTICE: concepts adapted, see file).
 - **Env:** `MEMORY_LEDGER=1`, `MEMORY_LEDGER_MODEL_URL`, `MEMORY_LEDGER_MODEL`, `MEMORY_LEDGER_MODEL_API_KEY[_FILE]`,
-  `MEMORY_LEDGER_MODEL_CONNECTION`, `MEMORY_LEDGER_MODEL_TIMEOUT_MS`, `MEMORY_EMBEDDINGS_URL/_MODEL/_API_KEY[_FILE]/_TIMEOUT_MS`,
+  `MEMORY_LEDGER_MODEL_CONNECTION`, `MEMORY_LEDGER_MODEL_TIMEOUT_MS`, `MEMORY_LEDGER_MODEL_MAX_TOKENS`, `MEMORY_EMBEDDINGS_URL/_MODEL/_API_KEY[_FILE]/_TIMEOUT_MS`,
   `MEMORY_LEDGER_PACK_BUDGET_MS` (2500 on bee), `MEMORY_LEDGER_CORE_MAX_BYTES`, `MEMORY_LEDGER_PACK_MAX_BYTES`,
   `MEMORY_LEDGER_PACK_LIMIT`, `MEMORY_LEDGER_FAST_PACK_LIMIT`.
 - **Migration:** `20261231235500_memory_ledger` (raw SQL tables, no Prisma models; hard-requires pgvector).
@@ -180,6 +188,17 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Rule for tests:** messages sent as the owner become shared facts. After any throwaway-bot test:
   `update memory_facts set status='retracted', "validTo"=now() where "writtenByBotName"='<bot>' and status in ('confirmed','tentative','disputed')`.
 - **Conflicts:** upstream moves memory/assembly files often (`runs/assembly/`, `runs/lifecycle/run-complete.ts`); re-place the hooks.
+- **Fix 2026-11-26 (`fix/post-live-1126`): the memory model's completion budget.** `memory.ledger.model_unusable` 7 times
+  in 25 min with `finish_reason: length` and empty content: the GLM reasoning model spent all 8000 completion tokens
+  thinking. Now `MEMORY_LEDGER_MODEL_MAX_TOKENS` (default 16000, clamp 256..200000; `config.ts`, literal-name read, in
+  the three compose anchors) sets `max_tokens`, and `chatWithBudget` (`model.ts`) repeats a call that ended on the budget
+  with NO answer once with twice the budget before the job is marked failed (a cut-off answer, an empty answer that was
+  not cut, or an HTTP error is not repeated). Log `memory.ledger.model_retry` (`llm.max_tokens`, `llm.retry_max_tokens`);
+  `model_unusable` now carries `llm.max_tokens` and `llm.retried`. The skill curator (1.19) calls the same helper with
+  the same setting (was a fixed 8000; log `skill.curator.model_retry`). Worst case per job: two model calls, each with
+  its own timeout. Tests: `memory-ledger/model.test.ts` ("a reasoning model that spends the whole budget thinking", 4
+  cases + the env), `skill-curator/curator.test.ts` (same for the curator), `compose-env.test.ts`. Stack: add the
+  `MEMORY_LEDGER_MODEL_MAX_TOKENS:` line to the stack compose anchor only if the default is to be changed.
 - **Fix 2026-11-25 (image `main-1125c`): candidate lookups ranked by relevance.** `store.ts` `findLive`/`findRetired` ordered
   OR-of-words FTS hits by `updatedAt DESC LIMIT n`; with >20 live facts sharing "owner/wants/assistant", a `remember remove`
   quoting an older fact word for word got no candidate ("no entry matches", fell back to MEMORY.md). Now: subject/id hits,
@@ -295,7 +314,17 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Env:** `VAULT_FILL_MCP_BROWSERS` = comma list of MCP server slugs / installed MCP source names (bee: `browser-mcp`);
   empty = feature off, tool never offered. `VAULT_FILL_MCP_BROWSER_SHAPES` = optional JSON `{"<server>|*": {focus, inspect,
   fill: {tool, args}, elementCheck}}` with placeholders `{page} {ref} {value} {script} {function}`; default = BrowserOS
-  neo's shape (`act` focus/fill, `evaluate {code}`). Unreadable shapes switch the feature off (logged `vault_fill.config_invalid`).
+  neo's shape (`act` focus/fill, `evaluate_in_page {page, code}`, else `evaluate`). Unreadable shapes switch the feature off (logged `vault_fill.config_invalid`).
+- **Fix 2026-11-26 (`fix/post-live-1126`, found by the live test of `main-1126a`): the default script step resolves by
+  availability.** BrowserOS neo has no `evaluate` tool (it is `evaluate_in_page {page, code}`); the live run failed with
+  "The evaluate tool of browser-mcp is not available to this bot" and the deployment worked around it with
+  `VAULT_FILL_MCP_BROWSER_SHAPES`. Now a step's `tool` may be ONE name or a LIST of alternative names (`stepTools`); the
+  first the server offers to this bot is used and remembered for the call. Default inspect =
+  `["evaluate_in_page", "evaluate"]`, so no override is needed on bee; an override (one name or a list) is still
+  honoured and replaces the default list. When none is offered the error names every tool tried
+  ("None of the tools tried on <server> is available to this bot (tried: evaluate_in_page, evaluate)"). Tests:
+  `run-tools-vault-fill.test.ts` ("uses the script tool the server offers, with no shape configured": FAILS on the old
+  default; "names every tool it tried…"; "still honours a shape that names one tool…"), connector test wording.
 - **Migrations:** none.
 - **Tests:** `runs/tools/run-tools-vault-fill.connector.test.ts` (real `McpConnector` + HTTP MCP server: one session for the
   agent's call and the fill, allowlist held), `runs/tools/run-tools-vault-fill.test.ts` (fake MCP browser behind the real `ConnectorRegistry` and catalog
@@ -440,6 +469,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Migration:** `20270120090000_skill_learning` (raw SQL, no Prisma models: `skill_learning_settings`, `skill_learning_jobs`,
   `skill_learning_proposals`, `learned_skills`, `skill_teaching_sessions`; RLS by `spaceId` + system bypass; cascades on
   space/bot; `learned_skills` cascades with its skill).
+- **Fix 2026-11-26:** the curator model's `max_tokens` is the ledger's `MEMORY_LEDGER_MODEL_MAX_TOKENS` (default 16000,
+  was a fixed 8000) with the same one retry at twice the budget (see 1.10); log `skill.curator.model_retry`.
 - **Logs:** `skill.curator.decided` (reason, mode, outcome, why, action, proposal, skill, ms), `skill.curator.decision`,
   `skill.curator.teaching_started|cancelled`, `skill.curator.model_unusable|model_failed`, `skill.curator.ledger_dedup`.
 - **Tests:** `skill-curator/curator.test.ts` (triggers, gates, model I/O, outline redaction, prompt line, config),

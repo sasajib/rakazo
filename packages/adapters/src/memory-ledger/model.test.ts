@@ -76,6 +76,87 @@ describe("memory model reply", () => {
     ]);
   });
 
+  it("reads the completion budget from MEMORY_LEDGER_MODEL_MAX_TOKENS, 16000 by default", () => {
+    expect(ledgerConfig({}).model.maxTokens).toBe(16_000);
+    expect(ledgerConfig({ MEMORY_LEDGER_MODEL_MAX_TOKENS: "24000" }).model.maxTokens).toBe(24_000);
+    expect(ledgerConfig({ MEMORY_LEDGER_MODEL_MAX_TOKENS: "nonsense" }).model.maxTokens).toBe(
+      16_000,
+    );
+    expect(ledgerConfig({ MEMORY_LEDGER_MODEL_MAX_TOKENS: "1" }).model.maxTokens).toBe(256);
+  });
+
+  describe("a reasoning model that spends the whole budget thinking", () => {
+    const ask = (
+      answers: Array<{ content: unknown; finish_reason: string }>,
+      maxTokens?: number,
+    ) => {
+      const budgets: number[] = [];
+      const fetchImpl: FetchLike = async (_url, init) => {
+        budgets.push((JSON.parse(init.body) as { max_tokens: number }).max_tokens);
+        const answer = answers[Math.min(budgets.length, answers.length) - 1]!;
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [
+              { message: { content: answer.content }, finish_reason: answer.finish_reason },
+            ],
+          }),
+        };
+      };
+      const model = createOpenAiMemoryModel(
+        { baseUrl: "http://omniroute:20128/v1", model: "glm/glm-5.3-flash" },
+        { timeoutMs: 1000, fetchImpl, ...(maxTokens ? { maxTokens } : {}) },
+      );
+      const result = model.extract({
+        today: "2026-11-26",
+        messages: [{ id: "m1", text: "I live in Dhaka", at: new Date(), current: true }],
+        known: [],
+      });
+      return { budgets, result };
+    };
+    const fact =
+      '{"facts":[{"area":"about","subject":"owner.home-city","text":"Owner lives in Dhaka","quote":"I live in Dhaka","m":1}]}';
+
+    it("asks once more with twice the budget, and uses that answer", async () => {
+      const { budgets, result } = ask([
+        { content: "", finish_reason: "length" },
+        { content: fact, finish_reason: "stop" },
+      ]);
+      expect(await result).toEqual([expect.objectContaining({ text: "Owner lives in Dhaka" })]);
+      expect(budgets).toEqual([16_000, 32_000]);
+    });
+
+    it("doubles the configured budget, and counts a missing answer as empty", async () => {
+      const { budgets, result } = ask(
+        [
+          { content: null, finish_reason: "length" },
+          { content: '{"facts":[]}', finish_reason: "stop" },
+        ],
+        5_000,
+      );
+      expect(await result).toEqual([]);
+      expect(budgets).toEqual([5_000, 10_000]);
+    });
+
+    it("gives up after the one retry", async () => {
+      const { budgets, result } = ask([{ content: "", finish_reason: "length" }]);
+      expect(await result).toBeUndefined();
+      expect(budgets).toEqual([16_000, 32_000]);
+    });
+
+    it("does not repeat an answer that came, cut off or not, or an empty one that was not cut", async () => {
+      for (const answer of [
+        { content: '{"facts":[]}', finish_reason: "stop" },
+        { content: '{"facts":[{"area":"abo', finish_reason: "length" },
+        { content: "", finish_reason: "stop" },
+      ]) {
+        const { budgets, result } = ask([answer]);
+        await result;
+        expect(budgets).toEqual([16_000]);
+      }
+    });
+  });
+
   it("returns undefined (cue fallback) when the endpoint is down", async () => {
     const model = createOpenAiMemoryModel(
       { baseUrl: "http://127.0.0.1:9/v1", model: "m" },

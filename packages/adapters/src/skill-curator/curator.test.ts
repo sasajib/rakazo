@@ -9,7 +9,7 @@ import {
   planProposal,
   taughtSkillMd,
 } from "./curator.js";
-import { curatorPayload, parseProposal } from "./model.js";
+import { createOpenAiCuratorModel, curatorPayload, parseProposal } from "./model.js";
 import { skillsReadIn, toolOutline } from "./outline.js";
 import { skillLearningInstruction } from "./seams.js";
 import { classifyRun, isProcedureCorrection, teachingTask } from "./triggers.js";
@@ -216,6 +216,62 @@ describe("model I/O", () => {
       action: "none",
       reason: "x",
     });
+  });
+});
+
+describe("a curator model that spends the whole budget thinking", () => {
+  const input = {
+    today: "2026-11-26",
+    reason: "correction" as const,
+    botName: "Bot",
+    messages: [owner("no, always check the calendar first")],
+    replies: [],
+    outline: [],
+    skills: [],
+    rules: [],
+  };
+  const ask = (answers: Array<{ content: string; finish_reason: string }>, maxTokens?: number) => {
+    const budgets: number[] = [];
+    const model = createOpenAiCuratorModel(
+      { baseUrl: "http://omniroute:20128/v1", model: "glm/glm-5.3-flash" },
+      {
+        timeoutMs: 1000,
+        ...(maxTokens ? { maxTokens } : {}),
+        fetchImpl: async (_url, init) => {
+          budgets.push((JSON.parse(init.body) as { max_tokens: number }).max_tokens);
+          const answer = answers[Math.min(budgets.length, answers.length) - 1]!;
+          return {
+            ok: true,
+            json: async () => ({
+              choices: [
+                { message: { content: answer.content }, finish_reason: answer.finish_reason },
+              ],
+            }),
+          };
+        },
+      },
+    );
+    return { budgets, result: model.propose(input) };
+  };
+
+  it("asks once more with twice the budget, then gives up", async () => {
+    const recovered = ask([
+      { content: "", finish_reason: "length" },
+      { content: '{"action":"none","reason":"covered"}', finish_reason: "stop" },
+    ]);
+    expect(await recovered.result).toEqual({ action: "none", reason: "covered" });
+    expect(recovered.budgets).toEqual([16_000, 32_000]);
+    const lost = ask([{ content: "", finish_reason: "length" }], 4_000);
+    expect(await lost.result).toBeUndefined();
+    expect(lost.budgets).toEqual([4_000, 8_000]);
+    const answered = ask([{ content: '{"action":"none","reason":"x"}', finish_reason: "stop" }]);
+    await answered.result;
+    expect(answered.budgets).toEqual([16_000]);
+  });
+
+  it("takes its budget from the memory ledger's setting", () => {
+    expect(curatorConfig({}).model.maxTokens).toBe(16_000);
+    expect(curatorConfig({ MEMORY_LEDGER_MODEL_MAX_TOKENS: "20000" }).model.maxTokens).toBe(20_000);
   });
 });
 

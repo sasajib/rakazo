@@ -19,6 +19,7 @@ import { totpCode } from "../../secrets/vault/totp.js";
 import { LOGIN_CODE_FIELD } from "../../secrets/vault/vault-card-use.js";
 import {
   readProbe,
+  stepTools,
   VAULT_FILL_TOOL,
   vaultFillBrowserInRun,
   vaultFillConfig,
@@ -65,8 +66,15 @@ const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
  */
 function fakeMcpBrowser(
   pages: Record<number, FakePage>,
-  options: { slug?: string; refuseFill?: () => boolean; dropFill?: () => boolean } = {},
+  options: {
+    slug?: string;
+    refuseFill?: () => boolean;
+    dropFill?: () => boolean;
+    /** The name this server gives its run-a-script tool; null = it has none. */
+    scriptTool?: string | null;
+  } = {},
 ) {
+  const scriptTool = options.scriptTool === undefined ? "evaluate" : options.scriptTool;
   const slug = options.slug ?? SERVER;
   const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
   const page = { type: "integer", minimum: 0 };
@@ -90,7 +98,9 @@ function fakeMcpBrowser(
       },
       ["page", "kind"],
     ),
-    tool("evaluate", { page, code: { type: "string" }, func: { type: "string" } }, ["page"]),
+    ...(scriptTool
+      ? [tool(scriptTool, { page, code: { type: "string" }, func: { type: "string" } }, ["page"])]
+      : []),
     tool("snapshot", { page }, ["page"]),
   ];
   const text = (value: string, isError = false) => ({
@@ -107,7 +117,7 @@ function fakeMcpBrowser(
           .join("\n"),
       );
     }
-    if (name === "evaluate") {
+    if (name === scriptTool) {
       const focused = current.focused ? current.elements[current.focused] : undefined;
       // The script puts its marker together in the page, so its source never holds a record.
       const source = String(args.code ?? args.func);
@@ -483,7 +493,10 @@ describe("vault_fill only types through a server the deployment named", () => {
     expect(config.servers).toEqual(["a", "b"]);
     expect(config.shapeFor("a").fill.tool).toBe("act");
     expect(config.shapeFor("b").fill.tool).toBe("browser_type");
-    expect(config.shapeFor("b").inspect.tool).toBe("evaluate");
+    // The default script step names its alternatives, newest name first.
+    expect(config.shapeFor("b").inspect.tool).toEqual(["evaluate_in_page", "evaluate"]);
+    expect(stepTools(config.shapeFor("b").inspect)).toEqual(["evaluate_in_page", "evaluate"]);
+    expect(stepTools({ tool: "evaluate" })).toEqual(["evaluate"]);
     // Shapes that cannot be read, or that check a field they cannot focus, switch it off.
     for (const shapes of ["{not json", JSON.stringify({ a: { focus: null } })]) {
       expect(
@@ -505,6 +518,45 @@ describe("vault_fill only types through a server the deployment named", () => {
     const { fill, both, browser } = await setup();
     expect((await fill(both)).result.ok).toBe(true);
     expect(browser.calls.find((call) => call.tool === "evaluate")!.args.func).toMatch(/^\(\) =>/);
+  });
+
+  it("uses the script tool the server offers, with no shape configured", async () => {
+    // BrowserOS neo names it evaluate_in_page; the live run failed on a default of `evaluate` alone.
+    const neo = await setup({ browser: { scriptTool: "evaluate_in_page" } });
+    expect((await neo.fill(neo.both)).result.ok).toBe(true);
+    const used = new Set(neo.browser.calls.map((call) => call.tool));
+    expect(used.has("evaluate_in_page")).toBe(true);
+    expect(used.has("evaluate")).toBe(false);
+    expect(neo.fillsSent()).toHaveLength(2);
+    // A server that still names it evaluate is driven by the same default.
+    const older = await setup({ browser: { scriptTool: "evaluate" } });
+    expect((await older.fill(older.both)).result.ok).toBe(true);
+    expect(older.browser.calls.some((call) => call.tool === "evaluate")).toBe(true);
+  });
+
+  it("names every tool it tried when the server offers none of them", async () => {
+    const { fill, both, fillsSent } = await setup({ browser: { scriptTool: null } });
+    const error = String((await fill(both)).result.error);
+    expect(error).toContain("is available to this bot");
+    expect(error).toContain("tried: evaluate_in_page, evaluate");
+    expect(fillsSent()).toEqual([]);
+  });
+
+  it("still honours a shape that names one tool, and says which when it is missing", async () => {
+    vi.stubEnv(
+      "VAULT_FILL_MCP_BROWSER_SHAPES",
+      JSON.stringify({
+        "*": { inspect: { tool: "evaluate_in_page", args: { page: "{page}", code: "{script}" } } },
+      }),
+    );
+    const neo = await setup({ browser: { scriptTool: "evaluate_in_page" } });
+    expect((await neo.fill(neo.both)).result.ok).toBe(true);
+    // The override is the only name tried: a server without it is not driven by the default.
+    const older = await setup({ browser: { scriptTool: "evaluate" } });
+    const error = String((await older.fill(older.both)).result.error);
+    expect(error).toContain("The evaluate_in_page tool of");
+    expect(error).not.toContain("tried:");
+    expect(older.fillsSent()).toEqual([]);
   });
 
   it("is offered only to a run that reaches such a server", () => {

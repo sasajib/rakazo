@@ -22,9 +22,15 @@ import { CATALOG_EXECUTE, CATALOG_SEARCH } from "../../tools/lazy-tool-catalog.t
  */
 export const VAULT_FILL_TOOL = "vault_fill";
 
-/** One call of an MCP browser's tool; its arguments may hold the placeholders below. */
+const ToolNameSchema = z.string().min(1).max(200);
+
+/**
+ * One call of an MCP browser's tool; its arguments may hold the placeholders below. `tool` may be
+ * a list of alternative names for the same call (servers rename tools between versions): the
+ * first one the server offers to this bot is used.
+ */
 const StepSchema = z.object({
-  tool: z.string().min(1).max(200),
+  tool: z.union([ToolNameSchema, z.array(ToolNameSchema).min(1).max(8)]),
   args: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -43,6 +49,11 @@ const ShapeSchema = z.object({
 });
 
 export type VaultFillStep = z.infer<typeof StepSchema>;
+
+/** The tool names a step may be called by, in the order they are tried. */
+export function stepTools(step: Pick<VaultFillStep, "tool">): string[] {
+  return [...new Set(typeof step.tool === "string" ? [step.tool] : step.tool)];
+}
 export type VaultFillBrowserShape = {
   focus: VaultFillStep | null;
   inspect: VaultFillStep;
@@ -52,13 +63,14 @@ export type VaultFillBrowserShape = {
 
 /**
  * The default calls, which are BrowserOS neo's: `act` focuses and fills by snapshot ref,
- * `evaluate` runs a script in the page. `sensitive` keeps the value out of that server's own
+ * `evaluate_in_page` (`evaluate` on servers that name it so) runs a script in the page; the
+ * first of the two the server offers is used. `sensitive` keeps the value out of that server's own
  * audit log and `diff: "none"` keeps the page's change, which would quote the value, out of the
  * answer. A server with other tool or argument names overrides them per server.
  */
 export const DEFAULT_VAULT_FILL_SHAPE: VaultFillBrowserShape = {
   focus: { tool: "act", args: { page: "{page}", kind: "focus", ref: "{ref}", diff: "none" } },
-  inspect: { tool: "evaluate", args: { page: "{page}", code: "{script}" } },
+  inspect: { tool: ["evaluate_in_page", "evaluate"], args: { page: "{page}", code: "{script}" } },
   fill: {
     tool: "act",
     args: {
@@ -341,6 +353,13 @@ type StepOutcome =
 
 const CONNECTORS = ["mcp", "installed"] as const;
 
+/** Why no tool of a step could be called: every name that was tried, so the shape can be fixed. */
+function notAvailable(server: string, tried: string[]): string {
+  return tried.length === 1
+    ? `The ${tried[0]} tool of ${server} is not available to this bot.`
+    : `None of the tools tried on ${server} is available to this bot (tried: ${tried.join(", ")}).`;
+}
+
 const badArguments = (tool: string) =>
   `The browser server's ${tool} tool does not take the arguments configured for it (VAULT_FILL_MCP_BROWSER_SHAPES).`;
 
@@ -361,8 +380,10 @@ async function callStep(
   const executionId = `${target.executionId}:${label}`;
   let call: ConnectorCall | undefined;
   target.found ??= new Map();
-  const known = target.found.get(step.tool);
-  if (known) {
+  const names = stepTools(step);
+  const knownName = names.find((name) => target.found!.has(name));
+  const known = knownName ? target.found.get(knownName) : undefined;
+  if (known && knownName) {
     try {
       call = {
         tool: known.name,
@@ -371,47 +392,45 @@ async function callStep(
         route: known.route,
       };
     } catch {
-      return { ok: false, sure: true, error: badArguments(step.tool) };
+      return { ok: false, sure: true, error: badArguments(knownName) };
     }
   }
-  for (const connectorId of known ? [] : CONNECTORS) {
-    const id = connectorId === "mcp" ? `mcp__${server}__${step.tool}` : `${server}__${step.tool}`;
-    try {
-      const resolved = await connector.resolveCall?.(
-        {
-          tool: id,
-          args: { id, arguments: args },
-          executionId,
-          route: { connectorId, toolName: CATALOG_EXECUTE },
-        },
-        context,
-      );
-      const route = resolved?.call.route;
-      if (
-        route?.connectorId === connectorId &&
-        route.resourceId &&
-        route.toolName === step.tool &&
-        sameServer(route.catalogGroup ?? "", server)
-      ) {
-        call = resolved!.call;
-        target.found.set(step.tool, resolved!.tool);
-        break;
-      }
-    } catch (error) {
-      context.signal.throwIfAborted();
-      // Unknown here; the other connector may have it. Bad arguments are the shape's mistake.
-      if (error instanceof Error && /arguments/i.test(error.message)) {
-        return { ok: false, sure: true, error: badArguments(step.tool) };
+  // The first alternative the server offers to this bot wins; it is remembered for the call.
+  resolving: for (const name of known ? [] : names) {
+    for (const connectorId of CONNECTORS) {
+      const id = connectorId === "mcp" ? `mcp__${server}__${name}` : `${server}__${name}`;
+      try {
+        const resolved = await connector.resolveCall?.(
+          {
+            tool: id,
+            args: { id, arguments: args },
+            executionId,
+            route: { connectorId, toolName: CATALOG_EXECUTE },
+          },
+          context,
+        );
+        const route = resolved?.call.route;
+        if (
+          route?.connectorId === connectorId &&
+          route.resourceId &&
+          route.toolName === name &&
+          sameServer(route.catalogGroup ?? "", server)
+        ) {
+          call = resolved!.call;
+          target.found.set(name, resolved!.tool);
+          break resolving;
+        }
+      } catch (error) {
+        context.signal.throwIfAborted();
+        // Unknown here; the other connector or the next name may have it. Bad arguments are the
+        // shape's mistake.
+        if (error instanceof Error && /arguments/i.test(error.message)) {
+          return { ok: false, sure: true, error: badArguments(name) };
+        }
       }
     }
   }
-  if (!call) {
-    return {
-      ok: false,
-      sure: true,
-      error: `The ${step.tool} tool of ${server} is not available to this bot.`,
-    };
-  }
+  if (!call) return { ok: false, sure: true, error: notAvailable(server, names) };
   let outcome: StepOutcome = {
     ok: false,
     sure: false,

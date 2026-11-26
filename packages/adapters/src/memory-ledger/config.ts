@@ -15,6 +15,11 @@ export interface LedgerConfig {
     /** Label or provider id of the owner's OpenAI-compatible connection to call instead. */
     connection: string | undefined;
     timeoutMs: number;
+    /**
+     * Completion budget of one model call. A reasoning model spends it thinking first, so a call
+     * that ends on the budget with no answer is repeated once with twice as much (model.ts).
+     */
+    maxTokens: number;
     /** Set to "off" to skip the model even when one is reachable. */
     disabled: boolean;
   };
@@ -35,6 +40,7 @@ export interface LedgerConfig {
 
 export const DEFAULT_MEMORY_MODEL = "glm/glm-5.3-flash";
 export const DEFAULT_EMBEDDINGS_MODEL = "bge-m3";
+export const DEFAULT_MODEL_MAX_TOKENS = 16_000;
 
 type Env = Record<string, string | undefined>;
 
@@ -68,6 +74,7 @@ export function ledgerConfig(env: Env = process.env): LedgerConfig {
       model: text(env.MEMORY_LEDGER_MODEL) ?? DEFAULT_MEMORY_MODEL,
       connection: text(env.MEMORY_LEDGER_MODEL_CONNECTION),
       timeoutMs: int(env.MEMORY_LEDGER_MODEL_TIMEOUT_MS, 30_000, 1_000, 120_000),
+      maxTokens: int(env.MEMORY_LEDGER_MODEL_MAX_TOKENS, DEFAULT_MODEL_MAX_TOKENS, 256, 200_000),
       disabled: /^(0|off|false|no|none)$/i.test(env.MEMORY_LEDGER_MODEL_URL?.trim() ?? ""),
     },
     embeddings: {

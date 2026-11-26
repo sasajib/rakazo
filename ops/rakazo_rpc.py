@@ -5,7 +5,36 @@ URL = "http://127.0.0.1:9210/mcp"
 HDR = {"content-type": "application/json", "accept": "application/json, text/event-stream"}
 
 
+def has_result(sc):
+    """True when a run's structuredContent carries a result, inline or written to a file."""
+    return "value" in sc or bool(sc.get("writtenToFile") and sc.get("path"))
+
+
+def read_result(sc):
+    """The value a `run` returned, from its structuredContent. Two shapes:
+    inline       {"ok": true, "value": "<what the code returned>", "logs": []}
+    over ~20 KB  {"ok": true, "writtenToFile": true, "path": "<file>", "contentLength": n, "logs": []}
+                 where the file holds "ok\nreturn: <the value as JSON>" (logs, if any, before it)."""
+    if "value" in sc:
+        v = sc["value"]
+    else:
+        with open(sc["path"]) as f:
+            raw = f.read()
+        at = 0 if raw.startswith("return: ") else raw.find("\nreturn: ") + 1
+        if at == 0 and not raw.startswith("return: "):
+            raise RuntimeError("neo run result file has no return value: %s" % sc["path"])
+        v, _ = json.JSONDecoder().raw_decode(raw[at + len("return: "):].lstrip())
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return v
+    return v.get("value", v) if isinstance(v, dict) else v
+
+
 class Rpc:
+    retry_pause = 2
+
     def __init__(self, page=None):
         self.n = 10
         self.sid, _ = self._post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -22,24 +51,23 @@ class Rpc:
         r = urllib.request.urlopen(urllib.request.Request(URL, json.dumps(body).encode(), h), timeout=120)
         return r.headers.get("mcp-session-id"), r.read().decode()
 
-    def _run(self, code):
-        self.n += 1
-        _, txt = self._post({"jsonrpc": "2.0", "id": self.n, "method": "tools/call",
+    def _run_once(self, code, rid):
+        _, txt = self._post({"jsonrpc": "2.0", "id": rid, "method": "tools/call",
                              "params": {"name": "run", "arguments": {"code": code}}})
         line = [l for l in txt.split("\n") if l.startswith("data: {")][0][6:]
-        sc = json.loads(line)["result"]["structuredContent"]
-        if "value" not in sc:
+        return json.loads(line)["result"]["structuredContent"]
+
+    def _run(self, code):
+        self.n += 1
+        sc = self._run_once(code, self.n)
+        if not has_result(sc):
             # e.g. the fresh tab is still redirecting /app -> /app/<bot>; one retry after a pause
             import time
-            time.sleep(2)
-            _, txt = self._post({"jsonrpc": "2.0", "id": self.n + 1000, "method": "tools/call",
-                                 "params": {"name": "run", "arguments": {"code": code}}})
-            line = [l for l in txt.split("\n") if l.startswith("data: {")][0][6:]
-            sc = json.loads(line)["result"]["structuredContent"]
-            if "value" not in sc:
+            time.sleep(self.retry_pause)
+            sc = self._run_once(code, self.n + 1000)
+            if not has_result(sc):
                 raise RuntimeError("neo run failed: %s" % str(sc.get("error"))[:300])
-        v = json.loads(sc["value"])
-        return v.get("value", v)
+        return read_result(sc)
 
     def _find_page(self):
         # Open OUR OWN tab on the app (his Neo profile is signed in, so the cookie applies).
@@ -55,7 +83,7 @@ class Rpc:
             import time
             for _ in range(20):
                 try:
-                    href = self._run("const p = browser.page(%d); return JSON.stringify(await p.evaluate(() => location.href));"
+                    href = self._run("const p = browser.page(%d); return JSON.stringify(await p.evaluateInPage(() => location.href));"
                                      % self.own_page)
                 except Exception:
                     href = ""
@@ -73,7 +101,7 @@ class Rpc:
             self.own_page = None
 
     def call(self, path, payload):
-        code = ("const p = browser.page(%d);\nconst out = await p.evaluate(async (a) => { const r = await fetch('/rpc/'+a.path, "
+        code = ("const p = browser.page(%d);\nconst out = await p.evaluateInPage(async (a) => { const r = await fetch('/rpc/'+a.path, "
                 "{method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({json:a.j, meta: []})}); "
                 "return {status:r.status, text:(await r.text()).slice(0,400000)}; }, {path:%s, j:%s});\nreturn JSON.stringify(out);"
                 % (self.page, json.dumps(path), json.dumps(payload)))

@@ -6,8 +6,10 @@
  */
 import { getLogger } from "@rakazo/logging";
 import * as z from "zod";
+import { DEFAULT_MODEL_MAX_TOKENS } from "../memory-ledger/config.js";
 import type { FetchLike } from "../memory-ledger/embeddings.js";
 import type { ModelEndpoint } from "../memory-ledger/model.js";
+import { chatWithBudget } from "../memory-ledger/model.js";
 import { parseModelJson } from "../models/model-json.js";
 import type { OutlineStep } from "./outline.js";
 import type { CuratorReason } from "./triggers.js";
@@ -169,7 +171,7 @@ export function parseProposal(
 /** Chat completions against one OpenAI-compatible endpoint. */
 export function createOpenAiCuratorModel(
   endpoint: ModelEndpoint,
-  options: { timeoutMs: number; fetchImpl?: FetchLike },
+  options: { timeoutMs: number; maxTokens?: number | undefined; fetchImpl?: FetchLike },
 ): CuratorModel {
   const fetchImpl = options.fetchImpl ?? (fetch as unknown as FetchLike);
   const url = `${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -177,40 +179,33 @@ export function createOpenAiCuratorModel(
     async propose(input, signal) {
       const { payload, idOf } = curatorPayload(input);
       try {
-        const timeout = AbortSignal.timeout(options.timeoutMs);
-        const response = await fetchImpl(url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(endpoint.headers ?? {}),
-            ...(endpoint.apiKey ? { authorization: `Bearer ${endpoint.apiKey}` } : {}),
-          },
-          body: JSON.stringify({
-            model: endpoint.model,
-            temperature: 0,
-            // A reasoning model (GLM) thinks first; a small cap returns an empty answer.
-            max_tokens: 8000,
-            messages: [
-              { role: "system", content: CURATOR_INSTRUCTIONS },
-              { role: "user", content: JSON.stringify(payload) },
-            ],
-          }),
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        // A reasoning model (GLM) thinks first; a small cap returns an empty answer. The budget
+        // is the memory ledger's (MEMORY_LEDGER_MODEL_MAX_TOKENS), doubled once when it runs out.
+        const answer = await chatWithBudget({
+          fetchImpl,
+          url,
+          endpoint,
+          messages: [
+            { role: "system", content: CURATOR_INSTRUCTIONS },
+            { role: "user", content: JSON.stringify(payload) },
+          ],
+          maxTokens: options.maxTokens ?? DEFAULT_MODEL_MAX_TOKENS,
+          timeoutMs: options.timeoutMs,
+          signal,
+          retryEvent: "skill.curator.model_retry",
         });
-        if (!response.ok) {
-          getLogger().warn("skill.curator.model_failed", { "http.status": response.status ?? 0 });
+        if (!answer.ok) {
+          getLogger().warn("skill.curator.model_failed", { "http.status": answer.status });
           return undefined;
         }
-        const body = (await response.json()) as {
-          choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
-        };
-        const choice = body.choices?.[0];
-        const content = choice?.message?.content;
+        const { content } = answer;
         const parsed = typeof content === "string" ? parseProposal(content, idOf) : undefined;
         if (!parsed)
           getLogger().warn("skill.curator.model_unusable", {
-            "llm.finish_reason": String(choice?.finish_reason ?? "none"),
+            "llm.finish_reason": answer.finishReason,
             "llm.content_length": typeof content === "string" ? content.length : -1,
+            "llm.max_tokens": answer.maxTokens,
+            "llm.retried": answer.retried,
           });
         return parsed;
       } catch (error) {
