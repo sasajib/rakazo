@@ -65,6 +65,8 @@ function gate(options: {
     purchase: undefined,
     cardUse: undefined,
     loginUse: options.asks === false ? undefined : loginUse,
+    // Fork: the prepare step marks a login set to Ask first (see ToolRequest.itemAsksFirst).
+    ...(options.asks === false ? {} : { itemAsksFirst: true }),
   };
   const ctx = {
     deps: { prisma: {} },
@@ -109,10 +111,18 @@ describe("gateToolCall: a login that asks first", () => {
     }
   });
 
-  it("runs it without asking in Never ask", async () => {
+  // Fork: upstream ran it without asking in Never ask; Ask first on the login itself now holds
+  // in every mode (docs/bot-secrets.md says so too).
+  it("asks in Never ask too, and runs a login that does not ask first without asking", async () => {
     plans.length = 0;
-    await gate({ neverAsk: true });
+    expect(await gate({ neverAsk: true })).toBe("asks the user");
+    expect(plans).toEqual(["ask"]);
+    plans.length = 0;
+    await gate({ neverAsk: true, asks: false });
     expect(plans).toEqual(["allow"]);
+    plans.length = 0;
+    expect(await gate({ neverAsk: true, trigger: "webhook" })).toBe("asks the user");
+    expect(plans).toEqual(["ask"]);
   });
 
   it("asks in a webhook run too, where the card expires if nobody answers", async () => {

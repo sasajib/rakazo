@@ -780,7 +780,8 @@ export type AutoReviewJudgeDecision = "pass" | "ask" | "error";
 /**
  * The gate after rule resolution: the approval mode alone decides whether a call asks. A block
  * refuses in every mode. Never ask runs everything else without waiting (the spending limit still
- * applies), except a call `steerable` says outside text could have asked for. A purchase or an
+ * applies), except a call `steerable` says outside text could have asked for, and (fork) a call
+ * that uses a saved item its owner set to Ask first, which asks in every mode. A purchase or an
  * approval a person must give asks in Ask and Auto, and no allow rule or review passes it.
  * Otherwise an ask rule asks, and anything that would ask goes to the approval model in Auto,
  * falling back to asking when no model is set up.
@@ -804,9 +805,17 @@ export function planActionGate(input: {
   newDestination?: boolean;
   /** A click that completes a purchase: a person approves it each time in Ask and Auto. */
   purchase?: boolean;
+  /**
+   * Fork: the call uses a saved vault item its owner set to Ask first. That is the owner's own
+   * choice for this one item, so it asks in every mode, Never ask included.
+   */
+  itemAsksFirst?: boolean;
 }): "ask" | "allow" | "judge" | "deny" {
   if (input.resolved.decision === "deny") return "deny";
-  if (input.mode === "never") return input.steerable ? "deny" : "allow";
+  if (input.mode === "never") {
+    if (input.steerable) return "deny";
+    return input.itemAsksFirst ? "ask" : "allow";
+  }
   if (input.purchase || input.mandatory) return "ask";
   if (input.resolved.decision === "ask") return "ask";
   const review = input.mode === "auto" && input.checkerConfigured ? "judge" : "ask";

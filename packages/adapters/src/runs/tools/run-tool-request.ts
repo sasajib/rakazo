@@ -48,6 +48,7 @@ import {
   vaultCardUseOf,
   vaultLoginUseOf,
 } from "../../secrets/vault/vault-card-use.js";
+import { withSavedLoginNames } from "../../secrets/vault/vault-login-names.js";
 import { VAULT_FILL_TOOL } from "../../secrets/vault/vault-mcp-fill.js";
 import {
   isFleetApprovalTool,
@@ -105,6 +106,11 @@ export interface ToolRequest {
   cardUse: VaultCardUse | undefined;
   /** This browser_act call signs in with a saved login that asks first, approved like a card. */
   loginUse: VaultLoginUse | undefined;
+  /**
+   * Fork: the saved item this call uses is set to Ask first by its owner (a login, or a card that
+   * still carries that setting). The gate asks for it in every approval mode, Never ask included.
+   */
+  itemAsksFirst?: boolean;
 }
 
 type ToolError = { error: string };
@@ -614,6 +620,10 @@ export async function prepareToolRequest(
       return refusal("connection_request_not_pending", "connection request is no longer pending");
     }
   }
+  // Fork: a login named by its title, or with other case or spacing, is the saved login it means,
+  // from here on: the approval, the fill and the record of use all read the saved name.
+  if (name === "browser_act" || name === VAULT_FILL_TOOL)
+    args = await withSavedLoginNames(deps.prisma, run, run.id, args);
   if (PURCHASE_CHECKED_TOOLS.has(name)) {
     // The approval is written here from what the page says; a model-supplied one is dropped, and an
     // approved replay keeps the one the user saw.
@@ -645,6 +655,8 @@ export async function prepareToolRequest(
         if (BotSecretAuth.safeParse(item?.auth).data?.type !== "card")
           return refusal("card_not_found", "No card is saved under this name. Check list_secrets.");
         cardUse = { ...wantedCard, title: item!.title, savedAt: item!.updatedAt.toISOString() };
+        // Fork: a card its owner set to Ask first asks in Never ask too (see itemAsksFirst).
+        if (item!.policy === "ask") request.itemAsksFirst = true;
       }
       args = { ...args, cardApproval: cardUse };
       request.cardUse = cardUse;
@@ -690,6 +702,8 @@ export async function prepareToolRequest(
     if (loginUse) {
       args = { ...args, loginApproval: loginUse };
       request.loginUse = loginUse;
+      // Fork: only a login set to Ask first gets here (askingLoginUse).
+      request.itemAsksFirst = true;
       request.fleetSummary = loginUseSummary(loginUse);
     }
     // An approval given for something else never covers a purchase: the call is made again and asks.
@@ -735,6 +749,7 @@ export async function prepareToolRequest(
     args = loginUse ? { ...rest, loginApproval: loginUse } : rest;
     if (loginUse) {
       request.loginUse = loginUse;
+      request.itemAsksFirst = true;
       request.fleetSummary = loginUseSummary(loginUse);
     }
     if (loginUse || givenLogin !== undefined) request.effectRequest = args;

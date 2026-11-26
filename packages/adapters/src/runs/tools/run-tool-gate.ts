@@ -395,6 +395,8 @@ export async function gateToolCall(
         checkerConfigured,
         newDestination: siteGate === "new",
         purchase: paying,
+        // Fork: the owner's Ask first on the saved item itself holds in Never ask too.
+        itemAsksFirst: request.itemAsksFirst === true,
       });
   if (plan === "deny") {
     await auditToolCall(ctx, name, "denied", {

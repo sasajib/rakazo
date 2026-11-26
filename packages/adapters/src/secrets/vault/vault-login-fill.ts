@@ -24,6 +24,7 @@ import { usableVaultFields } from "./vault-access.js";
 import type { VaultLoginUse } from "./vault-card-use.js";
 import { LOGIN_CODE_FIELD } from "./vault-card-use.js";
 import { LOGIN_CODES_USED_UP } from "./vault-codes.js";
+import { unknownLoginError } from "./vault-login-names.js";
 import {
   authenticatorKeyRedactionForms,
   cardRedactionForms,
@@ -156,7 +157,11 @@ export async function resolveLoginFill(input: {
   const stored = runLogin
     ? { name: input.name, origin: runLogin.origin, auth: { type: "login" } }
     : row;
-  if (!stored) return { error: "Login is unavailable. Use request_secret to save it first." };
+  // Fork: says which names there are, so a wrong name can be corrected (vault-login-names.ts).
+  if (!stored)
+    return {
+      error: await unknownLoginError(input.prisma, input.scope, input.name, input.pageUrl),
+    };
   const storedType = BotSecretAuth.safeParse(stored.auth).data?.type;
   if (storedType === "card") {
     return { error: "This is a saved card. Type it with browser_act fill_card, passing card." };

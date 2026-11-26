@@ -883,6 +883,38 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `client-update.ts` (`safe()`, `clientUpdates()` factory, `install()`), to the
   web server's settings object, or a new upstream "update available" UI (then drop the fork toast, keep the rules).
 
+### 1.28 "Ask first" on a saved item holds in Never ask; a login named loosely is the saved login it means
+- **Why (live test 2026-11-26, vault retest c + b):** on an account in Never ask, a login set to Ask first was typed
+  with no card: `planActionGate` returned `allow` for mode `never` before the mandatory check, for `browser_act` and
+  `vault_fill` alike (upstream's own docs say the card shows "also in Never ask"; its gate test said the opposite).
+  And a fill that named a login by its title got "Login is unavailable", which hid that only the name was wrong.
+- **Rule 1 (`core/src/runs/action-approval.ts`, `itemAsksFirst`):** a call that uses a saved item whose owner set the
+  item itself to Ask first asks in every approval mode. `ToolRequest.itemAsksFirst` is set by the prepare step for a
+  login that asks first (`browser_act` fill_secret/fill_code, `vault_fill`) and for a saved card whose row still
+  carries `policy: "ask"`. Nothing else about Never ask changes: a login or card without that setting, purchases,
+  ask rules and new sites run as before; a block rule still refuses; a call outside text could have steered is still
+  refused before any card. Unattended runs (routine, webhook, another agent, ticket) keep the existing behaviour:
+  the card is posted and expires unanswered after `UNATTENDED_APPROVAL_EXPIRE_AFTER_MS` (default 30 min); nothing is typed.
+- **Rule 2 (`secrets/vault/vault-login-names.ts`):** before the approval and the fill, `withSavedLoginNames` replaces
+  a login name that is not an exact saved name (or this run's unsaved login) with the one usable login whose name or
+  title matches without case, spacing or punctuation; none or several: unchanged. The refusal then lists names (and
+  titles) only, never a value: the logins saved for the page's site, else every usable login (20 at most), or says
+  that several match. A login the bot may not use is neither matched nor listed. Old text kept when nothing is saved.
+- **Env:** none. **Migration:** none. **Prompt surface:** unchanged (no tool text changed).
+- **Files (fork):** `secrets/vault/vault-login-names.ts`. **Seams:** `core/src/runs/action-approval.ts`
+  (`planActionGate`), `runs/tools/run-tool-gate.ts` (one argument), `runs/tools/run-tool-request.ts` (flag in three
+  places, `withSavedLoginNames` call), `secrets/vault/vault-login-fill.ts` (the refusal), `docs/approvals.md`.
+- **Tests:** `runs/tools/vault-item-ask-first.fork.test.ts` (real vault + prepare + gate: Never/Ask/Auto x
+  browser_act/vault_fill; plain login and plain card unchanged in Never ask; card set to Ask first; unattended
+  triggers; title/case), `core/src/runs/action-approval.test.ts` (2 cases), `run-tool-gate.test.ts` (upstream's
+  "runs it without asking in Never ask" now expects the ask), `run-tools-vault-fill.test.ts` (flag; approved replay
+  fills; by title, case, spacing, default host title; two matches; unknown name lists the site's names; no value in
+  any message; blocked login). 4 + 12 of them fail on the old code.
+- **Not covered by a test:** the card's Allow/Deny round trip under Never ask with a database (from the gate on it
+  is the same code Ask and Auto use).
+- **Conflicts:** upstream edits to `planActionGate`'s `never` line or to the login/card block of
+  `prepareToolRequest`; upstream restoring its own Never-ask test.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

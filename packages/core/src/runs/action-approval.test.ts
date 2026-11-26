@@ -551,6 +551,30 @@ describe("planActionGate", () => {
     expect(gate("never", { mandatory: true, steerable: true })).toBe("deny");
   });
 
+  it("fork: asks for a saved item its owner set to Ask first in every mode, Never ask included", () => {
+    for (const mode of ["never", "auto", "ask"] as const) {
+      expect(gate(mode, { itemAsksFirst: true, mandatory: true, purchase: true })).toBe("ask");
+      expect(gate(mode, { itemAsksFirst: true, mandatory: true, resolved: allowed })).toBe("ask");
+      // A block still refuses it, with no card.
+      expect(gate(mode, { itemAsksFirst: true, mandatory: true, resolved: blocked })).toBe("deny");
+    }
+    expect(gate("never", { itemAsksFirst: true, consequential: false })).toBe("ask");
+    // Outside text that could have steered the call is still refused before any card.
+    expect(gate("never", { itemAsksFirst: true, steerable: true })).toBe("deny");
+  });
+
+  it("fork: changes nothing else about Never ask", () => {
+    for (const itemAsksFirst of [false, undefined]) {
+      expect(gate("never", { itemAsksFirst })).toBe("allow");
+      expect(gate("never", { itemAsksFirst, mandatory: true, purchase: true })).toBe("allow");
+      expect(gate("never", { itemAsksFirst, resolved: asked })).toBe("allow");
+      expect(gate("never", { itemAsksFirst, newDestination: true })).toBe("allow");
+      expect(gate("auto", { itemAsksFirst })).toBe("judge");
+      expect(gate("ask", { itemAsksFirst })).toBe("ask");
+      expect(gate("ask", { itemAsksFirst, consequential: false })).toBe("allow");
+    }
+  });
+
   it("only lets the approval model check a read outside content may have chosen", () => {
     const read = { consequential: false, reviewOnly: true };
     expect(gate("auto", read)).toBe("judge");
