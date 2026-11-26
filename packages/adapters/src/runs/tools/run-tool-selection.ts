@@ -13,6 +13,7 @@ import { selectCloudAgentTools } from "../../cloud-agents/cloud-agent-tools-sele
 import { READ_MEETING_TRANSCRIPT } from "../../meetings/meeting-chat.tool-definition.js";
 import { selectMemoryTools } from "../../memory/memory-tools.js";
 import { filterImageReturningComputerTools } from "../../models/model-vision.js";
+import { VAULT_FILL_TOOL } from "../../secrets/vault/vault-mcp-fill.js";
 import { runMayStartShellJobs } from "../../shell-jobs/shell-job-rules.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
 import { shellDescription } from "../../tools/builtin-computer.tool-definition.js";
@@ -188,6 +189,8 @@ export function selectBuiltinToolsForRun(options: {
   emailClaimable?: boolean;
   /** The inbox may be read and this server can send email. */
   emailSend?: boolean;
+  /** Fork: the run reaches an MCP browser a saved login may be typed through (vault_fill). */
+  vaultFillBrowser?: boolean;
 }) {
   const disabled = disabledBuiltinToolSet(options.disabledBuiltinTools);
   const ownerStartedRun = isOwnerStartedRun(
@@ -248,6 +251,7 @@ export function selectBuiltinToolsForRun(options: {
         (tool.name !== "board_tickets" && !tool.name.startsWith("ticket_"))) &&
       (!isBackgroundRunTrigger(options.trigger) || !BACKGROUND_DROPPED_TOOL_NAMES.has(tool.name)) &&
       (options.voiceCall || tool.name !== "end_call") &&
+      (options.vaultFillBrowser || tool.name !== VAULT_FILL_TOOL) &&
       (emailMailbox || !EMAIL_INBOX_TOOL_NAMES.has(tool.name)) &&
       ((emailMailbox && options.emailSend) || tool.name !== "send_email") &&
       (emailClaimOffered || tool.name !== "claim_email_address") &&

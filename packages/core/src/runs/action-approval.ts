@@ -38,6 +38,8 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
   "request_takeover",
   "request_secret",
   "generate_secret",
+  // Fork: types a saved login only on the login's own site, as browser_act fill_secret does; a login that asks first still asks.
+  "vault_fill",
   "run_subagent",
   "spawn_bot",
   "schedule_create",

@@ -48,6 +48,7 @@ import {
   vaultCardUseOf,
   vaultLoginUseOf,
 } from "../../secrets/vault/vault-card-use.js";
+import { VAULT_FILL_TOOL } from "../../secrets/vault/vault-mcp-fill.js";
 import {
   isFleetApprovalTool,
   modelLabel,
@@ -74,6 +75,7 @@ import { BUILTIN_AGENT_TOOL_NAMES, FLEET_WRITE_TOOL_NAMES_SET } from "./run-tool
 import { holdSharedPageSave } from "./run-tools-pages.js";
 import { scheduleCreateRefusal, scheduleUpdatePreview } from "./run-tools-tasks.js";
 import { USER_COMPUTER_TOOLS } from "./run-tools-user-computer.js";
+import { vaultFillLoginSteps, vaultFillPageUrl } from "./run-tools-vault-fill.js";
 
 /** A tool call resolved to the tool it runs and the exact request an approval covers. */
 export interface ToolRequest {
@@ -342,6 +344,8 @@ async function askingLoginUse(
   /** The user's answer this call replays; its approval for a login, if any, is `given`. */
   replay: boolean,
   given: unknown,
+  /** Fork: where the page is when the run's own page browser is not the one filled (vault_fill). */
+  pageUrl?: () => Promise<string | undefined>,
 ): Promise<VaultLoginUse | ToolError | undefined> {
   const { deps, run } = ctx;
   const asking: VaultLoginUse[] = [];
@@ -358,7 +362,8 @@ async function askingLoginUse(
       continue;
     const savedAt = item.updatedAt.toISOString();
     // Where it fills: the page's site when that is one of its others, as the fill reads it.
-    const url = ctx.state.pageUrl;
+    // Fork: an MCP browser's page is read only when the login has another site to choose.
+    const url = pageUrl ? (item.alsoOn?.length ? await pageUrl() : undefined) : ctx.state.pageUrl;
     const page = url && URL.canParse(url) ? new URL(url).origin : "";
     const site = item.alsoOn?.includes(page) ? page : item.origin;
     // Saved where no approval can name, as under older rules, it is never typed: the fill refuses.
@@ -713,6 +718,26 @@ export async function prepareToolRequest(
       givenLogin !== undefined
     )
       request.effectRequest = args;
+  }
+  // Fork: vault_fill signs in through an MCP browser. A login that asks first is approved exactly as
+  // for browser_act: the approval is written here, a model-supplied one is dropped, and a replay
+  // keeps the one the user answered.
+  if (name === VAULT_FILL_TOOL) {
+    const { loginApproval: givenLogin, ...rest } = args;
+    const loginUse = await askingLoginUse(
+      ctx,
+      vaultFillLoginSteps(rest),
+      nextApprovedTool === name,
+      givenLogin,
+      () => vaultFillPageUrl(ctx, rest, executionId),
+    );
+    if (loginUse && "error" in loginUse) return loginUse;
+    args = loginUse ? { ...rest, loginApproval: loginUse } : rest;
+    if (loginUse) {
+      request.loginUse = loginUse;
+      request.fleetSummary = loginUseSummary(loginUse);
+    }
+    if (loginUse || givenLogin !== undefined) request.effectRequest = args;
   }
   request.args = args;
   if (

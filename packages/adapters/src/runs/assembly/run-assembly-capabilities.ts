@@ -44,6 +44,7 @@ import { paymentWalletConnected } from "../../payments/payment-wallets.js";
 import { backOffRoutineAfterAccountError } from "../../routines/routine-backoff.js";
 import { pauseRoutineAfterRepeatedFailures } from "../../routines/routine-failure-pause.js";
 import { filterStrategicInitiativeTools } from "../../routines/strategic-initiative.js";
+import { vaultFillBrowserInRun, vaultFillConfig } from "../../secrets/vault/vault-mcp-fill.js";
 import {
   createEarlierFileQueue,
   listCurrentTurnFiles,
@@ -793,6 +794,9 @@ export async function selectRunTools(
       emailInbox,
       emailClaimable: Boolean(deps.inboundEmailDomain) && !emailName && run.userId === bot.userId,
       emailSend: Boolean(deps.email),
+      // Fork: vault_fill comes with a configured MCP browser among the run's connector tools.
+      vaultFillBrowser:
+        !ownerComputerRoutine && vaultFillBrowserInRun(discovered, vaultFillConfig()),
     }).filter(
       (tool) => tool.name !== "run_subagent" || backgroundHelpersAllowed({ trigger: run.trigger }),
     ),

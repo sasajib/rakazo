@@ -259,6 +259,57 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Tests:** `runs/assembly/deployment-disabled-tools.test.ts`, `compose-env.test.ts`.
 - **Live check:** `run.prompt_manifest` `tools.exposed` count drops (82 -> 77) on a fresh bot. Marker `RAKAZO_DISABLED_BUILTIN_TOOLS` (2 files).
 
+### 1.16b Saved logins through an MCP browser (`vault_fill`)
+- **Why:** with the page browser off for the deployment (1.16) the only fill path, `browser_act fill_secret/fill_code`,
+  is gone: agents saw a login in `list_secrets`, could not type it, and asked for Take over every time (or invented
+  arguments for the MCP browser's `act`).
+- **Purpose:** built-in tool `vault_fill {secret?, server?, page, fills: [{ref, field} | {ref, code: true}]}`: a saved
+  login's fields, its authenticator code, or (no `secret`) the one-time code the user entered for this run, typed into
+  a page of a browser the agent drives through an MCP server. The value is put in on the server side and never
+  returned or logged. Nothing names a server or a site: which servers are browsers, and their tool/argument names, is
+  env. Per call: (1) focus the field and run a probe script in the page through the run's own connector session
+  (same MCP session, assignment and tool allowlist as the agent's own calls) -> page origin + focused element;
+  (2) real `resolveLoginFill` / `resolveCodeFill` / `loginCodeClaim` (same approval, limits, `credential.used` record
+  as `browser_act`); (3) refuse unless the page origin is HTTPS and is the login's site (or an `alsoOn` site; the
+  approved site for a login that asks first); a password only into `input[type=password]`, a username only into
+  text/email/tel (or a select), a code into text/tel/number/password; nothing into a read-only field or a field in
+  another site's frame; (4) the server's fill call with the value (`sensitive: true`, `diff: "none"` by default);
+  origin re-checked before every field; (5) redaction forms added to the run's secrets before anything is sent, so
+  later snapshots/reads are scrubbed. Result: `{ok, site, filled: [{ref, field}]}` or `{ok: false, uncertain, error, completed}`.
+  A login marked "ask first" asks with the same card as `browser_act` (`askingLoginUse`, one approval per call).
+- **Offered** only when a configured server is among the run's connector tools (directly, or named as a source of the
+  folded catalog); pinned in `CORE_BUILTIN_TOOL_NAMES` (no `find_tool`); approval-exempt like `browser_act`
+  (still gated in runs outside text started; result taints the run). `secretGuidance` gets a sign-in recipe when
+  `browser_act` is off and `vault_fill` is offered; the secret tools' result notes that say `browser_act fill_*`
+  are reworded for such a run (`withVaultFillWording`).
+- **Files (fork):** `packages/adapters/src/secrets/vault/vault-mcp-fill.ts` (config, probe, server calls),
+  `runs/tools/run-tools-vault-fill.ts` (handler, approval steps, wording), `tools/builtin-vault-fill.tool-definition.ts`.
+- **Seams:** `tools/builtin.tool-definition.ts`, `tools/builtin-tool-bridge.ts` (pinned), `runs/tools/run-tools.ts` (handlers +
+  wording wrapper), `runs/tools/run-tool-selection.ts` (`vaultFillBrowser`), `runs/assembly/run-assembly-capabilities.ts`
+  (`vaultFillBrowserInRun`), `runs/tools/run-tool-request.ts` (`askingLoginUse` page hook + the `vault_fill` approval block),
+  `runs/assembly/run-instructions.prompt.ts` (`secretGuidance`, `vaultFillOffered`), `runs/turn/run-model-turn.ts`,
+  `runtime/pi/tools/pi-runtime-tools.ts` (label, sequential), `contracts/src/bots/builtin-tools.ts`,
+  `core/src/runs/action-approval.ts`, the three compose anchors.
+- **Env:** `VAULT_FILL_MCP_BROWSERS` = comma list of MCP server slugs / installed MCP source names (bee: `browser-mcp`);
+  empty = feature off, tool never offered. `VAULT_FILL_MCP_BROWSER_SHAPES` = optional JSON `{"<server>|*": {focus, inspect,
+  fill: {tool, args}, elementCheck}}` with placeholders `{page} {ref} {value} {script} {function}`; default = BrowserOS
+  neo's shape (`act` focus/fill, `evaluate {code}`). Unreadable shapes switch the feature off (logged `vault_fill.config_invalid`).
+- **Migrations:** none.
+- **Tests:** `runs/tools/run-tools-vault-fill.test.ts` (fake MCP browser behind the real `ConnectorRegistry` and catalog
+  lookup, real vault/encryption/`resolveLoginFill`/code claims: right origin, wrong origin, http, forged origin record,
+  unknown login/field, field types, page moving mid-call, server refusal/timeout, ask-first through `prepareToolRequest`,
+  TOTP once + restore, run code, server allowlist, shapes, offering, wording, guidance), `prompt-surface.test.ts`
+  (`__prompt_surface__/vault-fill.md`), `compose-env.test.ts`.
+- **Logs:** `vault_fill` (runId, botId, server, fills, outcome, completed); never a value.
+- **Live check:** throwaway HTTPS login page + a login saved for its origin; agent: `list_secrets` -> tab -> snapshot ->
+  `vault_fill` -> click submit; page shows the values, chat/tool results/logs do not; a second login on another origin is refused.
+- **Known limits:** needs a server that can run a script in the page (origin + focused element); with `elementCheck: false`
+  field types are not checked. Origin check and fill are separate server calls (a page that navigates between them is
+  caught only if the ref goes stale). Fields in cross-origin frames and saved cards are not filled. The MCP server
+  itself receives the value (it types it), so only list servers you trust with passwords.
+- **Conflicts:** upstream edits to `askingLoginUse`/`prepareToolRequest`, `secretGuidance`, `selectBuiltinToolsForRun`
+  options, `resolveLoginFill`'s return shape, the lazy catalog's `__catalog_execute` route (used to resolve the server's tools).
+
 ### 1.17 Per-agent skills (this release)
 - **Purpose:** each agent can be limited to chosen skills. No selection = every skill of its space (upstream behaviour).
   A selection = only the chosen stored skills (user + plugin) plus every **built-in** skill the owner has not unticked
@@ -439,7 +490,7 @@ Not in this fork, but a sync/deploy must keep them working:
 - **`.env` keys added for fork features** (names only): `VOICE_AGENT_URL`, `VOICE_AGENT_INTERNAL_TOKEN`,
   `RAKAZO_CSP_CONNECT_SRC`, `STANDING_EMBEDDINGS_URL`, `MEMORY_LEDGER`, `MEMORY_LEDGER_MODEL_URL`, `MEMORY_LEDGER_MODEL`,
   `MEMORY_LEDGER_MODEL_API_KEY`, `MEMORY_EMBEDDINGS_URL`, `MEMORY_EMBEDDINGS_MODEL`, `MEMORY_LEDGER_PACK_BUDGET_MS`,
-  `SHELL_BACKGROUND_JOBS`, `SANDBOX_HOST_URL`, `SANDBOX_HOST_TOKEN`, `SANDBOX_HOST_SCREEN`, `RAKAZO_DISABLED_BUILTIN_TOOLS`, `SKILL_CURATOR`,
+  `SHELL_BACKGROUND_JOBS`, `SANDBOX_HOST_URL`, `SANDBOX_HOST_TOKEN`, `SANDBOX_HOST_SCREEN`, `RAKAZO_DISABLED_BUILTIN_TOOLS`, `VAULT_FILL_MCP_BROWSERS`, `SKILL_CURATOR`,
   `RAKAZO_IMAGE_TAG`, `RAKAZO_COMPUTER_IMAGE`, `RAKAZO_COMPUTER_IMAGE_TAG`, `POSTGRES_IMAGE` (= `rakazo/postgres-graph:16-pgv-age1.6`).
 - **Host units (user systemd):** `bee-rakazo-host-computer` (host computer + screen, 1.15), `bee-rakazo-audit`
   (`sasajib/rakazo-audit`), `bee-rakazo-watch` (`sasajib/rakazo-watch`, Watch MCP + webhooks).

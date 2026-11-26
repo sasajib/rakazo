@@ -24,6 +24,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("userMachineServesScreen(", 3), ("displayConnect", 3), ("screenlessUserMachine(", 3),
            # deployment-wide disabled built-in tools: both seams (capabilities + tool selection)
            ("RAKAZO_DISABLED_BUILTIN_TOOLS", 2),
+           # saved logins typed through an MCP browser: tool, offering seam, approval seam, guidance seam
+           ("VAULT_FILL_TOOL", 5), ("vaultFillBrowserInRun(", 2), ("vaultFillLoginSteps(", 2),
+           ("vaultFillOffered", 2), ("withVaultFillWording(", 2),
            # per-agent skills: filter in the catalog + skill_read, the run-records seam, RPC, web section
            ("filterSkillsForBot(", 2), ("loadBotSkillSelection(", 3), ("addSkillToBotSelection(", 2),
            ("botSkillsProcedures", 2), ("createBotSkillsService(", 2), ("BotSkillsSection", 2),

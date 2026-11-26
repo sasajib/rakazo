@@ -39,6 +39,8 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "message_user",
   "request_takeover",
   "request_secret",
+  // Fork: the only way to use a saved login in an MCP browser; a bot that must find_tool it asks for a takeover instead.
+  "vault_fill",
   "connect_app",
   "run_subagent",
   "message_bot",
