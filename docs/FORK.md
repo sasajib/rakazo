@@ -1037,8 +1037,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Status: upstream behaviour carried as a local patch** (none of `apps/api/src/rpc-errors.ts`,
   `apps/api/src/spaces/space-change-procedures.ts`, `packages/core/src/routines/routine-mention-batcher.ts`,
   `packages/core/src/primitives/query-refresh.ts`, `apps/web/src/lib/query/space-changes.ts`,
-  `apps/web/src/pages/shell/composer/use-composer-mentions.ts`, `apps/mobile/lib/thread/thread-mention-catalog.ts`
-  differed from `upstream/main` `6d816462a` before this change). At a sync, check whether upstream changed the
+  `apps/web/src/pages/shell/composer/use-composer-mentions.ts` differed from `upstream/main` `6d816462a` before this change). At a sync, check whether upstream changed the
   batcher's "retries only omitted bots" rule or the `IsolationError` log; if it did, drop the matching hunk.
 - **What happened:** every removal of a bot (`bots.remove`, from any client or script) logged 1 to 2 `rpc routines/list
   not found` warnings per already-removed bot, plus the request's own 404 warning (live 2026-11-26: 3 for two bots,
@@ -1047,20 +1046,22 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   at once (`spaceChanged`), while its roster, re-read 50 ms later, still holds the removed bot; the batch read
   `routines/listForMentions` leaves that bot out; the mention batcher then asks `routines/list` for each bot left
   out (or, for four reads or fewer, never batches at all); `getBot` throws `IsolationError`; `handleRpcError` warns.
-- **Client (web + mobile):** `createRoutineMentionBatcher(..., { omittedIsGone: true })`: a bot the batch leaves out
+- **Client (web):** `createRoutineMentionBatcher(..., { omittedIsGone: true })`: a bot the batch leaves out
   is answered `RoutineBotGoneError` (status 404, not retried) without a request, and two or more reads always go as
   one batch; a single read and a server without the batch keep the per-bot endpoint. Web: `use-space-roster.ts`
   drops every cached per-bot read of a bot that left the roster (`lib/query/bot-queries.ts` `dropBotQueries`:
   cancel + remove, any query whose input names that `botId`), after the render that dropped it; leaving the bot's
-  open chat was already done by `refreshBots` (`routeChatListed`). Mobile: the catalog treats a gone bot as "no
-  routines", not as a failed load.
+  open chat was already done by `refreshBots` (`routeChatListed`). Mobile is unchanged: it shares the batcher but
+  loads its mention catalog on first use from the current roster and has no "routines changed" re-read of every
+  bot, so the chain above does not run there; the option is off for it (8 upstream tests pin its bot-by-bot reads
+  for small rosters). A mobile read for a gone bot is the server's info line.
 - **Server:** `getBot`/`getBotView` throw `BotNotFoundError` (an `IsolationError`, same name and message). For a
   read procedure (`list*`, `get*`, `head`, `history`, `status`, `read`, `search`, `count`) `handleRpcError` logs
   `rpc <path> bot not found` at info and marks the request (`markExpectedClientMiss`, `packages/logging/src/hono.ts`)
   so `http.request.completed` is info too. The client gets the same 404 `NOT_FOUND`. Still a warning: anything else
   missing for a bot that exists (plain `IsolationError`), and any write that names a missing bot.
 - **Seams:** `packages/core/src/routines/routine-mention-batcher.ts` (option + error class),
-  `use-composer-mentions.ts` and `thread-mention-catalog.ts` (the option), `use-space-roster.ts` (one effect),
+  `use-composer-mentions.ts` (the option), `use-space-roster.ts` (one effect),
   `packages/db/src/database/scope.ts` + `bots/bot-repository.ts` (2 throws), `apps/api/src/rpc-errors.ts`,
   `packages/logging/src/hono.ts`.
 - **Tests:** `routine-mention-batcher.test.ts` ("a bot the batch leaves out, when the batch is trusted", 3),

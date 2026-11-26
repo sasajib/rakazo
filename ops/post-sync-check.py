@@ -105,9 +105,8 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("NEAR_DUPLICATE_SIMILARITY", 2), ("memory_facts_live_text_key", 1),
            # the memory and curator model calls repeat on 429/5xx/timeout inside a time budget
            ("MEMORY_LEDGER_MODEL_RETRIES", 1), ("retryAfterMs(", 2), ("MODEL_CALL_BUDGET_MS", 2),
-           # a removed bot is not read again (1.30, upstream bug, local patch): trusted batch on web and
-           # mobile, the roster drops the bot's cached reads, a read for a missing bot is not a warning
-           ("omittedIsGone", 3), ("dropBotQueries(", 1), ("BotNotFoundError", 3), ("markExpectedClientMiss(", 2)]
+           # a removed bot is not read again (1.30, upstream bug, local patch): trusted batch on web, the roster drops the bot's cached reads, a read for a missing bot is not a warning
+           ("omittedIsGone", 2), ("dropBotQueries(", 1), ("BotNotFoundError", 3), ("markExpectedClientMiss(", 2)]
 results = []
 
 
