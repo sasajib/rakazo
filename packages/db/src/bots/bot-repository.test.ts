@@ -1,7 +1,7 @@
 import type { Actor } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "../database/client.js";
-import { IsolationError } from "../database/scope.js";
+import { BotNotFoundError, IsolationError } from "../database/scope.js";
 import { createRepos } from "./bot-repository.js";
 
 const actor: Actor = {
@@ -714,4 +714,22 @@ describe("createRepos.createBot computer", () => {
   it("rejects an unknown default", async () => {
     await expect(create("shared")).rejects.toThrow("COMPUTER_DEFAULT_MODE");
   });
+});
+
+// Fork: the API logs a read for a missing bot as expected, which it tells by this error.
+it("says the bot itself is missing when a lookup finds no live bot in the Space", async () => {
+  const where: unknown[] = [];
+  const repos = createRepos({
+    bot: {
+      findFirst: async (query: { where: unknown }) => {
+        where.push(query.where);
+        return null;
+      },
+    },
+  } as unknown as PrismaClient);
+  const lookup = repos.getBot({ userId: "user-1", spaceId: "space-1" } as never, "bot-gone");
+  await expect(lookup).rejects.toBeInstanceOf(BotNotFoundError);
+  await expect(lookup).rejects.toBeInstanceOf(IsolationError);
+  // An archived bot is as gone as a deleted one to a read that does not ask for archived bots.
+  expect(where).toEqual([{ id: "bot-gone", spaceId: "space-1", archivedAt: null }]);
 });

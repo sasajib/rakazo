@@ -12,9 +12,14 @@ import {
 import { ComputerRecoveryRequiredError } from "@rakazo/adapters";
 import { ConnectionSetupError } from "@rakazo/contracts";
 import { ClientError } from "@rakazo/core";
-import { databaseOutage, IsolationError, ProviderTransactionBusyError } from "@rakazo/db";
+import {
+  BotNotFoundError,
+  databaseOutage,
+  IsolationError,
+  ProviderTransactionBusyError,
+} from "@rakazo/db";
 import { enrichLogContext, getLogContext, getLogger, wasReportedError } from "@rakazo/logging";
-import { markExpectedFailure } from "@rakazo/logging/hono";
+import { markExpectedClientMiss, markExpectedFailure } from "@rakazo/logging/hono";
 import type { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { clientErrorStatus } from "./client-error-status.js";
@@ -58,6 +63,13 @@ export function handleHttpError(error: Error, c: Context): Response {
   return c.text("Internal Server Error", 500);
 }
 
+/** Procedures that only read: `routines/list`, `threads/get`, `threads/head`, `routines/history`. */
+const READ_PROCEDURE = /^(?:list|get|head|history|status|read|search|count)(?:[A-Z]|$)/;
+
+function readsOnly(path: readonly string[]): boolean {
+  return READ_PROCEDURE.test(path.at(-1) ?? "");
+}
+
 /**
  * Non-ORPCError failures are flattened into an opaque "Internal server error", so this log is
  * the only record of what broke. The cause chain matters: undici and most SDKs report a bare
@@ -71,7 +83,17 @@ export function handleRpcError(
   // A missing or foreign resource is the caller's mistake (a stale client, a deleted bot),
   // not a server failure, so it is a warning rather than an error report.
   if (error instanceof IsolationError) {
-    getLogger().warn(`rpc ${path.join("/")} not found`, { "error.stack": error.stack });
+    if (error instanceof BotNotFoundError && readsOnly(path)) {
+      // Fork: a read for a bot that is not there. A client that still lists a bot removed or
+      // archived a moment ago asks for its routines, skills or thread once more; the answer is
+      // the same 404, but it is the client catching up, so neither this line nor the request's
+      // is a warning. A write to a missing bot, or anything else missing for a bot that exists,
+      // stays a warning below.
+      getLogger().info(`rpc ${path.join("/")} bot not found`, { "rpc.expected": "bot_gone" });
+      markExpectedClientMiss();
+    } else {
+      getLogger().warn(`rpc ${path.join("/")} not found`, { "error.stack": error.stack });
+    }
     throw new ORPCError("NOT_FOUND", { message: error.message, cause: error });
   }
   if (failedOnDatabaseOutage(error)) {

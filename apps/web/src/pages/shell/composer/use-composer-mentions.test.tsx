@@ -7,6 +7,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { queryClient } from "../../../lib/query/query";
+import { spaceChanged } from "../../../lib/query/space-changes";
 import { useComposerMentions } from "./use-composer-mentions";
 
 vi.mock("@lingui/react/macro", () => ({ useLingui: () => ({ i18n: { locale: "en" } }) }));
@@ -133,5 +134,79 @@ it("keeps per-bot cache data and one-bot invalidation while batching the cold ro
   });
   expect(queryClient.getQueryData(key("space-a", "bot-99"))).toEqual(rows("bot-99", "space-a"));
   expect(other.batch).toHaveBeenCalledTimes(1);
+  act(() => root.unmount());
+});
+
+// Fork. Upstream bug carried as a local patch: removing a bot makes the server signal "routines
+// changed"; the client then read every listed bot's routines again while its roster still held
+// the removed bot, the batch answer left that bot out, and the batcher asked for it by itself:
+// `routines/list` 404, a server warning, on each such signal until the roster caught up.
+it("does not ask for the routines of a bot removed a moment ago when routines change", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const f = fixture("space-gone");
+  // The keys the real client makes, so the server's change signal finds these reads.
+  const realKey = (botId: string) => [
+    ["user:u", "space:gone", "routines", "list"],
+    { input: { botId } },
+  ];
+  (f.props.queries.routines.list as { queryOptions: unknown }).queryOptions = ({
+    input,
+  }: {
+    input: { botId: string };
+  }) => ({ queryKey: realKey(input.botId), queryFn: () => f.single(input) });
+  const live = new Set(bots.slice(0, 3).map((bot) => bot.id));
+  f.batch.mockImplementation(async ({ botIds }) =>
+    botIds.filter((id) => live.has(id)).map((botId) => ({ botId, routines: rows(botId) })),
+  );
+  f.single.mockImplementation(async ({ botId }) => {
+    if (!live.has(botId)) throw Object.assign(new Error("Resource not found"), { status: 404 });
+    return rows(botId);
+  });
+  const root = createRoot(document.createElement("div"));
+  const render = (roster: Bot[]) =>
+    act(async () =>
+      root.render(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(Probe, { props: { ...f.props, bots: roster } }),
+        ),
+      ),
+    );
+  // A small roster, the case upstream reads bot by bot.
+  await render(bots.slice(0, 3));
+  await act(async () => {
+    await vi.waitFor(() => expect(queryClient.getQueryData(realKey("bot-2"))).toBeDefined());
+  });
+  f.single.mockClear();
+  f.batch.mockClear();
+
+  // Another client removes bot-2. The "routines" signal arrives before this roster is re-read.
+  live.delete("bot-2");
+  await act(async () => {
+    await spaceChanged("routines", queryClient);
+  });
+  await act(async () => {
+    await vi.waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  });
+  expect(f.single.mock.calls.map(([input]) => input.botId)).not.toContain("bot-2");
+  expect(f.single).not.toHaveBeenCalled();
+  expect(f.batch).toHaveBeenCalledTimes(1);
+  // Once the roster is re-read the gone bot's routines are no longer on offer.
+  await render(bots.slice(0, 2));
+  expect(latest.composerMentionTargets.filter((target) => target.kind === "routine")).toHaveLength(
+    2,
+  );
+  expect(f.single).not.toHaveBeenCalled();
+
+  // A second removal, the same signal again: still nothing asked for either gone bot.
+  live.delete("bot-1");
+  await act(async () => {
+    await spaceChanged("routines", queryClient);
+  });
+  await act(async () => {
+    await vi.waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  });
+  expect(f.single).not.toHaveBeenCalled();
   act(() => root.unmount());
 });

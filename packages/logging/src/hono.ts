@@ -32,7 +32,9 @@ export function requestLogging(logger?: Logger): MiddlewareHandler {
         const level =
           status >= 500 && !c.req.raw.signal.aborted && !context["error.expected"]
             ? "error"
-            : status >= 400 || context.error !== undefined
+            : // Fork: a 4xx its handler called an expected miss (markExpectedClientMiss) is not a warning.
+              (status >= 400 && !(status < 500 && context["http.expected_miss"])) ||
+                context.error !== undefined
               ? "warn"
               : "info";
         log[level]("http.request.completed", {
@@ -54,6 +56,14 @@ export function requestLogging(logger?: Logger): MiddlewareHandler {
  */
 export function markExpectedFailure(): void {
   enrichLogContext({ "error.expected": true });
+}
+
+/**
+ * Fork: this request's 4xx is a client catching up with a change (it asked once more for a bot
+ * removed a moment ago), so its completion line is info instead of a warning. Never hides a 5xx.
+ */
+export function markExpectedClientMiss(): void {
+  enrichLogContext({ "http.expected_miss": true });
 }
 
 /**

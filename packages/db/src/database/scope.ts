@@ -10,6 +10,19 @@ export class IsolationError extends Error {
   }
 }
 
+/**
+ * Fork: the missing resource is the bot itself: no live bot with that id in the caller's Space.
+ * The usual reason is a client that still lists a bot removed or archived a moment ago, so a
+ * read that fails on it is logged as expected (apps/api rpc-errors.ts), not as a warning.
+ */
+export class BotNotFoundError extends IsolationError {
+  constructor(message = "Resource not found") {
+    super(message);
+    // The same name as its parent: whatever reads `error.name` sees no difference.
+    this.name = "IsolationError";
+  }
+}
+
 /** Unique (spaceId, userId, name) collision when renaming a bot section. */
 export class BotSectionNameConflictError extends ClientError {
   constructor(message = "Section name already used") {

@@ -1,6 +1,10 @@
 import type { Connection, ConnectionCatalogItem, Routine } from "@rakazo/contracts";
 import type { MentionPickerConnector } from "@rakazo/core";
-import { createRoutineMentionBatcher, mentionConnectorsFrom } from "@rakazo/core";
+import {
+  createRoutineMentionBatcher,
+  mentionConnectorsFrom,
+  RoutineBotGoneError,
+} from "@rakazo/core";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { captureApiRequestContext, currentApiBase, rpc, selectedSpaceId } from "../api/api";
 import { currentSessionGeneration, subscribeSessionGeneration } from "../api/session";
@@ -104,6 +108,8 @@ export function useThreadMentionCatalog(owner: string, bots: readonly MentionBot
       const loadRoutineMentions = createRoutineMentionBatcher(
         (botIds, signal) => rpc("routines/listForMentions", { botIds }, requestOptions(signal)),
         (botId, signal) => rpc("routines/list", { botId }, requestOptions(signal)),
+        // Fork: a bot the batch leaves out was just removed; do not ask for it one by one.
+        { omittedIsGone: true },
       );
       const routines = Promise.all(
         bots.map(async (bot, index) => {
@@ -111,8 +117,9 @@ export function useThreadMentionCatalog(owner: string, bots: readonly MentionBot
             const rows = await loadRoutineMentions(bot.id, abort.signal);
             if (!isCurrent()) return;
             lists[index] = rows.map((routine) => ({ ...routine, botName: bot.name }));
-          } catch {
-            failed = true;
+          } catch (error) {
+            // A bot that is gone has no routines to offer; that is not a failed load.
+            if (!(error instanceof RoutineBotGoneError)) failed = true;
             lists[index] = [];
           }
         }),

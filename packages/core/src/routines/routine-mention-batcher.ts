@@ -9,11 +9,35 @@ type Pending = {
   reject: (error: unknown) => void;
 };
 
+/**
+ * What a read gets for a bot the batch answer left out when the batch is trusted: the same
+ * "not found" the per-bot endpoint would give, without asking it. Not retryable (status 404).
+ */
+export class RoutineBotGoneError extends Error {
+  readonly status = 404;
+  readonly code = "NOT_FOUND";
+  constructor(readonly botId: string) {
+    super("Resource not found");
+    this.name = "RoutineBotGoneError";
+  }
+}
+
 /** Batch simultaneous routine reads without changing the per-bot cache or its invalidations. */
 export function createRoutineMentionBatcher(
   listBatch: (botIds: string[], signal: AbortSignal) => Promise<RoutineList[]>,
   listOne: (botId: string, signal?: AbortSignal) => Promise<Routine[]>,
+  options: {
+    /**
+     * Fork: the batch endpoint applies the same ownership rules as the per-bot one, so a bot it
+     * leaves out is gone (removed or archived a moment ago, while this client still lists it).
+     * With this on, such a bot is answered "not found" here instead of being asked for one by
+     * one (each of those was a 404 and a server warning per removed bot, on every refresh until
+     * the roster caught up), and two or more reads always go as one batch.
+     */
+    omittedIsGone?: boolean;
+  } = {},
 ) {
+  const smallRoster = options.omittedIsGone ? 1 : 4;
   let queued: Pending[] = [];
   const signals = new Map<AbortSignal, { entries: Set<Pending>; abort: () => void }>();
 
@@ -37,7 +61,7 @@ export function createRoutineMentionBatcher(
   async function flush(entries: Pending[]) {
     const active = entries.filter((entry) => !entry.signal?.aborted);
     // Small rosters retain their existing bounded per-bot reads.
-    if (active.length <= 4) return legacy(active);
+    if (active.length <= smallRoster) return legacy(active);
     // Bound request size and keep only one batch in flight, including on mobile.
     for (let offset = 0; offset < active.length; offset += ROUTINE_MENTION_BATCH_MAX) {
       const chunk = active
@@ -60,6 +84,7 @@ export function createRoutineMentionBatcher(
         for (const entry of chunk) {
           const routines = byBot.get(entry.botId);
           if (routines) entry.resolve(routines);
+          else if (options.omittedIsGone) entry.reject(new RoutineBotGoneError(entry.botId));
           // Preserve per-bot failures, authorization and partial cached data.
           else missing.push(entry);
         }

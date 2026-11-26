@@ -26,7 +26,11 @@ import {
 } from "../computers/computers.js";
 import type { Prisma, PrismaClient } from "../database/client.js";
 import { isUniqueViolation } from "../database/prisma-errors.js";
-import { BotSectionNameConflictError, IsolationError } from "../database/scope.js";
+import {
+  BotNotFoundError,
+  BotSectionNameConflictError,
+  IsolationError,
+} from "../database/scope.js";
 import { withTransactionRetry } from "../database/transaction-retry.js";
 import { lockSpaceForContentCreation } from "../spaces/spaces.js";
 import { createThreadMessageInTransaction } from "../threads/messages.js";
@@ -436,7 +440,7 @@ export function createRepos(
 
     async getBotView(actor: Actor, botId: string): Promise<Bot> {
       const [bot] = await readBotViews(actor, { botId });
-      if (!bot) throw new IsolationError();
+      if (!bot) throw new BotNotFoundError();
       return bot;
     },
 
@@ -451,7 +455,7 @@ export function createRepos(
         },
         include: { thread: true, computer: true },
       });
-      if (!bot) throw new IsolationError();
+      if (!bot) throw new BotNotFoundError();
       return bot;
     },
 

@@ -25,6 +25,7 @@ import {
   linkedGroupRoute,
 } from "../../../lib/bootstrap-target";
 import { markOnce } from "../../../lib/platform/performance";
+import { botsThatLeft, dropBotQueries } from "../../../lib/query/bot-queries";
 import type { ChatTarget } from "../../../lib/query/query";
 import {
   lastChatKey,
@@ -87,6 +88,16 @@ export function useSpaceRoster({
   const [bots, setBots] = useState<Bot[]>(seed?.bots ?? []);
   const botsRef = useRef(bots);
   botsRef.current = bots;
+  // Fork: a bot that leaves the roster (removed or archived, here or elsewhere) takes its
+  // cached reads with it; after the render that dropped it, so nothing still shows them. A
+  // switch to another space replaces the whole roster and drops nothing.
+  const rosterScope = useRef({ rpc, ids: bots.map((bot) => bot.id) });
+  useEffect(() => {
+    const previous = rosterScope.current;
+    const ids = bots.map((bot) => bot.id);
+    rosterScope.current = { rpc, ids };
+    if (previous.rpc === rpc) dropBotQueries(botsThatLeft(previous.ids, ids));
+  }, [bots, rpc]);
   const botOrderEpochRef = useRef(0);
   const pendingBotOrderRef = useRef<string[] | null>(null);
   const savingBotOrderRef = useRef(false);

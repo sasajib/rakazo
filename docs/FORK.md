@@ -1033,6 +1033,48 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream fixing `mcpServerDto` or `SpaceAvailabilitySchema` its own way (take upstream's, keep the
   test); upstream edits to the `list` handler's `Promise.all`.
 
+### 1.30 A removed bot is not read again: no `rpc routines/list not found` warnings (UPSTREAM BUG, local patch)
+- **Status: upstream behaviour carried as a local patch** (none of `apps/api/src/rpc-errors.ts`,
+  `apps/api/src/spaces/space-change-procedures.ts`, `packages/core/src/routines/routine-mention-batcher.ts`,
+  `packages/core/src/primitives/query-refresh.ts`, `apps/web/src/lib/query/space-changes.ts`,
+  `apps/web/src/pages/shell/composer/use-composer-mentions.ts`, `apps/mobile/lib/thread/thread-mention-catalog.ts`
+  differed from `upstream/main` `6d816462a` before this change). At a sync, check whether upstream changed the
+  batcher's "retries only omitted bots" rule or the `IsolationError` log; if it did, drop the matching hunk.
+- **What happened:** every removal of a bot (`bots.remove`, from any client or script) logged 1 to 2 `rpc routines/list
+  not found` warnings per already-removed bot, plus the request's own 404 warning (live 2026-11-26: 3 for two bots,
+  7 for four, 13 for a larger clean-up). Chain: `bots.remove` makes the server signal `routines` changed
+  (`space-change-procedures.ts`) beside the roster signal; an open client reads every `routines.list` query again
+  at once (`spaceChanged`), while its roster, re-read 50 ms later, still holds the removed bot; the batch read
+  `routines/listForMentions` leaves that bot out; the mention batcher then asks `routines/list` for each bot left
+  out (or, for four reads or fewer, never batches at all); `getBot` throws `IsolationError`; `handleRpcError` warns.
+- **Client (web + mobile):** `createRoutineMentionBatcher(..., { omittedIsGone: true })`: a bot the batch leaves out
+  is answered `RoutineBotGoneError` (status 404, not retried) without a request, and two or more reads always go as
+  one batch; a single read and a server without the batch keep the per-bot endpoint. Web: `use-space-roster.ts`
+  drops every cached per-bot read of a bot that left the roster (`lib/query/bot-queries.ts` `dropBotQueries`:
+  cancel + remove, any query whose input names that `botId`), after the render that dropped it; leaving the bot's
+  open chat was already done by `refreshBots` (`routeChatListed`). Mobile: the catalog treats a gone bot as "no
+  routines", not as a failed load.
+- **Server:** `getBot`/`getBotView` throw `BotNotFoundError` (an `IsolationError`, same name and message). For a
+  read procedure (`list*`, `get*`, `head`, `history`, `status`, `read`, `search`, `count`) `handleRpcError` logs
+  `rpc <path> bot not found` at info and marks the request (`markExpectedClientMiss`, `packages/logging/src/hono.ts`)
+  so `http.request.completed` is info too. The client gets the same 404 `NOT_FOUND`. Still a warning: anything else
+  missing for a bot that exists (plain `IsolationError`), and any write that names a missing bot.
+- **Seams:** `packages/core/src/routines/routine-mention-batcher.ts` (option + error class),
+  `use-composer-mentions.ts` and `thread-mention-catalog.ts` (the option), `use-space-roster.ts` (one effect),
+  `packages/db/src/database/scope.ts` + `bots/bot-repository.ts` (2 throws), `apps/api/src/rpc-errors.ts`,
+  `packages/logging/src/hono.ts`.
+- **Tests:** `routine-mention-batcher.test.ts` ("a bot the batch leaves out, when the batch is trusted", 3),
+  `use-composer-mentions.test.tsx` ("does not ask for the routines of a bot removed a moment ago": the live case,
+  fails on the old code), `lib/query/bot-queries.test.ts` (3), `use-space-roster.test.tsx` ("drops the cached reads
+  of a bot that left the roster, and moves off its chat"), `apps/api/src/log-unexpected-rpc-error.test.ts` ("a read
+  for a bot that is gone", 4), `packages/db/src/bots/bot-repository.test.ts`.
+- **Live check:** remove a throwaway bot with a web tab open, then
+  `docker logs --since 2m rakazo-api-1 | grep -c 'routines/list not found'` → 0 (an `rpc routines/list bot not
+  found` info line may appear when the client had a single bot listed). A tab still on the old bundle keeps asking
+  until it reloads; its lines are info, not warn.
+- **Not covered:** the roster of one bot (a single read keeps the per-bot endpoint: one info line); other per-bot
+  reads a client may make for a bot removed while its chat is open (`threads/get`): same info line, no client change.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

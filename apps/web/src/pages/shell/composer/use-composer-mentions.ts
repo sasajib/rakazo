@@ -49,6 +49,8 @@ export function useComposerMentions({
       createRoutineMentionBatcher(
         (botIds, signal) => rpc.routines.listForMentions({ botIds }, { signal }),
         (botId, signal) => rpc.routines.list({ botId }, { signal }),
+        // Fork: a bot the batch leaves out was just removed; do not ask for it one by one.
+        { omittedIsGone: true },
       ),
     [rpc],
   );

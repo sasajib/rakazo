@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   /** Whether the browser's storage accepts a newly selected space. */
   storageWritable: true,
   take: vi.fn(),
+  /** The bots whose cached reads the roster dropped, call by call. */
+  dropped: vi.fn((_botIds: string[]) => 0),
   prime: vi.fn(),
   applyAccount: vi.fn(),
 }));
@@ -44,6 +46,10 @@ vi.mock("../../../lib/query/query", () => ({
   spaceSeedKey: () => [],
   lastChatKey: () => [],
   seedOnLeave: () => undefined,
+}));
+vi.mock("../../../lib/query/bot-queries", () => ({
+  botsThatLeft: (previous: string[], next: string[]) => previous.filter((id) => !next.includes(id)),
+  dropBotQueries: (botIds: string[]) => (botIds.length ? state.dropped([...botIds]) : 0),
 }));
 vi.mock("../../../lib/query/rpc", () => ({
   selectedSpaceId: () => state.space,
@@ -372,6 +378,23 @@ describe("a roster re-read while the shell opens a chat in another space", () =>
     await rosterSignal();
     expect(window.location.pathname).toBe("/app/errands");
     expect(state.space).toBe("personal");
+  });
+
+  // Fork: its cached reads go with it, so a later change signal has nothing of its to read.
+  it("drops the cached reads of a bot that left the roster, and moves off its chat", async () => {
+    await open("/app/home");
+    expect(state.dropped).not.toHaveBeenCalled();
+    // A re-read that finds the same bots drops nothing.
+    await rosterSignal();
+    expect(state.dropped).not.toHaveBeenCalled();
+    server.personal!.bots = ["errands"];
+    await rosterSignal();
+    expect(state.dropped.mock.calls).toEqual([[["home"]]]);
+    expect(window.location.pathname).toBe("/app/errands");
+    // A bot that arrives drops nothing either.
+    server.personal!.bots = ["errands", "new"];
+    await rosterSignal();
+    expect(state.dropped).toHaveBeenCalledTimes(1);
   });
 
   it("moves off a chat that is gone after the switch was given up", async () => {

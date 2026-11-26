@@ -1,7 +1,7 @@
 import type { Routine } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { deferred } from "../primitives/async.test-support.js";
-import { createRoutineMentionBatcher } from "./routine-mention-batcher.js";
+import { createRoutineMentionBatcher, RoutineBotGoneError } from "./routine-mention-batcher.js";
 
 const ids = Array.from({ length: 100 }, (_, index) => `bot-${index}`);
 const rows = (botId: string) =>
@@ -93,5 +93,53 @@ describe("routine mention cache-miss batching", () => {
     const many = Array.from({ length: 205 }, (_, index) => `bot-${index}`);
     expect(await Promise.all(many.map((id) => load(id)))).toEqual(many.map(rows));
     expect(batch.mock.calls.map(([ids]) => ids.length)).toEqual([100, 100, 5]);
+  });
+
+  // Fork: with `omittedIsGone` a bot the batch answer leaves out (removed or archived a moment
+  // ago) is not asked for one by one; each of those reads was a 404 and a server warning.
+  describe("a bot the batch leaves out, when the batch is trusted", () => {
+    it("is answered not found without asking for it, and the others get their routines", async () => {
+      const single = vi.fn(async (id: string) => rows(id));
+      const batch = vi.fn(async (asked: string[]) => lists(asked.filter((id) => id !== "bot-3")));
+      const load = createRoutineMentionBatcher(batch, single, { omittedIsGone: true });
+      const result = await Promise.allSettled(ids.slice(0, 8).map((id) => load(id)));
+      expect(single).not.toHaveBeenCalled();
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(result[3]).toMatchObject({ status: "rejected" });
+      const reason = (result[3] as PromiseRejectedResult).reason;
+      expect(reason).toBeInstanceOf(RoutineBotGoneError);
+      // Not retried by the clients' retry policy: a 404.
+      expect(reason).toMatchObject({ status: 404, code: "NOT_FOUND", botId: "bot-3" });
+      expect(result.filter((entry) => entry.status === "fulfilled")).toHaveLength(7);
+    });
+
+    it("sends even two reads as one batch, so a small roster does not ask for a gone bot either", async () => {
+      const single = vi.fn(async (id: string) => rows(id));
+      const batch = vi.fn(async (asked: string[]) => lists(asked.filter((id) => id !== "bot-1")));
+      const load = createRoutineMentionBatcher(batch, single, { omittedIsGone: true });
+      const result = await Promise.allSettled([load("bot-0"), load("bot-1")]);
+      expect(batch).toHaveBeenCalledExactlyOnceWith(["bot-0", "bot-1"], expect.anything());
+      expect(single).not.toHaveBeenCalled();
+      expect(result.map((entry) => entry.status)).toEqual(["fulfilled", "rejected"]);
+      // Without the option (upstream's behaviour) both are asked for one by one.
+      const plain = createRoutineMentionBatcher(batch, single);
+      await Promise.allSettled([plain("bot-0"), plain("bot-1")]);
+      expect(single).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps the per-bot endpoint for one read and for a server without the batch", async () => {
+      const single = vi.fn(async (id: string) => rows(id));
+      const batch = vi.fn(async (): Promise<ReturnType<typeof lists>> => {
+        throw new Error("unknown endpoint");
+      });
+      const load = createRoutineMentionBatcher(batch, single, { omittedIsGone: true });
+      expect(await load("bot-0")).toEqual(rows("bot-0"));
+      expect(batch).not.toHaveBeenCalled();
+      expect(await Promise.all(ids.slice(0, 6).map((id) => load(id)))).toEqual(
+        ids.slice(0, 6).map(rows),
+      );
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(single).toHaveBeenCalledTimes(7);
+    });
   });
 });

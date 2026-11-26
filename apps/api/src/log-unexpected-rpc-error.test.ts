@@ -11,7 +11,7 @@ import {
 } from "@rakazo/adapter-kit";
 import { ThreadMessagePageSchema } from "@rakazo/contracts";
 import { ClientError, MODEL_IMAGE_INPUT_ERROR } from "@rakazo/core";
-import { IsolationError, SpaceDeletionInProgressError } from "@rakazo/db";
+import { BotNotFoundError, IsolationError, SpaceDeletionInProgressError } from "@rakazo/db";
 import {
   createLogger,
   createTestSink,
@@ -503,5 +503,89 @@ describe("handleHttpError with a client error its thrower already logged", () =>
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({ error: "Try again in a moment." });
     expect(sink.events.filter((event) => event.level === "error")).toEqual([]);
+  });
+});
+
+// Fork (upstream bug carried as a local patch, FORK.md 1.30): a client that still lists a bot
+// removed a moment ago reads its routines once more. The 404 is the same; the log is not a warning.
+describe("a read for a bot that is gone", () => {
+  afterEach(() => {
+    installLogger(createLogger({ service: "rakazo-api", level: "off", sinks: [] }));
+  });
+
+  async function call(path: string, error: Error) {
+    const sink = createTestSink();
+    const logger = createLogger({ service: "rakazo-api", sinks: [sink] });
+    installLogger(logger);
+    const thrower = os.handler(() => {
+      throw error;
+    });
+    const rpc = new RPCHandler(
+      {
+        routines: { list: thrower, update: thrower, listForMentions: thrower },
+        threads: { get: thrower },
+      },
+      { clientInterceptors: [onError((failure, { path }) => handleRpcError(failure, path))] },
+    );
+    const app = new Hono();
+    app.use("*", requestLogging(logger));
+    app.post("/rpc/*", async (c) => {
+      const { response } = await rpc.handle(c.req.raw, { prefix: "/rpc", context: {} });
+      return response ?? c.notFound();
+    });
+    const response = await app.request(`/rpc/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    return {
+      status: response.status,
+      body: (await response.json()) as { json: { code: string; message: string } },
+      logs: sink.events.map((event) => [event.level, event.message]),
+    };
+  }
+
+  it("answers the same 404 and logs it at info, with the request", async () => {
+    const gone = await call("routines/list", new BotNotFoundError());
+    expect(gone.status).toBe(404);
+    expect(gone.body).toMatchObject({ json: { code: "NOT_FOUND", message: "Resource not found" } });
+    expect(gone.logs).toEqual([
+      ["info", "rpc routines/list bot not found"],
+      ["info", "http.request.completed"],
+    ]);
+    expect((await call("threads/get", new BotNotFoundError())).logs).toEqual([
+      ["info", "rpc threads/get bot not found"],
+      ["info", "http.request.completed"],
+    ]);
+    expect((await call("routines/listForMentions", new BotNotFoundError())).logs[0]).toEqual([
+      "info",
+      "rpc routines/listForMentions bot not found",
+    ]);
+  });
+
+  it("still warns when something else is missing for a bot that exists", async () => {
+    const missing = await call("routines/list", new IsolationError());
+    expect(missing.status).toBe(404);
+    expect(missing.body).toMatchObject({
+      json: { code: "NOT_FOUND", message: "Resource not found" },
+    });
+    expect(missing.logs).toEqual([
+      ["warn", "rpc routines/list not found"],
+      ["warn", "http.request.completed"],
+    ]);
+  });
+
+  it("still warns when a write names a bot that is not there", async () => {
+    expect((await call("routines/update", new BotNotFoundError())).logs).toEqual([
+      ["warn", "rpc routines/update not found"],
+      ["warn", "http.request.completed"],
+    ]);
+  });
+
+  it("is what the bot lookups throw, and still an IsolationError to everything else", () => {
+    const error = new BotNotFoundError();
+    expect(error).toBeInstanceOf(IsolationError);
+    expect(error.name).toBe("IsolationError");
+    expect(error.message).toBe("Resource not found");
   });
 });
