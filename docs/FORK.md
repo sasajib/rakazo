@@ -554,6 +554,46 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `addMcpServerFromTool` (keep the reuse call before `secretStore.put`) and to
   `spawnBot`'s input; `availableInSpace` semantics.
 
+### 1.24 One large file no longer blocks every checkpoint of a host computer (audit finding 6)
+- **Why:** `computer.checkpoint_deferred` 55 times in 33 h with `SandboxFileTooLargeError` ("computer file exceeds
+  8388608 bytes"). A home on a host ("desktop") computer is saved through the host protocol; its export
+  (`walkDesktopWorkspace` with the runner's `maxFileBytes`) threw at the first file over 8 MiB, so the WHOLE home was
+  not saved, at every checkpoint, for as long as one such file (a video, a yt-dlp json) existed.
+- **The cap stays:** 8 MiB (`HOST_COMPUTER_MAX_FILE_BYTES`) is a transport limit of the host protocol only (one file
+  = one base64 JSON frame, frames capped at 12 MiB). Docker and other providers stream large files and are untouched.
+- **Purpose:** the export skips files over the cap and saves the rest. Request field `exportWorkspace
+  {skipLargeFiles: true}` (`host-computer-protocol.ts`); the runner (`host-computer-runner.ts`) walks with
+  `DesktopSandboxProvider.exportWorkspaceSkippingLarge` (size from `stat`, the file is never read) and ends with one
+  frame `{skippedLarge: {count, bytes, paths}}`; the client (`host-computer-sandbox.ts`) logs
+  `computer.checkpoint_skipped_large` (`files.skipped`, `files.skipped_bytes`, `file.max_bytes`, computer id;
+  no paths, no contents; once per computer per state, repeated after 6 h or when the numbers change:
+  `host-export-skipped.ts`) and hands each path to the save as an `omitted` entry. The save
+  (`checkpointComputerWorkspace`) keeps its EARLIER saved version of such a file when it has one
+  (`workspace-large-files.ts` `keepSavedVersion`): a file that grew past the cap is not dropped from the saved copy,
+  which is what upstream's failing save protected.
+- **Version skew is safe both ways:** an app with the flag talking to a host bundle without it: the old host drops
+  the unknown field and fails the export as before (still deferred, nothing lost). A host with the fix talking to an
+  older app: no flag, old behaviour. **Deploy: rebuild the stack's `host-computer` bundle and restart
+  `bee-rakazo-host-computer` after the app image, or the skip does not take effect.**
+- **What is not saved:** the skipped files themselves. They stay on the host computer's disk only; the saved copy
+  (used if the computer is ever replaced or moved to another kind) holds their last version from before they
+  grew, or nothing if they were always large. The warn log is the signal.
+- **Files (fork):** `computers/workspace-large-files.ts`, `computers/host/host-export-skipped.ts`. **Seams:**
+  `providers/computer/desktop/desktop-sandbox.ts` (`walkDesktopWorkspace` optional `skipped`, one new method),
+  `computers/host/{host-computer-protocol,host-computer-runner,host-computer-sandbox}.ts`,
+  `computers/computer-workspace.ts` (one branch in the export loop).
+- **Env / migration:** none.
+- **Tests:** `computers/host/host-computer.test.ts` (real server + client: export goes past the large file;
+  without the flag the old refusal; trailer frame has count, bytes, paths; **upstream's test "preserves the saved
+  workspace when a native file grows…" is rewritten**: the save now succeeds, the grown file keeps its saved version,
+  small files beside a never-saved large one are saved; both FAIL on the old code), `host-export-skipped.test.ts`
+  (one warn, no repeat, protocol parse), `workspace-large-files.test.ts` (kept version, link and outside path refused).
+- **Live check:** after the host bundle is rebuilt: `docker logs rakazo-worker-1 rakazo-api-1 | grep -c
+  computer.checkpoint_deferred` stops growing for `SandboxFileTooLargeError`; one `computer.checkpoint_skipped_large`
+  line with the count; `computers."homeRevision"` (or the saved home's mtime) advances after a run that wrote files.
+- **Conflicts:** upstream edits to `walkDesktopWorkspace`, the `exportWorkspace` case of the runner, the request union
+  in `host-computer-protocol.ts`, and the rewritten upstream test.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

@@ -3,11 +3,19 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { AdapterContext, ComputerRef } from "@rakazo/adapter-kit";
 import { SandboxFileTooLargeError } from "@rakazo/adapter-kit";
-import { DesktopSandboxProvider } from "../../providers/computer/desktop/desktop-sandbox.js";
+import type { SkippedLargeFiles } from "../../providers/computer/desktop/desktop-sandbox.js";
+import {
+  DesktopSandboxProvider,
+  SKIPPED_LARGE_PATHS_MAX,
+} from "../../providers/computer/desktop/desktop-sandbox.js";
 import { WorkspacePathError } from "../screens/computer-support.js";
 import type { HostScreen } from "../screens/host-screen.js";
 import { HostScreenError } from "../screens/host-screen.js";
-import type { HostComputerFrame, HostComputerRequest } from "./host-computer-protocol.js";
+import type {
+  HostComputerFrame,
+  HostComputerRequest,
+  HostExportSkippedFrame,
+} from "./host-computer-protocol.js";
 import {
   HOST_COMPUTER_MAX_FILE_BYTES,
   hostComputerDeadlineMs,
@@ -163,13 +171,29 @@ export function createHostComputerRunner(options: {
         });
         yield null;
         break;
-      case "exportWorkspace":
-        for await (const file of provider.exportWorkspace(computer)) {
-          if (file.content.byteLength > HOST_COMPUTER_MAX_FILE_BYTES)
-            throw new SandboxFileTooLargeError(HOST_COMPUTER_MAX_FILE_BYTES);
+      case "exportWorkspace": {
+        // Fork (1.24): the per-file cap is this protocol's frame limit, so it stays. A caller
+        // that asks for it gets every file under the cap and a count of the ones left out; one
+        // large file then no longer fails the whole save.
+        const skipped: SkippedLargeFiles = { count: 0, bytes: 0, paths: [] };
+        const files = input.skipLargeFiles
+          ? provider.exportWorkspaceSkippingLarge(computer, skipped)
+          : provider.exportWorkspace(computer);
+        for await (const file of files) {
+          if (file.content.byteLength > HOST_COMPUTER_MAX_FILE_BYTES) {
+            // Grew between stat and read.
+            if (!input.skipLargeFiles)
+              throw new SandboxFileTooLargeError(HOST_COMPUTER_MAX_FILE_BYTES);
+            skipped.count += 1;
+            skipped.bytes += file.content.byteLength;
+            if (skipped.paths.length < SKIPPED_LARGE_PATHS_MAX) skipped.paths.push(file.path);
+            continue;
+          }
           yield { ...file, content: Buffer.from(file.content).toString("base64") };
         }
+        if (skipped.count > 0) yield { skippedLarge: skipped } satisfies HostExportSkippedFrame;
         break;
+      }
       case "snapshot":
         yield await provider.snapshot(computer, context);
         break;
