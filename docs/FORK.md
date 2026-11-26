@@ -838,6 +838,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
+- `eccc87ac6` merged upstream `4f4189032..50de80b1f` (67 commits) into `sync/upstream-1126` after `fix/post-live-1126`
+  (`979685f61`); see §4 (2026-11-26 b).
 - `881e9133b` (`fix/cards-plans-mcp-1126`, 1.21-1.26), `6b69eac81` (`feat/vault-fill-mcp-browser`, 1.16b), `55fe5eeea`
   (`feat/agent-skill-assign-tool`, 1.17a) merged into `integrate/1126` on fork `main` `6ae098ad1`; see §4 (2026-11-26).
 
@@ -982,6 +984,62 @@ Tell him: stale web tabs keep the old bundle until reloaded.
 ---
 
 ## 4. Sync log
+
+### 2026-11-26 (b) — post-live fixes + upstream `4f4189032..50de80b1f` (67 commits) → `sync/upstream-1126`, image `main-1126b`
+- **Base:** fork `main` `49d2743ed` (tag `pre-sync-1126`, image `main-1126a`, live-verified). First `fix/post-live-1126`
+  (`979685f61`: vault_fill script tool by availability 1.16b, `ops/rakazo_rpc.py` large results 1.9, memory/curator model
+  budget 1.10/1.19), then `git merge upstream/main` = `eccc87ac6`. **Decision: merge** (12 content conflicts, all in
+  ledger seams; 67 upstream commits, no upstream release tag in the range).
+- **Conflicts and resolutions** (ours kept, upstream's change ported onto it):
+  - `apps/api/src/app.ts`: fork voice-agent routes + upstream `mountBotAccess`; `mountVoiceHttpRoutes(…, env)` (upstream
+    #6804 cross-site cookie guard) stays mounted before the fork routes, so it covers them (1.1).
+  - `computers/computer-lifecycle.ts`: imports of both sides; upstream #6817 made slot-aware (1.2). **Ours wins** on
+    "other lanes keep running": with several slots, background work yields only the slots the waiting people need.
+  - `runs/assembly/run-instructions.prompt.ts` + `runs/executor/executor.test.ts`: `secretGuidance(disabled,
+    vaultFillOffered)` (1.16b) + upstream's `ask_user` sentence (#6814) and scratchpad wording (#6745).
+  - `runs/executor/executor.ts`: `run.audit_summary` (1.8) + upstream's prompt-task callback (#6707).
+  - `runs/lifecycle/run-complete.ts`: `keptTurnTranscript` (#6747) + `notifyOpenOwnerCards` (1.21).
+  - `runs/tools/run-tool-selection.ts`, `runs/wakeups/background-job-handlers.ts`: imports of both sides
+    (`VAULT_FILL_TOOL`, `runMayStartShellJobs`, `agentConnectionTools`; `pollShellJob`, `deliverTaskCallback`).
+  - `runs/tools/run-tools-memory.ts`: upstream `remember {shared}` (#6740) + fork `memory.save` log (1.8) + the
+    STANDING.md guard (1.5). **Ours wins:** standing orders stay the binding rule store.
+  - `runtime/pi/tools/pi-runtime-tools.ts`: fork labels kept; `save_shared_memory` label dropped with upstream.
+  - `tools/builtin.tool-definition.ts`: `sharedMemorySaveError` / `MAX_SHARED_MEMORY_CHARS` removed with upstream (the
+    guard moved to `remember`).
+  - `tools/builtin-tool-bridge.test.ts`: upstream's comment + fork notes; cap re-measured 49_820 → `49_880`.
+- **Not a textual conflict, but broken by the merge and fixed:** `vault_fill` (upstream #6818 labels MCP sources by display
+  name; see 1.16b); `executor.test.ts` prompt expectation. Nothing else failed after the merge.
+- **Upstream changes checked against fork features:** #6814 "option cards" is prompt wording for the existing `ask`
+  block: **no new message block kind** in this range, so `NEEDS_PERSON_BY_KIND`, plan-card history text, message-quote
+  and the mobile presentation switches needed nothing (tsc on core/web/mobile confirms). #6768 (unavailable built-ins in
+  `find_tool`) merged untouched. #6747 (stored turn transcripts): the ledger block, standing orders and notices live in
+  the instructions, not in the turn, so they are not replayed; a turn whose card or mid-turn message sits between prompt
+  and reply falls back to the old replay (plan cards keep their status text); a tool-free talk run replays stored turns
+  with tool calls the old way. #6717 (text before an approval card) and #6796 (signed webhook deliveries) are additive.
+  #6707 (bot API / MCP server / CLI): requests go through `threads/send` as the key's owner, so lanes, plan gate and
+  admission apply; such a run counts as owner-started. #6827 (organization MCP servers): `availableInSpace` still
+  filters by owner, so 1.23 reuse never picks an organization server; upstream's "your organization already added this
+  server" check runs after the reuse check.
+- **Prompt surface:** 4 tool snapshots regenerated; diff = upstream's own edits (`ask_user`, `remember` + `shared`,
+  `create_child_routine`/`schedule_*` `endAt`, `save_page`, `delete_shared_memory` wording; `save_shared_memory` removed:
+  owner chat 69 → 68 tools, 85,381 → 86,283 bytes). `prompts.md`, `vault-fill.md` unchanged. Fork tools and arguments intact.
+- **Migrations (7 upstream, none of ours):** `20270101000100_page_images`, `…000200_notification_sounds`,
+  `…000200_page_reader_states`, `…000300_access_grant_codes`, `…000400_free_byok_tiers`, `20270101100000_bot_access`,
+  `20270102120000_organization_mcp_servers`. They sort between the fork's `20261231235500_memory_ledger` and
+  `20270105090000_agent_concurrency`. On a copy of the live schema + `_prisma_migrations` (345 rows) `migrate deploy`
+  applied exactly these seven, no error (352 rows after).
+- **New upstream env keys:** `PARALLEL_API_KEY`, `PLUGIN_GITHUB_TOKEN` (app anchor), `CREDIT_CODES` (api). Fork:
+  `MEMORY_LEDGER_MODEL_MAX_TOKENS`. All optional; the stack compose file needs the lines only to pass a value.
+- **Gates:** `npx turbo check` 25/25 tasks, 0 `error TS` (upstream worktree: 25/25, 0). Biome on the 341 `.ts/.tsx` files
+  changed vs upstream: exit 0 (6 warnings). Vitest non-postgres, fork vs pure upstream `50de80b1f`, same FAIL list:
+  `desktop-runtime` 8, `mcp-package-installer` 1, `focus-or-launch` 1. Mobile `apps/mobile` 380 files / 4,629 tests pass.
+  Postgres specs on `rakazo/postgres-graph`, one fresh database each: numbers in stack `SYNC-1126.md`. 102 of 102
+  `post-sync-check.py` markers.
+- **Dropped / changed in behaviour:** the `save_shared_memory` tool is gone (upstream removed it; `remember {shared:
+  true}` replaces it, minus STANDING.md). Background work now yields a bot's free computer slot(s) to a waiting
+  person's run (upstream #6817, slot-aware here). Nothing of the fork was dropped.
+- **Deploy record, image id, host-bundle diff, rollback:** stack repo `SYNC-1126.md`. Rollback = image `main-1126a` + tag
+  `pre-sync-1126`.
 
 ### 2026-11-26 — three fork branches integrated (no upstream change) → `integrate/1126`, image `main-1126a`
 - **Merged, in order, with merge commits:** `fix/cards-plans-mcp-1126` (`014ae8b5f`, 1.21-1.26) = `881e9133b`;
