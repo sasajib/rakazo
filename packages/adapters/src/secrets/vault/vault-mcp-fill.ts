@@ -8,6 +8,7 @@ import type {
 import { getLogger } from "@rakazo/logging";
 import { z } from "zod";
 import { sanitizeConnectorError } from "../../integrations/connector-safety.js";
+import { parseConnectorToolArgs } from "../../tools/lazy-tool-catalog.js";
 import { CATALOG_EXECUTE, CATALOG_SEARCH } from "../../tools/lazy-tool-catalog.tool-definition.js";
 
 /**
@@ -329,6 +330,8 @@ export type McpBrowserTarget = {
   executionId: string;
   /** Values no error text may quote. */
   secrets: () => string[];
+  /** The server's tools found so far in this call, so each is looked up once. */
+  found?: Map<string, ConnectorTool>;
 };
 
 type StepOutcome =
@@ -337,6 +340,9 @@ type StepOutcome =
   | { ok: false; sure: boolean; error: string };
 
 const CONNECTORS = ["mcp", "installed"] as const;
+
+const badArguments = (tool: string) =>
+  `The browser server's ${tool} tool does not take the arguments configured for it (VAULT_FILL_MCP_BROWSER_SHAPES).`;
 
 /**
  * Call one tool of the browser server through the run's own connector, so it runs in the MCP
@@ -354,7 +360,21 @@ async function callStep(
   const args = stepArgs(step, values);
   const executionId = `${target.executionId}:${label}`;
   let call: ConnectorCall | undefined;
-  for (const connectorId of CONNECTORS) {
+  target.found ??= new Map();
+  const known = target.found.get(step.tool);
+  if (known) {
+    try {
+      call = {
+        tool: known.name,
+        args: parseConnectorToolArgs(known.inputSchema, args),
+        executionId,
+        route: known.route,
+      };
+    } catch {
+      return { ok: false, sure: true, error: badArguments(step.tool) };
+    }
+  }
+  for (const connectorId of known ? [] : CONNECTORS) {
     const id = connectorId === "mcp" ? `mcp__${server}__${step.tool}` : `${server}__${step.tool}`;
     try {
       const resolved = await connector.resolveCall?.(
@@ -374,17 +394,14 @@ async function callStep(
         sameServer(route.catalogGroup ?? "", server)
       ) {
         call = resolved!.call;
+        target.found.set(step.tool, resolved!.tool);
         break;
       }
     } catch (error) {
       context.signal.throwIfAborted();
       // Unknown here; the other connector may have it. Bad arguments are the shape's mistake.
       if (error instanceof Error && /arguments/i.test(error.message)) {
-        return {
-          ok: false,
-          sure: true,
-          error: `The browser server's ${step.tool} tool refused the arguments configured for it.`,
-        };
+        return { ok: false, sure: true, error: badArguments(step.tool) };
       }
     }
   }
