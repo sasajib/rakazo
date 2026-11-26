@@ -946,6 +946,9 @@ describeJourneys("required product journeys", () => {
         where: { botId: bot.id, type: "computer.takeover.released" },
       }),
     ).toBe(releaseEvents);
+    // Fork (FORK.md 1.3, supervision): the run handed the sign-in to the person, so it is not "work
+    // announced and not done". A continuation here asked for the same takeover a second time.
+    expect(await prisma.run.count({ where: { botId: bot.id } })).toBe(1);
   });
 
   it("4d: skipping takeover resumes without treating login as done", async () => {
@@ -2026,6 +2029,12 @@ describeJourneys("required product journeys", () => {
       select: { instructions: true },
     });
 
+    // Fork (FORK.md 1.25, plan gate): a run the owner started sends another bot a request only
+    // under an approved plan, so with the default mode (Ask until trusted) this message_bot is
+    // refused and no bot_message run exists to test. The owner turns plans off for Scout (Never
+    // ask), which is the upstream behaviour this journey was written for; what the peer run may
+    // do with the request is unchanged and still asserted below.
+    await rpc(app, cookie, "plans/setMode", { botId: scout!.id, mode: "never" });
     await sendAndWait(
       app,
       cookie,
