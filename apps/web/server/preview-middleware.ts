@@ -26,6 +26,7 @@ import {
 import { resolveScreenProxySecret } from "@rakazo/core/node/secrets-guard";
 import type { Logger } from "@rakazo/logging";
 import { ASSET_ARCHIVE_DIR, archiveAssets } from "./asset-archive.js";
+import { autoReloadEnabled, autoReloadHeaderMiddleware } from "./auto-reload.js";
 import { indexPageMiddleware, publicOrigin, withAbsoluteSocialImage } from "./index-page.js";
 import { instanceThemeMiddleware, withInstanceThemeLink } from "./instance-theme.js";
 import { missingAssetMiddleware } from "./missing-asset.js";
@@ -511,6 +512,8 @@ export function webServerSettings(read: (name: string) => string | undefined, lo
       ),
     publicOrigin: publicOrigin(read("RAKAZO_HOST")),
     imageTag: read("RAKAZO_IMAGE_TAG") ?? "edge",
+    // Fork: see auto-reload.ts.
+    autoReload: autoReloadEnabled(read("WEB_AUTO_RELOAD")),
     appPolicy: appContentSecurityPolicy({
       scriptSrc: parseContentSecuritySources(
         "RAKAZO_CSP_SCRIPT_SRC",
@@ -549,6 +552,7 @@ export function attachPreviewMiddleware(
     }
     next();
   });
+  middlewares.use(autoReloadHeaderMiddleware(settings.autoReload));
   // A shared page's link is its only key: keep it out of search results and Referer.
   middlewares.use(sharedPageHeaders);
   let archive: string | null = null;

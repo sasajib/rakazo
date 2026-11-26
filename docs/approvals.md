@@ -61,8 +61,9 @@ In **Auto** and **Ask**, these always show a card, and **Always allow** doesn't 
 - A payment, and a saved login or card the bot fills in.
 - The first use of your own computer in a space, and of each app on it.
 
-**Never ask** runs all of them. The one exception is accepting another owner's bot connection, which
-it refuses when someone else started the run or outside content entered it.
+**Never ask** runs all of them. The exceptions: accepting another owner's bot connection, which
+it refuses when someone else started the run or outside content entered it, and a saved login you
+set to **Ask first** in the Vault, which asks every time in every mode.
 
 ## Spending limit
 

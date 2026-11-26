@@ -88,7 +88,13 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("backgroundYieldsSlot(", 2), ("connectorToolServerKey(", 2), ("catalogSources", 3),
            ("parsed.data.shared &&", 1),
            # journeys fixes (1.3): the continuation rule skips a run that stopped for the person
-           ("PAUSED_FOR_PERSON_EVENT_TYPES", 2), ("pausedForPerson", 2)]
+           ("PAUSED_FOR_PERSON_EVENT_TYPES", 2), ("pausedForPerson", 2),
+           # an open tab moves onto a new deploy by itself (1.27): upstream tracker seams, the screen-control
+           # hold, the web server's kill switch
+           ("forkClientUpdates(", 2), ("installFork", 2), ("forkAllows", 2), ("holdReload(", 2),
+           ("autoReloadHeaderMiddleware(", 2), ("WEB_AUTO_RELOAD", 2),
+           # Ask first on a saved item holds in Never ask; loosely named logins (1.28)
+           ("itemAsksFirst", 4), ("withSavedLoginNames(", 2), ("unknownLoginError(", 2)]
 results = []
 
 

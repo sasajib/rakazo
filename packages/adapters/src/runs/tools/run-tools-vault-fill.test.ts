@@ -708,6 +708,8 @@ describe("vault_fill with a login that asks first", () => {
       title: "Sign in to login.example.test with login.example.test?",
     });
     expect(asked.args.loginApproval).toEqual(asked.loginUse);
+    // The gate asks for it in every approval mode, Never ask included (vault-item-ask-first.fork.test.ts).
+    expect(asked.itemAsksFirst).toBe(true);
     expect(fillsSent()).toEqual([]);
 
     // The approved call is replayed with the approval the user answered.
@@ -746,7 +748,134 @@ describe("vault_fill with a login that asks first", () => {
     const plain = request({ ...both, loginApproval: { kind: "login" } });
     expect(await prepareToolRequest(ctx as never, plain)).toBeUndefined();
     expect(plain.loginUse).toBeUndefined();
+    expect(plain.itemAsksFirst).toBeUndefined();
     expect(plain.args).not.toHaveProperty("loginApproval");
+  });
+
+  it("asks for a login named by its title, under its saved name", async () => {
+    const { ctx, db, fill, both, fillsSent } = await setup({ policy: "ask" });
+    await relabelVaultItem(db.prisma, { userId: "u", spaceId: "space" }, "work", {
+      title: "Work Portal",
+    });
+    const asked = request({ ...both, secret: "work portal" });
+    expect(await prepareToolRequest(ctx as never, asked)).toBeUndefined();
+    expect(asked.args.secret).toBe("work");
+    expect(asked.loginUse).toMatchObject({ login: "work", title: "Work Portal" });
+    expect(asked.itemAsksFirst).toBe(true);
+    expect(fillsSent()).toEqual([]);
+    const replay = request(asked.args, { nextApprovedTool: VAULT_FILL_TOOL });
+    expect(await prepareToolRequest(ctx as never, replay)).toBeUndefined();
+    expect((await fill(replay.args)).result).toMatchObject({ ok: true });
+  });
+});
+
+describe("vault_fill with a login the call names loosely", () => {
+  const request = (args: Record<string, unknown>): ToolRequest =>
+    ({
+      name: VAULT_FILL_TOOL,
+      args,
+      executionId: "exec-1",
+      connectorCall: { tool: VAULT_FILL_TOOL, args, executionId: "exec-1", route: undefined },
+      replayEffectToolName: VAULT_FILL_TOOL,
+      heldForApproval: false,
+      settingsChange: false,
+      ignoresAllowRules: false,
+    }) as unknown as ToolRequest;
+  const owner = { userId: "u", spaceId: "space" };
+  const another = (
+    run: Awaited<ReturnType<typeof setup>>,
+    name: string,
+    origin: string,
+    password: string,
+  ) =>
+    storeBotSecret({
+      prisma: run.db.prisma,
+      secretStore: run.secretStore,
+      scope: owner,
+      destination: { name, origin, auth: { type: "login" } },
+      plaintext: encodeLoginSecret({
+        fields: [
+          { label: "Email", value: `${name}@example.test`, hidden: false },
+          { label: "Password", value: password, hidden: true },
+        ],
+      }),
+    });
+
+  it.each(["Work Portal", "work portal", " WORK-PORTAL ", "Work", "WORK", "login.example.test"])(
+    "fills the one saved login %j means, by its title or its name in another case or spacing",
+    async (given) => {
+      const run = await setup();
+      if (given.toLowerCase().includes("portal"))
+        await relabelVaultItem(run.db.prisma, owner, "work", { title: "Work Portal" });
+      await another(run, "other", "https://other.example.test", "other-password-9");
+      const call = request({ ...run.both, secret: given });
+      expect(await prepareToolRequest(run.ctx as never, call)).toBeUndefined();
+      expect(call.args.secret).toBe("work");
+      const { result, seen } = await run.fill(call.args);
+      expect(result).toMatchObject({ ok: true, site: SITE });
+      expect(run.fillsSent().map((sent) => sent.args.value)).toEqual([USERNAME, PASSWORD]);
+      expect(run.used()).toHaveLength(1);
+      expect(seen).not.toContain(PASSWORD);
+    },
+  );
+
+  it("never guesses between two logins the name matches, and says which names there are", async () => {
+    const run = await setup();
+    await relabelVaultItem(run.db.prisma, owner, "work", { title: "Portal" });
+    await another(run, "work-two", SITE, "second-password-7");
+    await relabelVaultItem(run.db.prisma, owner, "work-two", { title: "Portal" });
+    const call = request({ ...run.both, secret: "portal" });
+    expect(await prepareToolRequest(run.ctx as never, call)).toBeUndefined();
+    expect(call.args.secret).toBe("portal");
+    const { result, seen } = await run.fill(call.args);
+    expect(String(result.error)).toContain("2 saved logins match it");
+    expect(String(result.error)).toContain("work");
+    expect(String(result.error)).toContain("work-two");
+    expect(run.fillsSent()).toEqual([]);
+    for (const value of [PASSWORD, USERNAME, "second-password-7", "work-two@example.test"])
+      expect(seen).not.toContain(value);
+  });
+
+  it("answers a name nothing matches with the logins saved for the page's site, and no value", async () => {
+    const run = await setup();
+    await relabelVaultItem(run.db.prisma, owner, "work", { title: "Work Portal" });
+    await another(run, "other", "https://other.example.test", "other-password-9");
+    const call = request({ ...run.both, secret: "intranet" });
+    expect(await prepareToolRequest(run.ctx as never, call)).toBeUndefined();
+    const { result, seen } = await run.fill(call.args);
+    expect(String(result.error)).toContain("Login is unavailable under that name");
+    expect(String(result.error)).toContain(`Saved logins for ${SITE}: work ("Work Portal")`);
+    // A login for another site is not offered for this page, and no value is ever in the message.
+    expect(seen).not.toContain("other");
+    for (const value of [PASSWORD, USERNAME, "other-password-9"]) expect(seen).not.toContain(value);
+    expect(run.fillsSent()).toEqual([]);
+  });
+
+  it("lists every usable login when none is saved for the page's site, and keeps the old words when there is none at all", async () => {
+    const run = await setup({ pages: { 7: loginPage("https://elsewhere.example.test/in") } });
+    const { result } = await run.fill({ ...run.both, secret: "intranet" });
+    expect(String(result.error)).toContain("None is saved for https://elsewhere.example.test");
+    expect(String(result.error)).toContain("Saved logins: work");
+    run.db.rows().length = 0;
+    const empty = await run.fill({ ...run.both, secret: "intranet" });
+    expect(empty.result.error).toContain(
+      "Login is unavailable. Use request_secret to save it first.",
+    );
+  });
+
+  it("leaves a login the bot may not use out of both", async () => {
+    const run = await setup();
+    await another(run, "blocked", SITE, "blocked-password-5");
+    run.db.rows().find((row) => row.name === "blocked")!.policy = "off";
+    const call = request({ ...run.both, secret: "Blocked" });
+    expect(
+      await prepareToolRequest({ ...run.ctx, run: { ...run.ctx.run } } as never, call),
+    ).toBeUndefined();
+    expect(call.args.secret).toBe("Blocked");
+    const { result, seen } = await run.fill(call.args);
+    expect(String(result.error)).toContain("Login is unavailable under that name");
+    expect(seen).not.toContain("blocked");
+    expect(run.fillsSent()).toEqual([]);
   });
 });
 
