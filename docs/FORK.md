@@ -97,6 +97,16 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Tests:** `core/src/runs/run-supervision.test.ts`, `voice-chat-groups.test.ts`, `tool-step-outcomes.test.ts`,
   `apps/api/src/calls/calls.test.ts`, `db/src/threads/events.test.ts` (`talkRunId` in return shapes), authorization inventory (`threads/callNote`).
 - **Live check:** `run.execution_started` with `run.trigger: talk` in api logs while another run holds the computer.
+- **Continuation rule, two exclusions (2026-11-26, `fix/journeys-1126`):** "a person's run that announced work and used
+  no tool is continued once" (`core/src/runs/run-supervision.ts` `needsContinuation`, `adapters/.../run-unfinished-task.ts`)
+  does not fire for (a) a run that stopped for the person: `pausedForPerson`, read from the run's own events
+  `PAUSED_FOR_PERSON_EVENT_TYPES` (`computer.takeover.requested`/`released`, `run.waiting_input`), queried only when the
+  rule would otherwise fire. Before, only tool calls of the last attempt counted, so a takeover that was not a tool
+  call (scripted runtime) or a resumed attempt that lost the paused attempt's steps got a second `follow_up` run asking
+  for the same takeover. (b) a statement that uses a work word as a noun ("this is a safe test", "thanks for the
+  update"): `requestsWork` counts a work word only where it opens a clause or follows a word that takes a verb
+  (`BEFORE_A_VERB`; "I/we need|want …" still counts a noun). Tests: `run-supervision.test.ts`, journeys 4 (asserts one
+  run), 4b, 4d, 13c.
 - **Conflicts:** `thread-target.ts` and `run-model-turn.ts` change upstream almost every release; a `Record<RunTrigger, …>`
   in upstream tests needs `talk: false`.
 
@@ -916,11 +926,7 @@ their siblings and fix `index.ts` exports.
    `packages/testkit/src/runtime/executor-turn-checkpoint.test.ts`, mobile call tests. Compare failures against
    `git stash -u` / upstream (`desktop-runtime` (8), `infra/sandboxes/supervisor/src/focus-or-launch.test.ts` (1, since upstream
    `dbc0c9d46`: no xdotool + screen-gateway marker on bee), `mcp-package-installer` fail on bee without the fork too).
-   **Journeys are a fork debt, not an upstream baseline:** `packages/testkit/src/product/journeys.test.ts` (postgres,
-   `--spec=journeys`) passes 81/81 on pure upstream `50de80b1f` on bee, and fails 6 of 84 on the fork (4, 4b, 4d x2,
-   13c, "a bot_message run cannot rewrite a child's instructions"), the same set as before this sync. In journey 4 the
-   thread shows a second `follow_up` run asking for the takeover again after the reply; untraced (first suspect: the
-   1.3 "continue a run that announced work and used no tool" rule against the scripted runtime). A pure-upstream worktree for comparison: `git worktree add --detach ../upstream-<mmdd> upstream/main`
+   A pure-upstream worktree for comparison: `git worktree add --detach ../upstream-<mmdd> upstream/main`
    + `pnpm install --frozen-lockfile` + `pnpm --filter @rakazo/db generate`.
 4. **Postgres tests against pgvector:** start a scratch `rakazo/postgres-graph:16-pgv-age1.6`, then for each of
    `row-security.postgres.test.ts`, `memory-ledger/{ledger,seams}.postgres.test.ts`, `shell-jobs.postgres.test.ts`,
@@ -930,6 +936,16 @@ their siblings and fix `index.ts` exports.
    `wakeup.postgres.test.ts`, `packages/testkit/src/product/authorization.test.ts` (one fresh database per spec):
    `CI_POSTGRES_URL=postgresql://postgres:pw@127.0.0.1:<port>/rakazo MCP_ALLOW_PRIVATE_ENDPOINT=true pnpm test:integration --spec=<file>`;
    remove the container after. (Plain `postgres:18-alpine` lacks pgvector; the ledger migration fails there.)
+   **4b. Journeys are a gate (since 2026-11-26):** `packages/testkit/src/product/journeys.test.ts`, same scratch
+   container, one fresh database: `CI_POSTGRES_URL=… MCP_ALLOW_PRIVATE_ENDPOINT=true RAKAZO_BROWSER_BINARY=chromium pnpm test:integration --spec=journeys`
+   must be all green (84 of 84 on the fork at `fix/journeys-1126`, 3 runs in a row; pure upstream `50de80b1f` 81 of 81).
+   The old "6 of 84 fail" debt had two fork causes, both fixed in the 1.3 continuation rule, and one journey that
+   needed the fork's rules spelled out: "a bot_message run cannot rewrite a child's instructions without the owner"
+   sets the sender's plan mode to `never` first (`plans/setMode`), because the plan gate (1.22/1.25) refuses
+   `message_bot` from an owner-started run without an approved plan. A new upstream journey in which a person's run
+   calls `message_bot` needs the same line. To run one case: export the harness env by hand and
+   `pnpm exec vitest run packages/testkit/src/product/journeys.test.ts -t '<name>'` against an already migrated
+   database (`COPY_TEST_DATABASE=1` copies it per file). Never skip or delete a journey to get green.
 5. **Prompt surface:** `npx vitest run packages/adapters/src/runs/assembly/prompt-surface.test.ts`; on failure review
    `git diff __prompt_surface__/` (expect only upstream's edits plus the fork's tool args `lane`, `force`, `review` and
    tools `bot_queue`, `standing_set`), then `-u`. Re-measure the `builtin-tool-bridge.test.ts` byte cap.
@@ -1041,6 +1057,7 @@ Tell him: stale web tabs keep the old bundle until reloaded.
   `post-sync-check.py` markers.
 - **Journeys (extra, not a gate):** fork 78 passed / 6 failed of 84; pure upstream 81/81; pre-sync fork `main` in the
   same container: see stack `SYNC-1126.md`. The six are the fork's old failures (see 3.4), none new.
+  **Fixed after this sync on `fix/journeys-1126` (84 of 84, see 3.4 step 4b and stack `FIX-1126-journeys.md`).**
 - **Dropped / changed in behaviour:** the `save_shared_memory` tool is gone (upstream removed it; `remember {shared:
   true}` replaces it, minus STANDING.md). Background work now yields a bot's free computer slot(s) to a waiting
   person's run (upstream #6817, slot-aware here). Nothing of the fork was dropped.
