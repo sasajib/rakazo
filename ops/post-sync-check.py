@@ -73,7 +73,12 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("mcp.server.auto_approved", 1),
            # 2026-11-26 post-live fixes: vault_fill picks the script tool the server offers; the memory
            # and curator models retry once with twice the budget when thinking used it all
-           ("stepTools(", 2), ("chatWithBudget(", 2), ("MEMORY_LEDGER_MODEL_MAX_TOKENS", 1)]
+           ("stepTools(", 2), ("chatWithBudget(", 2), ("MEMORY_LEDGER_MODEL_MAX_TOKENS", 1),
+           # 2026-11-26b sync re-ports: background work yields a bot's slots to waiting people only as far
+           # as they need them; vault_fill reads the server from the tool id (upstream labels sources by
+           # display name); remember {shared} cannot write STANDING.md
+           ("backgroundYieldsSlot(", 2), ("connectorToolServerKey(", 2), ("catalogSources", 3),
+           ("parsed.data.shared &&", 1)]
 results = []
 
 

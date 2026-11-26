@@ -52,6 +52,10 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `packages/core/src/calls/*.test.ts`, mobile `livekit-call-session.test.ts`, `call-session-transport.test.ts`,
   `android-platform-contract.test.ts`; agent: `pytest tests/` + `scripts/scenario_assert.py` (end-to-end gate).
 - **Live check:** `docker logs rakazo-api-1 | grep -c api/voice/agent/token` after a call; `scenario_assert.py` PASS.
+- **Sync 2026-11-26b:** upstream #6804 mounts a cross-site cookie guard on `/api/voice/*` inside `mountVoiceHttpRoutes`
+  (now takes `env`). It is mounted before `mountVoiceAgentRoutes` in `app.ts`, so it also covers the fork's
+  `/api/voice/agent` and `/api/voice/agent/token` (a browser request from an untrusted origin gets 403; bearer callers
+  such as the mobile app and the voice agent are not cookie requests). Keep that order.
 - **Conflicts:** upstream edits to `call-session.ts`, `CallCard.tsx`, the CSP module and every new Android locale dir
   (needs `rakazo_action_done`). Mobile strings are Lingui macros (`t\`...\``), never plain `t("...")`.
 
@@ -68,6 +72,14 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Tests:** `core/src/runs/agent-concurrency.test.ts`, `computer-lifecycle{,.postgres}.test.ts`, `run-recovery.test.ts`,
   `testkit/src/product/executor-lifecycle.test.ts`, `journeys.test.ts`.
 - **Live check:** `post-sync-check.py` (marker `planLeaseSlot`); overlapping-runs query per bot after a burst.
+- **Sync 2026-11-26b (upstream #6817, "a person's message before scheduled work"):** upstream makes background work
+  without a lease throw `ComputerBusyError` while a person's run of the bot waits for the computer (`lockOwnedRun`).
+  Ported onto the slots: `lockOwnedRun(…, "count")` returns how many people's runs wait, and
+  `backgroundYieldsSlot` (`core/src/runs/agent-concurrency.ts`) makes background work yield only while the free slots
+  are no more than those people. One slot (the default) = upstream's rule exactly. Several slots: a person's run held
+  back by the one-writer rule does not freeze the bot's other conversations and lanes. The dedicated-screen path keeps
+  upstream's plain yield. Tests: `agent-concurrency.test.ts` ("backgroundYieldsSlot"), upstream's
+  `computer-lifecycle.postgres.test.ts` case ("leaves a free computer to a person's waiting run…").
 - **Conflicts:** any upstream lookup by the old compound key `computerId_botId` (use `findFirst`); upstream wrapping
   lifecycle code in `withTransactionRetry`; test doubles needing `findMany/findFirst` on the lease delegate.
 
@@ -115,6 +127,18 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Live check:** markers `standing_set`, `notice-ledger`; `STANDING.md` row in `memory_documents`.
 - **Ops:** `ops/standing-graph.py`, `ops/weekly-self-audit.py` (Monday cron). Stack-side: standing orders `r-bee-desktop-browser`,
   `r-bee-desktop-browser-screen` live in the DB (STANDING.md), seed text `STANDING-seed-content.md` in the stack repo.
+- **Sync 2026-11-26b (upstream #6740, "Space-wide rules in shared memory with remember"):** upstream dropped
+  `save_shared_memory` and gave `remember` a `shared` flag that edits the Space's memory documents, described as the
+  place for "rules, decisions and facts … all bots should follow". **Decision: standing orders stay the binding rule
+  store.** Taken: the `shared` flag and the removal of `save_shared_memory` (its handler, label, approval-list entries
+  and `sharedMemorySaveError` are gone with upstream). Kept/ported: (1) `remember {shared: true, path: "STANDING.md"}`
+  is refused with "STANDING.md changes only through standing_set" before anything is read (the guard
+  `save_shared_memory` carried; `delete_shared_memory` keeps its own); (2) the `shared` description now reads "facts
+  about the user or team that all bots should know. A standing rule or a settled decision goes to standing_set, not
+  here."; (3) with `MEMORY_LEDGER=1` an owner's `remember` still goes to the fact ledger first, with or without
+  `shared` (the ledger is already Space-wide), so on bee `shared` only reaches the documents in a run that received
+  outside text. Test: `run-tools-standing.test.ts` ("standing orders and upstream's shared memory"). Upstream #6745's
+  longer `remember` wording (no open loops, no approval logs) is taken as is.
 - **Conflicts:** upstream splits/renames built-in tool definition files; re-apply in the area file that now holds the tool.
 
 ### 1.6 Lanes, per-bot admission gate, `bot_queue`, `message_bot` duplicate check, live-call relay
@@ -139,6 +163,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Seams:** `packages/adapters/src/tools/builtin-tool-bridge.ts` (`CORE_BUILTIN_TOOL_NAMES`) + its test byte cap.
 - **Tests:** `builtin-tool-bridge.test.ts` (pinned list + byte budget), `pi-runtime-tool-dispatch.test.ts`,
   `testkit/src/runtime/executor-turn-checkpoint.test.ts` (uses `render_plot` as the "still deferred" example).
+- **Sync 2026-11-26b:** cap `49_880` (measured 49_820; upstream's own 38_322). Upstream #6768 explains unavailable
+  built-ins in `find_tool` (merged untouched; the deployment-disabled tools of 1.16 get its "turned off for this bot").
 - **Conflicts:** upstream resets the byte cap: keep upstream's comment, measure, set cap = real size + small margin.
 
 ### 1.8 Audit log events
@@ -335,6 +361,15 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Logs:** `vault_fill` (runId, botId, server, fills, outcome, completed); never a value.
 - **Live check:** throwaway HTTPS login page + a login saved for its origin; agent: `list_secrets` -> tab -> snapshot ->
   `vault_fill` -> click submit; page shows the values, chat/tool results/logs do not; a second login on another origin is refused.
+- **Sync 2026-11-26b (upstream #6818 broke the server match; fixed):** upstream now labels an MCP catalog source by
+  the server's display name (`route.catalogGroup` = "Browser MCP", not the slug `browser-mcp`). `vault_fill` matched
+  the configured name against that label, so after the merge it was neither offered nor able to call the server
+  (caught by `run-tools-vault-fill.connector.test.ts`). Now the server is read from the tool's own id
+  (`mcp__<slug>__<tool>`; `tools/catalog-sources.ts` `connectorToolServerKey`) or its label, and the folded catalog's
+  search tool carries `route.catalogSources` (fork field in `adapter-kit/src/types.ts`, set in `lazyCatalogTools`), so
+  the offer no longer depends on the catalog's description text. `VAULT_FILL_MCP_BROWSERS` keeps naming the slug.
+  Tests: "knows the server by its slug when its source is labelled by display name" (direct, folded past the name
+  budget, and a real fill), the connector test, `lazy-tool-catalog.test.ts` (one upstream expectation gained the field).
 - **Known limits:** needs a server that can run a script in the page (origin + focused element); with `elementCheck: false`
   field types are not checked. Origin check and fill are separate server calls (a page that navigates between them is
   caught only if the ref goes stale). Fields in cross-origin frames and saved cards are not filled. The MCP server
