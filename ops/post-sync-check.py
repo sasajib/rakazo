@@ -2,7 +2,15 @@
 """Post-sync / post-deploy check for Rakazo. Run after every upstream sync or image change:
     python3 ops/post-sync-check.py            # everything, ~4 min (creates 2 throwaway bots, archives them)
     python3 ops/post-sync-check.py --quick    # skips the live queue test
-Exit 0 = all PASS. Any FAIL = do not trust the deploy; roll back RAKAZO_IMAGE_TAG."""
+Exit 0 = all PASS. Any FAIL = do not trust the deploy; roll back RAKAZO_IMAGE_TAG.
+
+Not run here (needs a scratch Postgres, ~1 min): the end-to-end journeys suite. It is a sync GATE
+(docs/FORK.md 3.4 step 4b), 84 of 84 on the fork since 2026-11-26; before `main` moves run
+    docker run -d --name scratch-pg-journeys -e POSTGRES_PASSWORD=x -p 127.0.0.1:55466:5432 rakazo/postgres-graph:16-pgv-age1.6
+    docker exec scratch-pg-journeys psql -U postgres -c 'create database j1'
+    CI_POSTGRES_URL=postgresql://postgres:x@127.0.0.1:55466/j1 MCP_ALLOW_PRIVATE_ENDPOINT=true \
+      RAKAZO_BROWSER_BINARY=chromium pnpm test:integration --spec=journeys
+in the source worktree (one fresh database per run), then `docker rm -f scratch-pg-journeys`."""
 import json, os, subprocess, sys, time, urllib.request
 
 ROOT = "/home/sasajib/the-data/rakazo"
@@ -78,7 +86,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # as they need them; vault_fill reads the server from the tool id (upstream labels sources by
            # display name); remember {shared} cannot write STANDING.md
            ("backgroundYieldsSlot(", 2), ("connectorToolServerKey(", 2), ("catalogSources", 3),
-           ("parsed.data.shared &&", 1)]
+           ("parsed.data.shared &&", 1),
+           # journeys fixes (1.3): the continuation rule skips a run that stopped for the person
+           ("PAUSED_FOR_PERSON_EVENT_TYPES", 2), ("pausedForPerson", 2)]
 results = []
 
 
