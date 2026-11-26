@@ -377,7 +377,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Seams:** `contracts/src/bots/builtin-tools.ts` (`FLEET_TOOL_NAMES` +1), `adapters/src/tools/fleet-tools.ts`
   (`isFleetApprovalTool` excludes it), `tools/builtin-fleet.tool-definition.ts` (definition; `spawn_bot.skills`; `spawn_bot`
   and `update_bot.bot_id` wording), `tools/builtin-tool-bridge.ts` (pinned; only bots with bot management are offered it)
-  + test cap 49_100 (measured 49_047, +874), `runs/tools/run-tools-fleet.ts` (handler; `spawn_bot` resolves skills and
+  + test cap 49_100 (measured 49_047, +874; after the 1126 merge 49_140, measured 49_081), `runs/tools/run-tools-fleet.ts` (handler; `spawn_bot` resolves skills and
   passes `seed`), `bots/child-bots.ts` (`spawnBot` `seed` passthrough, 3 lines), `runtime/pi/tools/pi-runtime-tools.ts`
   (label, sequential, `spawn_bot.skills`), `pi-runtime-tool-parameters.ts` (`spawn_bot.skills`, `prepareFleetArguments`
   branch), `core/src/runs/action-approval.ts` (2 lists), `core/src/calls/speech-text.ts`, `runtime/scripted-runtime.ts`
@@ -772,6 +772,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
+- `881e9133b` (`fix/cards-plans-mcp-1126`, 1.21-1.26), `6b69eac81` (`feat/vault-fill-mcp-browser`, 1.16b), `55fe5eeea`
+  (`feat/agent-skill-assign-tool`, 1.17a) merged into `integrate/1126` on fork `main` `6ae098ad1`; see §4 (2026-11-26).
 
 ---
 
@@ -914,6 +916,26 @@ Tell him: stale web tabs keep the old bundle until reloaded.
 ---
 
 ## 4. Sync log
+
+### 2026-11-26 — three fork branches integrated (no upstream change) → `integrate/1126`, image `main-1126a`
+- **Merged, in order, with merge commits:** `fix/cards-plans-mcp-1126` (`014ae8b5f`, 1.21-1.26) = `881e9133b`;
+  `feat/vault-fill-mcp-browser` (`376b6d03f`, 1.16b) = `6b69eac81`; `feat/agent-skill-assign-tool` (`a33e79bc1`, 1.17a) =
+  `55fe5eeea`. Tag `pre-sync-1126` marks the integrated commit (the base of the next upstream sync).
+- **Conflicts:** only the four `__prompt_surface__/tools.*.md` snapshots, in the third merge (cards changed `message_bot`
+  and `plan_propose`; skills added `bot_skills` and changed `spawn_bot`, `update_bot`). Taken from the skills side and
+  regenerated with `-u`; the diff against `6ae098ad1` is exactly those five tools (+1 tool, +1_169 bytes per surface) plus
+  the new `vault-fill.md`; `prompts.md` unchanged. Everything else merged without conflict and was checked by hand:
+  ledger rows (1.16b, 1.17a, 1.21-1.26, no number clash), all 95 `post-sync-check.py` markers (61 + 23 + 5 + 6),
+  `CORE_BUILTIN_TOOL_NAMES` (`vault_fill`, `bot_skills`, `plan_propose`), the approval-exempt list (both) and the
+  own-state list (`bot_skills`), `BUILTIN_TOOL_NAMES`, the five new keys in all three compose anchors
+  (`PLAN_DEFAULT_MODE`, `MCP_REUSE_APPROVED_SERVERS`, `MCP_OWNER_REQUEST_AUTO_APPROVE`, `VAULT_FILL_MCP_BROWSERS`,
+  `VAULT_FILL_MCP_BROWSER_SHAPES`), `child-bots.ts` + `run-tools-fleet.ts` (`seed` of 1.17a beside `inheritMcpServers` of 1.23).
+- **Pinned-tool cap:** re-measured 49_081 (bot_skills +874, message_bot +55, plan_propose -21), cap `49_140`.
+  `vault_fill` is pinned but not offered in that test's owner chat (no MCP browser configured).
+- **Migrations:** `20270126090000_plan_coverage`, `20270127090000_plan_notify`; on a copy of the live schema +
+  `_prisma_migrations` (343 rows) `migrate deploy` applied exactly these two.
+- **Host-computer bundle:** differs from the deployed one (1.24 export skip, contracts enums); rebuild + restart the unit at deploy.
+- **Gates and deploy record:** stack repo `INTEGRATE-1126.md`.
 
 ### 2026-11-25 — upstream `7dbc01748..dbc0c9d46` (76 commits, incl. Release v0.16.0) → `main` `42d432574`, image `main-1125a`
 - **Decision: merge, not rebuild.** 46 fork commits vs 76 upstream; `git merge-tree` touched 91 files but only **11 had content
