@@ -108,7 +108,11 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # a removed bot is not read again (1.30, upstream bug, local patch): trusted batch on web, the roster drops the bot's cached reads, a read for a missing bot is not a warning
            ("omittedIsGone", 2), ("dropBotQueries(", 1), ("BotNotFoundError", 3), ("markExpectedClientMiss(", 2),
            # a rollback reloads open tabs too (1.27): older build seen stable twice, own loop guard
-           ("attemptRollback", 3), ("claimRollbackReload(", 2), ("FORK_STABLE_MS", 1)]
+           ("attemptRollback", 3), ("claimRollbackReload(", 2), ("FORK_STABLE_MS", 1),
+           # 2026-11-28 audit, tools (1.36+): file tools take the shell's paths and name the path tried;
+           # a command or write runs before the file read written beside it
+           ("shellPathsEnabled(", 3), ("filePathFailure(", 2), ("botStoredPath(", 1),
+           ("writesComputerFiles(", 3), ("FILE_TOOL_SHELL_PATHS", 2), ("COMPUTER_WRITES_IN_ORDER", 2)]
 results = []
 
 

@@ -781,7 +781,12 @@ export const computerTools: ToolHandlers = {
                 kind: "open",
                 path: /^https?:\/\//i.test(requestedPath)
                   ? requestedPath
-                  : resolveBotWorkspacePath(ctx.computer.mode, bot.id, requestedPath),
+                  : resolveBotWorkspacePath(
+                      ctx.computer.mode,
+                      bot.id,
+                      requestedPath,
+                      ctx.computer.hostEnvironment?.workspace,
+                    ),
               },
             ],
             observe: true,

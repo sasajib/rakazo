@@ -50,6 +50,7 @@ import {
 } from "../pi-runtime-limits.js";
 import type { RuntimeModelTarget } from "../pi-runtime-models.js";
 import { recordPiTelemetryContent, withPiTelemetrySpan } from "../usage/pi-telemetry.js";
+import { writesComputerFiles } from "./computer-write-order.js";
 import { COMPUTER_MODE_TOOLS } from "./pi-runtime-computer-mode.js";
 import { parametersFor, prepareFleetArguments } from "./pi-runtime-tool-parameters.js";
 
@@ -422,6 +423,8 @@ function toAgentTool(
     // Fork: add/remove read the selection, then write it.
     tool.name === "bot_skills" ||
     tool.name === "request_secret" ||
+    // Fork (1.36): a file tool must not run before the command beside it that makes the file.
+    writesComputerFiles(tool.name) ||
     PAGE_CHANGING_TOOL_NAMES.has(tool.name)
       ? { executionMode: "sequential" as const }
       : {}),

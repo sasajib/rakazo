@@ -85,6 +85,8 @@ export interface HostComputerEnvironment {
   platform: string;
   home: string;
   shell: string;
+  /** Fork (1.36): the real path of the computer home on this host, so `pwd` paths map back. */
+  workspace?: string;
   /** Set when this host serves its whole display (see HostDisplay). */
   display?: boolean;
 }

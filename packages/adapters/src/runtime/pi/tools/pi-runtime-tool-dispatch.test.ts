@@ -1424,6 +1424,10 @@ describe("Pi connector tool dispatch", () => {
           builtinAgentTools.find((tool) => tool.name === "request_secret")!,
           builtinAgentTools.find((tool) => tool.name === "computer_act")!,
           builtinAgentTools.find((tool) => tool.name === "browser_act")!,
+          builtinAgentTools.find((tool) => tool.name === "shell")!,
+          builtinAgentTools.find((tool) => tool.name === "write_file")!,
+          builtinAgentTools.find((tool) => tool.name === "read_file")!,
+          builtinAgentTools.find((tool) => tool.name === "list_files")!,
         ],
         model: { provider: "test", id: "dispatch-test-model" },
         executeTool,
@@ -1455,6 +1459,12 @@ describe("Pi connector tool dispatch", () => {
     expect(modes.get("computer_act")).toBe("sequential");
     expect(modes.get("browser_act")).toBe("sequential");
     expect(modes.get("destination_write")).toBe("default");
+    // Fork (1.36): a command or write beside a file read runs first, as written; a step of
+    // reads only still runs at once.
+    expect(modes.get("shell")).toBe("sequential");
+    expect(modes.get("write_file")).toBe("sequential");
+    expect(modes.get("read_file")).toBe("default");
+    expect(modes.get("list_files")).toBe("default");
   });
 
   it("does not claim a tool-only turn finished work the model never described", async () => {

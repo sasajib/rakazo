@@ -1090,6 +1090,64 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Not covered:** the roster of one bot (a single read keeps the per-bot endpoint: one info line); other per-bot
   reads a client may make for a bot removed while its chat is open (`threads/get`): same info line, no client change.
 
+### 1.36 File tools take the paths the shell takes, and run after the command beside them (2026-11-28 audit, C1)
+- **Why:** 26 Nov 15:00 to 28 Nov 02:00 UTC: `attach_file` failed 9 of 15 calls, `read_file` 49, `list_files` 4,
+  `write_file` 1, while `shell` read the same files. Two causes, both measured from the audit store (argument
+  hashes matched against the files on disk, call start times compared inside each run):
+  1. **Same-step race (33 of 63 failures; 26 succeeded unchanged one step later).** Pi runs one model step's tool
+     calls at the same moment. "shell: make the screenshot / copy the file" + "read_file / attach_file: use it"
+     in one step read the file before the command had written it (file call started within 2 ms of the shell call
+     and ended before it).
+  2. **A path the shell accepts was refused (at least 10).** `teamWorkspaceInstruction` tells agents the shell
+     reaches shared work as `../../shared/`; `normalizeWorkspacePath` refused every `..`, so that path failed in
+     `read_file` and `write_file` ("Path escapes the computer workspace") and in `attach_file`, which reported
+     it as "file not found or unreadable" (it swallowed every error, a file over the size limit too).
+  The other 20 could not be matched (arguments are not logged); the old error named neither the path tried
+  nor the folder searched.
+- **One resolution (`resolveBotWorkspacePath`, `computers/screens/computer-support.ts`), used by the shell's `cwd`
+  and every tool that takes a path** (`read_file`, `write_file`, `list_files`, `attach_file`, `render_plot`,
+  `open_path`, page images, `message_bot` files): `..` is resolved by name against the folder the shell starts in
+  (the bot's folder on a Team Computer, the root on a private one). It is accepted when it ends in the bot's own
+  folder or in `shared/`; every other result is refused as before (another bot's folder is still reached as
+  `bots/<id>/...` only, unchanged). `shared/...`, `bots/...`, a leading `/`, `~` and `/home/rakazo` keep upstream's
+  meaning. A host computer reports the real path of the computer home (`environment` → `workspace`), so an
+  absolute path printed by `pwd` maps back. Nothing new is reachable: only new spellings of paths the same tool
+  already reached; a link that leaves is still refused by the provider (real path check, untouched).
+- **Errors name the path and the base (`runs/tools/file-path-failure.ts`):** `file not found: "book/ch9.md" was
+  looked up at "bots/<id>/book/ch9.md" in the computer home; relative paths start in your folder bots/<id> (the
+  shell's working directory); shared/... and bots/... start at the computer home…`. A refusal says what the path
+  resolved to. `attach_file` now tells a missing file, a refused path and a file over the limit apart. These
+  come back as a tool result `{error, path}` (they were thrown before; the model saw the bare message either way).
+- **Order (`runtime/pi/tools/computer-write-order.ts`):** `shell`, `write_file` and `render_plot` are
+  `executionMode: "sequential"`, upstream's own mechanism (as `remember`, `computer_act`): a step that holds one
+  runs in the order written. A step of reads only still runs at once. Cost: several commands in one step no
+  longer overlap (a long one moves to the background after the shell-job wait, 1.11).
+- **Env (default on, all three compose files):** `FILE_TOOL_SHELL_PATHS=0` restores the old resolution and the
+  old error words; `COMPUTER_WRITES_IN_ORDER=0` restores the parallel step.
+- **Host computer bundle: CHANGED.** `host-computer-runner.ts` adds `workspace` to the `environment` reply and
+  bundles `computer-support.ts`. Rebuild the stack's `host-computer` bundle and restart `bee-rakazo-host-computer`
+  after the app image. Skew is safe: an old bundle sends no `workspace`, so only the `pwd`-path mapping is missing.
+- **Seams:** `computers/screens/computer-support.ts` (resolver, `displayBotWorkspacePath`),
+  `runs/tools/run-tools-files.ts` (4 handlers + `readWorkspaceFile`), `tools/workspace-file-tools.ts`
+  (`RunWorkspace.realRoot`), `runs/tools/run-tools-{computer,messaging,page-images}.ts` (one argument each),
+  `runtime/pi/tools/pi-runtime-tools.ts` (one line), `computers/host/{host-computer-protocol,host-computer-runner}.ts`,
+  `adapter-kit/src/interfaces.ts` (`environment` → optional `workspace`).
+- **Tests:** `runs/tools/file-tool-paths.fork.test.ts` (real desktop provider and a real `sh`: the shell writes
+  `../../shared/...`, all four tools reach it; `pwd` path; traversal by name incl. another bot's folder; links
+  that leave, in the bot folder and in `shared/`; error text; kill switch; fake provider; container path
+  equality), `computer-support.test.ts` (resolver table), `computer-write-order.test.ts`,
+  `pi-runtime-tool-dispatch.test.ts` (modes), `host-computer.test.ts` (`workspace` equals the command's cwd).
+  On the old code 5 of the 8 fork cases fail.
+- **Live check:** an agent on a Team Computer: `shell` `printf x > ../../shared/t.md`, then in ONE step `shell`
+  `printf y > n.md` + `read_file n.md` → content `y`; `read_file ../../shared/t.md` → `x`; `read_file nope.md` →
+  the error names `bots/<id>/nope.md`. `tool_calls` in the audit store: `read_file` errors with
+  `computer file not found` drop to real misses.
+- **Not covered:** a file a *background* job is still writing; `~` on a host computer means the computer home
+  here and the user's home in the shell (outside the workspace, so the file tools cannot serve it; the error
+  says where it looked); the 20 unmatched failures.
+- **Conflicts:** upstream edits to `resolveBotWorkspacePath`, the `executionMode` list in `toAgentTool`, the
+  `fileTools` handlers.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
