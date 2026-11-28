@@ -33,6 +33,7 @@ import { TALK_RUN_INSTRUCTION } from "../assembly/talk-run.prompt.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { completeRun } from "../lifecycle/run-complete.js";
 import { failRun, handoffEndedTurn, requeueRunAfterDatabaseOutage } from "../lifecycle/run-fail.js";
+import { retryRunAfterTransientFailure } from "../routing/transient-retry.js";
 import { searchRunTools } from "../tools/run-tool-search.js";
 import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection.js";
 import { applyTool } from "../tools/run-tools.js";
@@ -117,6 +118,8 @@ export async function runModelTurn(
       await requeueRunAfterDatabaseOutage(ctx);
       return;
     }
+    // Fork (FORK.md 1.42): a transient provider failure goes back to the queue with backoff.
+    if (await retryRunAfterTransientFailure(ctx, caughtError)) return;
     await failRun(ctx, caughtError, {
       ownCredential: resolved.ownCredential,
       active: activeModel,
