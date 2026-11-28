@@ -277,7 +277,9 @@ export function nextScreenIndex(
   const used = new Set([...assigned.values()].map((slot) => slot.index));
   for (let index = 0; index < limit; index += 1) {
     if (!used.has(index)) {
-      assigned.set(screenId, { index, leaseId });
+      const slot: ScreenAssignment = { index, leaseId };
+      if (leaseId === undefined) slot.idleAt = Date.now();
+      assigned.set(screenId, slot);
       return index;
     }
   }
@@ -324,15 +326,30 @@ export function completeWarmReleasedScreen(
   }
 }
 
+/** A screen with no run on it and nobody controlling it: its idle time counts from `idleAt`. */
+export function screenIsIdle(
+  slot: ScreenAssignment | undefined,
+): slot is ScreenAssignment & { idleAt: number } {
+  return slot !== undefined && !slot.releasing && !slot.controlled && slot.idleAt !== undefined;
+}
+
+/**
+ * Fork (1.14): the team's shared screen carries no run lease (its holders are many bots), so it
+ * reads as idle from the moment it is set up. Its idle time counts from its last use instead, so
+ * the idle close (upstream #6773) never takes the browser from under a bot that is working.
+ */
+export function touchLeaselessScreen(slot: ScreenAssignment | undefined, now: number): void {
+  if (slot && !slot.releasing && slot.leaseId === undefined && slot.idleAt !== undefined) {
+    slot.idleAt = now;
+  }
+}
+
 export function oldestIdleScreen(
   assigned: Map<string, ScreenAssignment>,
   limit: number,
 ): string | undefined {
   return [...assigned.entries()]
-    .filter(
-      ([, slot]) =>
-        !slot.releasing && !slot.controlled && slot.idleAt !== undefined && slot.index < limit,
-    )
+    .filter(([, slot]) => screenIsIdle(slot) && slot.index < limit)
     .sort(
       ([screenA, a], [screenB, b]) =>
         (a.idleAt ?? 0) - (b.idleAt ?? 0) || a.index - b.index || screenA.localeCompare(screenB),
@@ -416,6 +433,9 @@ export function refusedCommand(stdout: string): { ok: false; error: string } | u
 
 /** How long a page-browser request trusts the last setup instead of rerunning it. */
 export const SCREEN_REUSE_MS = 30_000;
+
+/** How long a screen stays open with no run on it and nobody controlling it before it is closed. */
+export const SCREEN_IDLE_MS = 30 * 60_000;
 
 /** A screen set up moments ago on this boot still runs; a human-held one may need its viewer back. */
 export function screenRecentlyEnsured(slot: ScreenAssignment | undefined, now: number) {

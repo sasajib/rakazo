@@ -414,6 +414,7 @@ export async function claimRun(
     botId: string;
     trigger: string;
     lane?: string | null;
+    clientNonce: string | null;
     status: string;
     checkpoint: string | null;
     leaseFence: number;

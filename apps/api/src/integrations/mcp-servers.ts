@@ -105,9 +105,11 @@ export function mcpServerDto(
     verbatimResults: row.verbatimResults ?? false,
     revision: row.revision,
     health: mcpServerHealthDto(row),
-    // Fork (1.29, upstream bug at this line): an organization's server is in no Space, so its
-    // list is empty, which SpaceAvailabilitySchema (min 1) refuses and the whole reply fails.
-    ...(availability.spaceIds.length > 0 ? { availability } : {}),
+    availability: spaceAvailability({
+      ...row,
+      spaceId: row.spaceId ?? viewer.spaceId,
+      allSpaces: row.allSpaces ?? false,
+    }),
     allBots: row.allBots ?? false,
     organization: organizationId !== null,
     manageable: organizationId === null || organizationId === viewer.managedOrganizationId,

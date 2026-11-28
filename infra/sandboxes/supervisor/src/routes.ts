@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { TEAM_SHARED_SCREEN_KEY } from "@rakazo/core/node/desktop-runtime";
 import { boundedSandboxCommandTimeoutMs } from "@rakazo/core/node/sandbox-command";
 import { getLogger } from "@rakazo/logging";
 import { requestLogging } from "@rakazo/logging/hono";
@@ -69,7 +70,7 @@ import {
   isRakazoContainer,
   managedContainer,
 } from "./identity.js";
-import { withBotLifecycleLock, withComputerScreenLock, withSpaceComputerLock } from "./locks.js";
+import { withBotLifecycleLock, withSpaceComputerLock } from "./locks.js";
 import {
   computerNetworkName,
   ensureBotNetwork,
@@ -88,6 +89,7 @@ import {
   ensureManagedScreen,
   managedScreen,
   setInteractiveScreen,
+  withComputerScreenLock,
 } from "./screens.js";
 import type { ScreenIdentity } from "./shared-screen.js";
 import { SharedScreenBusyError, screenIdentity, sharedScreenHolds } from "./shared-screen.js";
@@ -116,6 +118,7 @@ import {
   teardownReleasedScreen,
   terminalCommand,
   toSandboxInput,
+  touchLeaselessScreen,
   workspaceTarget,
 } from "./supervisor-logic.js";
 
@@ -501,8 +504,11 @@ app.post("/computers/:id/exec", async (c) => {
     const screenId = screenIdentity(headers, id).screenKey;
     // Only the bot's own (or its team's shared) screen: without one, a graphical command fails
     // instead of using another's.
-    const screenIndex = computerScreens.get(id)?.get(screenId)?.index;
+    const screenSlot = computerScreens.get(id)?.get(screenId);
+    const screenIndex = screenSlot?.index;
     layout = screenIndex === undefined ? undefined : screenPorts(screenIndex);
+    // Fork (1.14): a shell on the shared screen is use of it; the idle close counts from here.
+    if (screenId === TEAM_SHARED_SCREEN_KEY) touchLeaselessScreen(screenSlot, Date.now());
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logRequestFailure(error);
@@ -1047,6 +1053,7 @@ app.post("/computers/:id/screen-mode", async (c) => {
           } else {
             delete slot.controlled;
             delete slot.controlToken;
+            if (slot.idleAt !== undefined) slot.idleAt = Date.now();
           }
         }
       }

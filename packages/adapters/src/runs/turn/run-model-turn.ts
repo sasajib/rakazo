@@ -1,6 +1,11 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { modelRoleConnectionId } from "@rakazo/contracts";
-import { BACKGROUND_HELPER_TRIGGER, redactSecrets, TALK_RUN_TRIGGER } from "@rakazo/core";
+import {
+  BACKGROUND_HELPER_TRIGGER,
+  isAppConnectionFollowUp,
+  redactSecrets,
+  TALK_RUN_TRIGGER,
+} from "@rakazo/core";
 import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { splitStandingOrders } from "../../memory/standing-orders.js";
@@ -28,6 +33,7 @@ import { TALK_RUN_INSTRUCTION } from "../assembly/talk-run.prompt.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { completeRun } from "../lifecycle/run-complete.js";
 import { failRun, handoffEndedTurn, requeueRunAfterDatabaseOutage } from "../lifecycle/run-fail.js";
+import { searchRunTools } from "../tools/run-tool-search.js";
 import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection.js";
 import { applyTool } from "../tools/run-tools.js";
 import { peekRunAudit } from "./run-audit.js";
@@ -263,7 +269,8 @@ function modelTurnRequest(
     usageOperationKind: run.trigger === BACKGROUND_HELPER_TRIGGER ? "subagent" : "answer",
     ...(run.trigger === TALK_RUN_TRIGGER ? { sessionSuffix: "talk" } : {}),
     routineId: run.routineId,
-    sourceMessageId: run.sourceMessageId,
+    // Runtimes replay the original request because the new prompt only announces the connection.
+    sourceMessageId: isAppConnectionFollowUp(run) ? null : run.sourceMessageId,
     onUsage: async (event) => {
       await recordUsage(deps.prisma, event, {
         spaceId: run.spaceId,
@@ -427,6 +434,7 @@ function modelTurnRequest(
       ? undefined
       : (name, args, executionId, route, observer) =>
           applyTool(ctx, name, args, executionId, route, observer),
+    searchTools: scripted ? undefined : (request) => searchRunTools(ctx, request),
     resolveModel: scripted
       ? undefined
       : (provider, modelId) =>

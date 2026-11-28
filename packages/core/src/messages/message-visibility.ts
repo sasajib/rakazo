@@ -73,6 +73,8 @@ const NEEDS_PERSON_BY_KIND: Record<MessageBlock["kind"], boolean> = {
   image: false,
   file: false,
   page: false,
+  // Upstream #6958: a receipt for feedback already sent; nothing left for the person to do.
+  feedback_receipt: false,
   voice_call: false,
   meta: false,
   routine_event: false,

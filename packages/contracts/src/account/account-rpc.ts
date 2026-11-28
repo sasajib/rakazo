@@ -114,7 +114,7 @@ export const accountRpc = {
       .output(z.object({ ok: z.literal(true) })),
     /** Dismiss the unanswered focus card without choosing an option. */
     dismissFocus: oc.input(z.object({ botId: Id })).output(z.object({ ok: z.literal(true) })),
-    /** Flip an app_connect card to connected after authorization completes. */
+    /** Resolve an app connection card and carry on with work that was waiting for the app. */
     appConnected: oc
       .input(
         z.object({
@@ -122,6 +122,7 @@ export const accountRpc = {
           threadId: Id.optional(),
           /** The card's own message, so it is found however far back it is. */
           messageId: Id.optional(),
+          organizationConnectionId: Id.optional(),
           provider: z.string(),
           /** Omitted for the server's default connector. */
           connectorId: z.string().optional(),
