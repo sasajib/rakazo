@@ -158,4 +158,24 @@ describe("SubagentCard", () => {
     expect(card.get("subagent-body")).toBeNull();
     card.unmount();
   });
+
+  // Fork (L3): the block says it was stopped; the card does not depend on the result's wording.
+  it.each([
+    { status: "failed", result: "stopped", stopped: true },
+    { status: "failed", result: "", stopped: true },
+    { status: "failed", stopped: true },
+  ] as const)("reads the block's own stopped mark: %j", (settled) => {
+    const card = mountCard({ ...finished, agentId: "bg-5", result: undefined, ...settled });
+    expect(card.toggle()?.textContent).toContain("Stopped");
+    expect(card.toggle()?.textContent).not.toContain("Failed");
+    expect(card.get("subagent-body")).toBeNull();
+    card.unmount();
+  });
+
+  it("still shows a helper that failed as failed", () => {
+    const card = mountCard({ ...finished, agentId: "bg-6", status: "failed", result: "no access" });
+    expect(card.toggle()?.textContent).toContain("Failed");
+    expect(card.toggle()?.textContent).not.toContain("Stopped");
+    card.unmount();
+  });
 });

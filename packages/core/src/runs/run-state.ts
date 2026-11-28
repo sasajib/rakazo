@@ -151,17 +151,42 @@ export const BACKGROUND_HELPER_TRIGGER = "helper";
 export const HELPER_RESULT_TRIGGER = "helper_result";
 /** The result a stopped background helper's card settles with, beside status "failed". */
 export const STOPPED_HELPER_RESULT = "stopped";
+/**
+ * Fork (1.33, L3): how a stopped helper's card settles. `stopped` says it in the block itself;
+ * `status` and `result` keep the values every earlier reader checks, so none of them breaks.
+ */
+export const STOPPED_HELPER_CARD = {
+  status: "failed",
+  result: STOPPED_HELPER_RESULT,
+  stopped: true,
+} as const;
+
+/** True for a helper card that was stopped: the block says so, or it is a card from before it did. */
+export function helperWasStopped(block: {
+  status: string;
+  result?: string;
+  stopped?: boolean;
+}): boolean {
+  return (
+    block.status === "failed" && (block.stopped === true || block.result === STOPPED_HELPER_RESULT)
+  );
+}
 
 /**
  * How a helper card reads: a stopped helper settles as failed but did not fail, and shows no
  * body; otherwise the body is its result, or its progress while it works.
  */
-export function helperCardState(block: { status: string; result?: string; progress?: string }): {
+export function helperCardState(block: {
+  status: string;
+  result?: string;
+  progress?: string;
+  stopped?: boolean;
+}): {
   stopped: boolean;
   failed: boolean;
   body: string;
 } {
-  const stopped = block.status === "failed" && block.result === STOPPED_HELPER_RESULT;
+  const stopped = helperWasStopped(block);
   return {
     stopped,
     failed: block.status === "failed" && !stopped,

@@ -131,7 +131,11 @@ describePostgres("stopping a chat with queued helpers (PostgreSQL)", () => {
     );
     expect(stop.eventSeq).not.toBeNull();
     expect(await statuses(w.botId)).toEqual(["queued", "cancelled"]);
-    expect(await cardOf(w.cards[1]!)).toMatchObject({ status: "failed", result: "stopped" });
+    expect(await cardOf(w.cards[1]!)).toMatchObject({
+      status: "failed",
+      result: "stopped",
+      stopped: true,
+    });
     expect(await cardOf(w.cards[0]!)).toMatchObject({ status: "running" });
   });
 
@@ -147,7 +151,11 @@ describePostgres("stopping a chat with queued helpers (PostgreSQL)", () => {
     );
     expect(await statuses(w.botId)).toEqual(["cancelled", "cancelled"]);
     for (const card of w.cards)
-      expect(await cardOf(card)).toMatchObject({ status: "failed", result: "stopped" });
+      expect(await cardOf(card)).toMatchObject({
+        status: "failed",
+        result: "stopped",
+        stopped: true,
+      });
   });
 
   it("Stop on the chat stands the agent's open items down; Stop on one card does not", async () => {

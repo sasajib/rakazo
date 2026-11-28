@@ -2402,7 +2402,7 @@ describeJourneys("required product journeys", () => {
     // The stopped card settles right away.
     expect(
       (await helperCards(cookie, bot.id)).find((card) => card.messageId === firstCard!.messageId),
-    ).toMatchObject({ status: "failed", result: "stopped" });
+    ).toMatchObject({ status: "failed", result: "stopped", stopped: true });
     // Its card tells the chat; a run.cancelled there would read as the bot stopping.
     const cancelledIn = (runId: string) =>
       prisma.event
@@ -2806,7 +2806,11 @@ describeJourneys("required product journeys", () => {
     expect((await prisma.run.findUniqueOrThrow({ where: { id: helper.id } })).status).toBe(
       "cancelled",
     );
-    expect((await helperCards(cookie, bot.id))[0]).toMatchObject({ result: "stopped" });
+    expect((await helperCards(cookie, bot.id))[0]).toMatchObject({
+      status: "failed",
+      result: "stopped",
+      stopped: true,
+    });
 
     await sendAndWait(app, cookie, bot.id, "summarize the venue notes in the background");
     let wake = null as { id: string; status: string } | null;

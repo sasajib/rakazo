@@ -7,6 +7,7 @@ import {
   isApprovalAskBlock,
   isBackgroundRunTrigger,
   isConversationalRun,
+  STOPPED_HELPER_CARD,
   STOPPED_HELPER_RESULT,
   TALK_RUN_TRIGGER,
 } from "@rakazo/core";
@@ -490,6 +491,8 @@ export async function returnHelperOutcome(
       status: outcome.status === "completed" ? "completed" : "failed",
       progress: undefined,
       result,
+      // Fork (L3): the card itself says it was stopped, not only its result text.
+      ...(outcome.status === "stopped" ? STOPPED_HELPER_CARD : {}),
     };
     const next = changeMessageBlocks(card, (block) => (block === helper ? settled : block));
     if (!next) return null;

@@ -1283,6 +1283,20 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   needed. Stop (`cancelThreadRuns`, `apps/api/src/threads/thread-stop.ts`) cancels the chat's queued helpers (or
   the one behind the card) and settles their cards as stopped; clearing the chat deletes the card and its row with it.
   Queue full: the call is refused with "nothing was started". Logs: `helper.queued`, `helper.queue_started`.
+  **A stopped helper's card says so itself (live test 1128a, L3).** Upstream settles a stopped helper as
+  `status: "failed"` + `result: "stopped"`; only the web and mobile cards knew that pair means "Stopped" (they
+  already showed it, `helperCardState`). Every other reader of the block saw a failure: `threads/get` (what the
+  live tester read), the spoken text of a call ("<name> failed", `core/src/calls/speech-text.ts`). The block now
+  carries `stopped: true` (optional, `contracts/src/threads/message-blocks.ts`), written by every path that
+  settles a stopped helper through one constant, `STOPPED_HELPER_CARD` (`core/src/runs/run-state.ts`): Stop on a
+  running helper (`returnHelperOutcome`), a queued one (`helper-queue.ts`, both places), a helper inside a turn
+  that ends (`settleRunSubagents`, `run-context.ts`), an imported archive (`account-import.ts`); the event payload
+  keeps it (`subagentBlockFromPayload`). `status` stays `failed` and `result` `stopped`, so the enum, an installed
+  mobile app and any script that checks either keep working; `helperWasStopped` reads the mark or the old pair
+  (cards settled before this). Spoken text: "<name> was stopped". No env key: nothing a reader had changes.
+  Tests: `run-state.test.ts` ("a stopped helper's card", 10), `events.test.ts` (2), `speech-text.test.ts` (2),
+  `SubagentCard.test.tsx` (+4), mobile `thread-card-width.test.tsx`, and the Stop paths against Postgres now assert
+  `stopped: true` (`queued-helper-stop`, `helper-queue`, `account-import`, journeys `13c`/`13h`).
 - **Prompt text (truth):** `resultPrompt` tells a result run it can start the next wave (`NEXT_WAVE_NOTE`);
   `queuedNote` / `helperQueueFullNote` / `helperBudgetNote` (`background-helpers.prompt.ts`);
   `delegationContinuityClause` (`tasks/continuity.prompt.ts`) is appended to the `run_subagent` guidance in

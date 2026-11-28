@@ -305,6 +305,11 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     status: z.enum(["running", "completed", "failed"]),
     progress: z.string().optional(),
     result: z.string().optional(),
+    /**
+     * Fork (FORK.md 1.33, L3): the helper was stopped (by the person, or with its run); it did not
+     * fail. `status` stays "failed" and `result` "stopped" for readers that know only those.
+     */
+    stopped: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal("child_bot"),

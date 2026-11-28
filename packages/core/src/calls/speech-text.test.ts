@@ -470,3 +470,26 @@ describe("spokenDecision", () => {
     expect(spokenDecision("dale los permisos de admin")).toBeNull();
   });
 });
+
+// Fork (L3): a helper the person stopped is not spoken of as a failure.
+describe("speechFromBlocks: a helper's card", () => {
+  const card = { kind: "subagent", agentId: "a", name: "Scout", task: "the venue list" } as const;
+
+  it("says a stopped helper was stopped, with the mark or on a card from before it", () => {
+    expect(
+      speechFromBlocks([{ ...card, status: "failed", result: "stopped", stopped: true }]),
+    ).toBe("Scout was stopped");
+    expect(speechFromBlocks([{ ...card, status: "failed", result: "stopped" }])).toBe(
+      "Scout was stopped",
+    );
+  });
+
+  it("still says a helper that failed, failed", () => {
+    expect(speechFromBlocks([{ ...card, status: "failed", result: "no access" }])).toBe(
+      "Scout failed",
+    );
+    expect(speechFromBlocks([{ ...card, status: "running" }])).toBe(
+      "Scout is working on the venue list",
+    );
+  });
+});

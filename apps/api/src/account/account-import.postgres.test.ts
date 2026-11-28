@@ -552,6 +552,8 @@ describePostgres("account import (PostgreSQL)", () => {
             task: "venues",
             status: "failed",
             result: "stopped",
+            // Fork (L3): the card says it was stopped.
+            stopped: true,
           },
         ],
       ],

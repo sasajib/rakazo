@@ -30,7 +30,7 @@ import {
   attachmentSizeLabel,
   resolveBotAvatarSet,
 } from "@rakazo/contracts";
-import { organicAvatarFamily, STOPPED_HELPER_RESULT } from "@rakazo/core";
+import { organicAvatarFamily, STOPPED_HELPER_CARD } from "@rakazo/core";
 import {
   createRepos,
   createSpaceForMember,
@@ -291,7 +291,7 @@ function settleRunningHelpers(blocks: unknown[]): unknown[] {
     block.kind === "subagent" &&
     "status" in block &&
     block.status === "running"
-      ? { ...block, status: "failed", result: STOPPED_HELPER_RESULT }
+      ? { ...block, ...STOPPED_HELPER_CARD }
       : block,
   );
 }

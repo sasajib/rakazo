@@ -9,6 +9,7 @@ import { preserveIdentitySource } from "../bots/identity-source.js";
 import { cloudAgentBlockFromPayload } from "../integrations/cloud-agent.js";
 import { sliceWellFormed } from "../primitives/utf8.js";
 import { modelFallbackFailure, parseModelFallbackFailure } from "../runs/run-error.js";
+import { STOPPED_HELPER_CARD } from "../runs/run-state.js";
 import { payloadAuthor } from "./message-replies.js";
 import { isFeedbackReceiptMessage } from "./message-text.js";
 import type { SecretMatcher } from "./secret-matcher.js";
@@ -214,7 +215,7 @@ export function settleRunSubagents<T extends { runId?: string; blocks: readonly 
       const block = asRecord(value);
       if (block.kind !== "subagent" || block.status !== "running") return value;
       settled = true;
-      return { ...block, status: "failed", result: "stopped" };
+      return { ...block, ...STOPPED_HELPER_CARD };
     });
     if (!settled) return message;
     changed = true;
@@ -659,6 +660,8 @@ export function subagentBlockFromPayload(
       status: status === "completed" || status === "failed" ? status : "running",
       progress: payload.progress ? String(payload.progress) : undefined,
       result: payload.result ? String(payload.result) : undefined,
+      // Fork (L3): only a settled card carries it.
+      ...(status === "failed" && payload.stopped === true ? { stopped: true } : {}),
     },
     ["name"],
   );

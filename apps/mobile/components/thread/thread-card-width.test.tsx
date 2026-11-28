@@ -674,12 +674,14 @@ describe("thread cards", () => {
   });
 
   it("stops a background helper from its saved card, and shows it as stopped", async () => {
-    const helper = (id: string, status: "running" | "failed", result?: string) =>
+    const helper = (id: string, status: "running" | "failed", result?: string, stopped?: boolean) =>
       ({
         id,
         role: "bot",
         botId: "bot-1",
-        blocks: [{ kind: "subagent", agentId: id, name: "scout", task: "venues", status, result }],
+        blocks: [
+          { kind: "subagent", agentId: id, name: "scout", task: "venues", status, result, stopped },
+        ],
       }) as MobileMessage;
     const stopButton = () =>
       [...container.querySelectorAll("button")].find((node) => node.textContent === "Stop");
@@ -700,6 +702,13 @@ describe("thread cards", () => {
     expect(container.textContent).toContain("Stopped");
     expect(container.textContent).not.toContain("Failed");
     expect(stopButton()).toBeUndefined();
+    // Fork (L3): the block's own mark is enough, whatever the result says.
+    show(helper("card-1", "failed", "", true));
+    expect(container.textContent).toContain("Stopped");
+    expect(container.textContent).not.toContain("Failed");
+    show(helper("card-1", "failed", "no access"));
+    expect(container.textContent).toContain("Failed");
+    expect(container.textContent).not.toContain("Stopped");
   });
 
   it("folds a helper card to one line of the task until it is pressed, across its saved message", () => {

@@ -263,14 +263,22 @@ describePostgres("queued helpers and helper waves (PostgreSQL)", () => {
       ),
     );
     expect(one.cancelled).toBe(1);
-    expect(await card(stop!.cardMessageId)).toMatchObject({ status: "failed", result: "stopped" });
+    expect(await card(stop!.cardMessageId)).toMatchObject({
+      status: "failed",
+      result: "stopped",
+      stopped: true,
+    });
     expect((await queueRows(w)).map((row) => row.status)).toEqual(["queued", "cancelled"]);
     // Stop on the whole chat.
     const all = await runAsSystem("stop", () =>
       prisma.$transaction((tx) => cancelQueuedHelpersInTransaction(tx, { threadId: w.threadId })),
     );
     expect(all.cancelled).toBe(1);
-    expect(await card(keep!.cardMessageId)).toMatchObject({ status: "failed", result: "stopped" });
+    expect(await card(keep!.cardMessageId)).toMatchObject({
+      status: "failed",
+      result: "stopped",
+      stopped: true,
+    });
     const [first] = await helperRuns(w);
     await finish(w, first!.id);
     expect(await helperRuns(w)).toHaveLength(4);

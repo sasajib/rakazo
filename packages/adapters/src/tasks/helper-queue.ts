@@ -7,11 +7,7 @@
  * of many parts moves on while nobody is talking to the agent.
  */
 import type { MessageBlock } from "@rakazo/contracts";
-import {
-  ACTIVE_RUN_STATUSES,
-  BACKGROUND_HELPER_TRIGGER,
-  STOPPED_HELPER_RESULT,
-} from "@rakazo/core";
+import { ACTIVE_RUN_STATUSES, BACKGROUND_HELPER_TRIGGER, STOPPED_HELPER_CARD } from "@rakazo/core";
 import type { Prisma } from "@rakazo/db";
 import {
   appendEventInTransaction,
@@ -171,9 +167,8 @@ export async function cancelQueuedHelpersInTransaction(
     cancelled += 1;
     const seq = await changeQueuedCard(tx, row, (card) => ({
       ...card,
-      status: "failed",
+      ...STOPPED_HELPER_CARD,
       progress: undefined,
-      result: STOPPED_HELPER_RESULT,
     }));
     if (seq !== null) eventSeq = seq;
   }
@@ -226,9 +221,8 @@ export async function startQueuedHelpers(deps: QueueDeps, botId: string): Promis
         await tx.queuedHelper.update({ where: { id: row.id }, data: { status: "cancelled" } });
         const seq = await changeQueuedCard(tx, row, (card) => ({
           ...card,
-          status: "failed",
+          ...STOPPED_HELPER_CARD,
           progress: undefined,
-          result: STOPPED_HELPER_RESULT,
         }));
         return { eventSeq: seq, threadId: row.threadId, helperRunId: null };
       }

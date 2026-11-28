@@ -116,6 +116,7 @@ export async function publishMessage(
   stoppedHelper?: Extract<MessageBlock, { kind: "subagent" }> & {
     status: "failed";
     result: "stopped";
+    stopped?: true;
   },
 ) {
   if (isBackgroundRunTrigger(run.trigger)) {

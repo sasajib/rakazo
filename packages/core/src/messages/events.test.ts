@@ -24,6 +24,7 @@ import {
   sanitizeUtf16ForJson,
   splitToolHistory,
   stripLiveStreamingProgress,
+  subagentBlockFromPayload,
   toolNameFromLabel,
   trackToolCallStreak,
   trackToolNameStreak,
@@ -1188,10 +1189,28 @@ describe("stale helper projection", () => {
     expect(next.find((m) => m.id === "subagent:helper")?.blocks[0]).toMatchObject({
       status: "failed",
       result: "stopped",
+      stopped: true,
     });
     expect(next.find((m) => m.id === "subagent:resumed")?.blocks[0]).toMatchObject({
       status: "running",
     });
+  });
+
+  // Fork (L3): the settled card that an event carries keeps saying it was stopped.
+  it("keeps a stopped helper's mark through an event payload, and only on a settled card", () => {
+    const payload = { agentId: "h", name: "Helper", task: "Check" };
+    expect(
+      subagentBlockFromPayload({ ...payload, status: "failed", result: "stopped", stopped: true }),
+    ).toMatchObject({ status: "failed", result: "stopped", stopped: true });
+    expect(
+      subagentBlockFromPayload({ ...payload, status: "failed", result: "no access" }),
+    ).not.toHaveProperty("stopped");
+    expect(
+      subagentBlockFromPayload({ ...payload, status: "running", stopped: true }),
+    ).not.toHaveProperty("stopped");
+    expect(
+      subagentBlockFromPayload({ ...payload, status: "completed", stopped: true }),
+    ).not.toHaveProperty("stopped");
   });
 });
 

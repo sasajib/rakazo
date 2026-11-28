@@ -1,4 +1,4 @@
-import { RunStatus } from "@rakazo/contracts";
+import { MessageBlock, RunStatus } from "@rakazo/contracts";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
@@ -7,6 +7,7 @@ import {
   canRetryRun,
   canTransition,
   helperCardState,
+  helperWasStopped,
   isActive,
   isBackgroundRunTrigger,
   isConversationalRun,
@@ -16,6 +17,7 @@ import {
   messageBypassesTakeoverWait,
   messageSteersRun,
   QUEUE_HOLDING_RUN_STATUSES,
+  STOPPED_HELPER_CARD,
   STOPPED_HELPER_RESULT,
   WAITING_ON_USER_RUN_STATUSES,
   WORKING_RUN_STATUSES,
@@ -172,6 +174,41 @@ describe("canRetryRun", () => {
     expect(canRetryRun({ status: "failed", trigger: "user" }, "u1")).toBe(false);
     expect(canRetryRun(failed, undefined)).toBe(false);
     expect(canRetryRun(null, "u1")).toBe(false);
+  });
+});
+
+describe("a stopped helper's card (fork L3)", () => {
+  it("says it in the block, and keeps the status and result earlier readers check", () => {
+    expect(STOPPED_HELPER_CARD).toEqual({ status: "failed", result: "stopped", stopped: true });
+    // What the contract allows a reader to see: the status is still one of the three it knew.
+    expect(
+      MessageBlock.parse({
+        kind: "subagent",
+        agentId: "a",
+        name: "scout",
+        task: "venues",
+        ...STOPPED_HELPER_CARD,
+      }),
+    ).toMatchObject({ status: "failed", result: "stopped", stopped: true });
+  });
+
+  it.each([
+    [{ status: "failed", result: "stopped", stopped: true }, true],
+    // A card settled before the block carried the mark.
+    [{ status: "failed", result: "stopped" }, true],
+    // The mark alone is enough, whatever the result text.
+    [{ status: "failed", result: "", stopped: true }, true],
+    [{ status: "failed", stopped: true }, true],
+    [{ status: "failed", result: "no access" }, false],
+    [{ status: "failed" }, false],
+    [{ status: "completed", result: "stopped" }, false],
+    [{ status: "completed", result: "done", stopped: true }, false],
+    [{ status: "running", progress: "stopped" }, false],
+  ] as const)("%j reads as stopped: %s", (block, stopped) => {
+    expect(helperWasStopped(block)).toBe(stopped);
+    expect(helperCardState(block).stopped).toBe(stopped);
+    expect(helperCardState(block).failed).toBe(block.status === "failed" && !stopped);
+    if (stopped) expect(helperCardState(block).body).toBe("");
   });
 });
 

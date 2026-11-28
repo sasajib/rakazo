@@ -1,5 +1,6 @@
 import type { MessageBlock } from "@rakazo/contracts";
 import { feedbackReceiptText } from "../messages/message-text.js";
+import { helperWasStopped } from "../runs/run-state.js";
 import { isToolActivityBlock } from "../runs/tool-activity.js";
 
 /** A fenced block becomes a mention of itself, with its language if known. */
@@ -341,6 +342,8 @@ export function speechFromBlocks(blocks: MessageBlock[]): string {
       if (block.kind === "computer") return block.text;
       if (block.kind === "subagent") {
         if (block.status === "running") return `${block.name} is working on ${block.task}`;
+        // Fork (L3): a helper the person stopped did not fail.
+        if (helperWasStopped(block)) return `${block.name} was stopped`;
         if (block.status === "failed") return `${block.name} failed`;
         return block.result || `${block.name} finished`;
       }

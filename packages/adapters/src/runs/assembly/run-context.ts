@@ -18,7 +18,7 @@ import type {
   ToolStepCall,
 } from "@rakazo/contracts";
 import type { ToolStepOutcome } from "@rakazo/core";
-import { createStreamingRedactor, toolResultTaintsRun } from "@rakazo/core";
+import { createStreamingRedactor, STOPPED_HELPER_CARD, toolResultTaintsRun } from "@rakazo/core";
 import {
   isToolEffectIdempotencyKey,
   toolEffectIdempotencyKey,
@@ -386,8 +386,7 @@ export async function settleRunningHelpers(
       const stopped = {
         ...block,
         kind: "subagent",
-        status: "failed",
-        result: "stopped",
+        ...STOPPED_HELPER_CARD,
       } as const;
       await publishMessage(
         deps,
