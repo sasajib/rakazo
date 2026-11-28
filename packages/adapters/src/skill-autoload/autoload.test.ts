@@ -137,6 +137,45 @@ describe("skill auto-load: matching", () => {
     expect(own.log.chosen).toEqual(["Deck Builder"]);
   });
 
+  // Live test 1128a: "hello, how are you today?" right after a filing task loaded the filing skill
+  // again (autoload.used_earlier) and the agent obeyed it in its greeting.
+  it("a greeting, thanks or a new short question after a task loads nothing", async () => {
+    const earlier = ["file the supplier invoices for March"];
+    for (const task of [
+      "hello, how are you today?",
+      "hi",
+      "thanks!",
+      "ok, thank you",
+      "great, how's the weather?",
+      "what time is it?",
+      "good night",
+    ]) {
+      const result = await run(task, { earlier });
+      expect(result.log.usedEarlier, task).toBe(false);
+      expect(result.log.chosen, task).toEqual([]);
+      expect(result.text, task).toBeUndefined();
+    }
+    for (const task of ["yes, do it", "the second one", "try again", "sounds good"]) {
+      const result = await run(task, { earlier });
+      expect(result.log.usedEarlier, task).toBe(true);
+      expect(result.log.chosen, task).toEqual(["Invoice Filing"]);
+    }
+  });
+
+  it("SKILL_AUTOLOAD_CONTINUATION_CHECK=0 restores the first rule: any short message borrows", async () => {
+    const result = await autoloadSkills(
+      {
+        trigger: "user",
+        task: "hello, how are you today?",
+        earlier: ["file the supplier invoices for March"],
+        skills: CATALOG,
+      },
+      { config: config({ SKILL_AUTOLOAD_CONTINUATION_CHECK: "0" }), embedder: undefined },
+    );
+    expect(result.log.usedEarlier).toBe(true);
+    expect(result.log.chosen).toEqual(["Invoice Filing"]);
+  });
+
   it("skips skills already in the prompt in full", async () => {
     const result = await run("use plain voice on this paragraph", {
       alreadyLoaded: new Set(["plain voice"]),

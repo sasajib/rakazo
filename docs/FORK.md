@@ -1127,6 +1127,23 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `[Cut here: N of M bytes shown … skill_read {"name": …}]`; a match with under 400 bytes of room is named, not
   dropped. Skipped: skills already in the prompt (`/Name`, `@Name`, pinned), the tool-less `talk` lane, `created`,
   `call_end`, `reaction`. The catalog and `skill_read` are unchanged. Saved secrets are redacted from the block.
+- **B1, short messages (live test 1128a, L1):** the "fewer than 4 content words borrows the earlier request" rule
+  could not tell "ok, go" from "hello, how are you today?": a greeting right after a task loaded that task's skill
+  again (`autoload.used_earlier: true`) and the agent obeyed it in a greeting (`matchText`, `skill-autoload/match.ts`;
+  the old test for small talk passed no earlier request, so it never saw this). Now a short message borrows only
+  when it goes on with that request, decided from its words with no model call (`continuesEarlierRequest`, fork file
+  `skill-autoload/continuation.ts`), in this order: (1) it agrees, tells the agent to act on it or corrects it
+  ("yes", "go ahead", "do it", "use April instead", "wrong month"; a bare verb such as "start", "stop", "retry"
+  counts only without an object, so "stop the music" is its own request) → borrows; (2) it greets, thanks, says
+  goodbye or makes small talk ("hello again", "ok thanks", "how's it going", "what time is it") → matched alone;
+  (3) it is only an acknowledgement ("ok", "sounds good") → borrows; (4) it points back ("the second one", "why did
+  it fail?", "and April too", "what about …") → borrows; (5) anything else ("check my email", "who won the match?")
+  is a request of its own → matched alone. A few Bangla go-aheads, thanks and greetings are in the lists; other
+  languages fall under (5): no automatic load for their "ok, go", the catalog and `skill_read` as before.
+  `SKILL_AUTOLOAD_CONTINUATION_CHECK=0` restores "any short message borrows". Tests:
+  `skill-autoload/continuation.test.ts` (5 kinds that continue, 4 that do not, 3 to 21 wordings each, through both
+  the rule and `matchText`), `autoload.test.ts` ("a greeting, thanks or a new short question after a task loads
+  nothing", the switch). Known misses: a new question that uses "it"/"that" ("is it raining?") still borrows.
 - **B2 Space-pinned skills** (`skill-autoload/pinned.ts`, table `space_pinned_skills`): a set of skills per Space
   member (skills belong to the account that added them, so the set is the member's and reaches every agent that
   member owns in the Space) whose bodies are in EVERY run's system instructions as `<pinned_skills>`, stated as
@@ -1169,7 +1186,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (`prompts.md` two sample blocks, 4 tool files), 3 compose files.
 - **Env (all default ON; in the 3 compose files):** `SKILL_AUTOLOAD` (0 = off), `SKILL_AUTOLOAD_MAX_BYTES` (12288),
   `SKILL_AUTOLOAD_MAX_SKILLS` (3), `SKILL_AUTOLOAD_MIN_SCORE` (2), `SKILL_AUTOLOAD_EMBEDDINGS` (0 = lexical only),
-  `SKILL_AUTOLOAD_EMBEDDINGS_MIN` (0.6), `SKILL_AUTOLOAD_TIMEOUT_MS` (700), `SKILL_PINNED` (0 = pinned skills not in
+  `SKILL_AUTOLOAD_EMBEDDINGS_MIN` (0.6), `SKILL_AUTOLOAD_TIMEOUT_MS` (700),
+  `SKILL_AUTOLOAD_CONTINUATION_CHECK` (0 = any short message borrows the earlier request), `SKILL_PINNED` (0 = pinned skills not in
   prompts nor opened to limited agents; the stored set stays), `SKILL_PINNED_MAX_BYTES` (16384). On bee the api AND
   the worker need the embeddings URL and the `hermes_memory` network (both already have them for 1.5/1.10).
 - **Migration:** `20270129100000_space_pinned_skills` (raw SQL, no Prisma model: PK (spaceId, userId, skillRef);

@@ -5,6 +5,8 @@
  *   SKILL_AUTOLOAD_MAX_BYTES         bytes of matched skill bodies per run (default 12288)
  *   SKILL_AUTOLOAD_MAX_SKILLS        most skills loaded per run (default 3)
  *   SKILL_AUTOLOAD_MIN_SCORE         lexical score a skill needs (default 2)
+ *   SKILL_AUTOLOAD_CONTINUATION_CHECK=0  any short message is matched with the request before it
+ *                                    (default: only one that goes on with it; a greeting is not)
  *   SKILL_AUTOLOAD_EMBEDDINGS=0      never use the embeddings endpoint (lexical only)
  *   SKILL_AUTOLOAD_EMBEDDINGS_MIN    cosine similarity that counts as a match (default 0.6)
  *   SKILL_AUTOLOAD_TIMEOUT_MS        longest wait for the task's embedding (default 700)
@@ -24,6 +26,8 @@ export interface SkillAutoloadConfig {
   maxBytes: number;
   maxSkills: number;
   minScore: number;
+  /** A short message borrows the earlier request only when it goes on with it. */
+  continuationOnly: boolean;
   embeddings: {
     enabled: boolean;
     minSimilarity: number;
@@ -53,6 +57,7 @@ export function skillAutoloadConfig(env: Env = process.env): SkillAutoloadConfig
     maxBytes: int(env.SKILL_AUTOLOAD_MAX_BYTES, 12 * 1024, 1024, 128 * 1024),
     maxSkills: int(env.SKILL_AUTOLOAD_MAX_SKILLS, 3, 1, 8),
     minScore: float(env.SKILL_AUTOLOAD_MIN_SCORE, 2, 0.5, 20),
+    continuationOnly: notOff(env.SKILL_AUTOLOAD_CONTINUATION_CHECK),
     embeddings: {
       enabled: notOff(env.SKILL_AUTOLOAD_EMBEDDINGS) && Boolean(endpoint.url),
       minSimilarity: float(env.SKILL_AUTOLOAD_EMBEDDINGS_MIN, 0.6, 0.1, 0.99),

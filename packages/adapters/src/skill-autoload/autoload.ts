@@ -223,7 +223,9 @@ async function matchAndRender(
   }
   const loaded = new Set([...(input.alreadyLoaded ?? [])].map((name) => name.toLowerCase()));
   const skills = input.skills.filter((skill) => !loaded.has(skill.name.toLowerCase()));
-  const { text, usedEarlier } = matchText(input.task, input.earlier);
+  const { text, usedEarlier } = matchText(input.task, input.earlier, {
+    continuationOnly: config.continuationOnly,
+  });
   const task = text.slice(0, MATCH_TEXT_MAX_CHARS);
   log.usedEarlier = usedEarlier;
   log.taskWords = contentWords(task).length;

@@ -97,6 +97,7 @@ x-app-environment: &app-environment # Runtime
   SKILL_AUTOLOAD_EMBEDDINGS:
   SKILL_AUTOLOAD_EMBEDDINGS_MIN:
   SKILL_AUTOLOAD_TIMEOUT_MS:
+  SKILL_AUTOLOAD_CONTINUATION_CHECK:
   SKILL_PINNED:
   SKILL_PINNED_MAX_BYTES:
   # The worker names each bot's address to it and sends its email; the API receives the mail.

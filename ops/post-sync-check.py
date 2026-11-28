@@ -148,7 +148,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             # command slots (1.40): runs of one agent run commands on its computer at the same time;
             # the screen keeps its one-run lease
             ("planRunLeaseSlot(", 3), ("createRunComputerLease", 3), ("releaseCommandSlots(", 3),
-            ("renewHeldComputerLease(", 2), ("COMPUTER_COMMAND_SLOTS", 2), ("COMMAND_SLOT_BASE", 5)]
+            ("renewHeldComputerLease(", 2), ("COMPUTER_COMMAND_SLOTS", 2), ("COMMAND_SLOT_BASE", 5),
+            # skill auto-load leftovers (1.32): a short message borrows the earlier request only when it
+            # goes on with it
+            ("continuesEarlierRequest(", 3), ("SKILL_AUTOLOAD_CONTINUATION_CHECK", 2)]
 results = []
 
 

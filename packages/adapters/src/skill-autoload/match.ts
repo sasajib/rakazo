@@ -10,6 +10,7 @@
  * shares no rare words with any skill and loads nothing.
  */
 import { parseSkillMd } from "@rakazo/core";
+import { continuesEarlierRequest } from "./continuation.js";
 
 export interface MatchableSkill {
   id: string;
@@ -271,13 +272,18 @@ export function chooseSkills(scores: readonly SkillScore[], maxSkills: number): 
 
 /**
  * The text to match: the task itself, plus the chat's latest request that says enough when the
- * task is as short as "ok, go" (`earlier` = the person's earlier messages, newest first).
+ * task is as short as "ok, go" (`earlier` = the person's earlier messages, newest first) AND goes
+ * on with that request. A greeting, thanks or a new short question is matched alone (L1).
+ * `continuationOnly: false` restores the first rule: any short message borrows.
  */
 export function matchText(
   task: string,
   earlier: readonly string[] = [],
+  options: { continuationOnly?: boolean } = {},
 ): { text: string; usedEarlier: boolean } {
   if (contentWords(task).length >= SHORT_TASK_WORDS) return { text: task, usedEarlier: false };
+  if (options.continuationOnly !== false && !continuesEarlierRequest(task))
+    return { text: task, usedEarlier: false };
   const open = earlier.find((message) => contentWords(message).length >= SHORT_TASK_WORDS);
   return open
     ? { text: `${task}\n${open}`, usedEarlier: true }
