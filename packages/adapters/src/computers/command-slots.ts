@@ -64,8 +64,11 @@ export async function renewHeldComputerLease<L>(
 ): Promise<boolean> {
   const lease = holder.computerLease;
   if (await renew(lease)) return true;
-  if (holder.computerLease === lease) return false;
-  return renew(holder.computerLease);
+  const current = holder.computerLease;
+  // Only one lease given up for another is a change of slot. Taken or let go meanwhile (the
+  // run's first use, its end) is not: the first answer stands.
+  if (!lease || !current || current === lease) return false;
+  return renew(current);
 }
 
 /**

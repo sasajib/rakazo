@@ -149,6 +149,26 @@ describe("renewHeldComputerLease", () => {
     expect(renew.mock.calls).toEqual([[command], [screen]]);
   });
 
+  it("does not ask again when the run let go of its lease during the beat", async () => {
+    const holder: { computerLease: Lease | null } = { computerLease: command };
+    const renew = vi.fn(async (_lease: Lease | null) => {
+      holder.computerLease = null;
+      return false;
+    });
+    expect(await renewHeldComputerLease(holder, renew)).toBe(false);
+    expect(renew).toHaveBeenCalledOnce();
+  });
+
+  it("does not ask again when the run took its first lease during the beat", async () => {
+    const holder: { computerLease: Lease | null } = { computerLease: null };
+    const renew = vi.fn(async (_lease: Lease | null) => {
+      holder.computerLease = command;
+      return false;
+    });
+    expect(await renewHeldComputerLease(holder, renew)).toBe(false);
+    expect(renew).toHaveBeenCalledOnce();
+  });
+
   it("fails when the new lease cannot be renewed either", async () => {
     const holder: { computerLease: Lease } = { computerLease: command };
     const renew = async (lease: Lease) => {
