@@ -116,7 +116,7 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # a failed command says why in the audit log (1.37)
            ("commandExitErrorFields(", 2), ("redactErrorTail(", 2), ('"tool.exit_code"', 2),
            # an image a provider would refuse never reaches a model request (1.38)
-           ("guardModelImages(", 3), ("fitMcpResultImages(", 3), ("unusableImageNote(", 3),
+           ("guardModelImages(", 2), ("fitMcpResultImages(", 3), ("unusableImageNote(", 3),
            ("MODEL_IMAGE_GUARD", 3), ("model_image.left_out", 2)]
 results = []
 
