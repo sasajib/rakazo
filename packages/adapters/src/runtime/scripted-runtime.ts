@@ -4,6 +4,7 @@ import type {
   AgentRuntime,
   AgentRuntimeEvent,
 } from "@rakazo/adapter-kit";
+import { TransientModelError } from "@rakazo/adapter-kit";
 import {
   APPROVED_ACTION_NOT_RUN_ERROR,
   abortableDelay,
@@ -19,6 +20,7 @@ import {
 import { BACKGROUND_HELPER_TASK_CUE } from "../tasks/background-helpers.prompt.js";
 
 const running = new Map<string, AbortController>();
+const failedOnce = new Set<string>();
 
 export class ScriptedAgentRuntime implements AgentRuntime {
   describe() {
@@ -43,6 +45,14 @@ export class ScriptedAgentRuntime implements AgentRuntime {
     const signal = context?.signal ?? controller.signal;
     try {
       const relaysOutcome = helperOutcome(request.prompt) !== undefined;
+      // Fork (1.42 journey): a provider rate limit on the run's first attempt only.
+      if (
+        /\bfail once with a rate limit\b/i.test(request.prompt) &&
+        !failedOnce.has(request.runId)
+      ) {
+        failedOnce.add(request.runId);
+        throw new TransientModelError('429: {"message":"Too many requests"}');
+      }
       if (!relaysOutcome && shouldFail(request.prompt)) {
         throw new Error(scriptedFailure(request.prompt));
       }
@@ -211,6 +221,23 @@ export function inferScript(
       {
         assistant: page[2],
         toolCalls: [{ name: "save_page", args: pageArgs }],
+        complete: true,
+      },
+    ];
+  }
+  // Fork (live test 1128d journey): a complete answer that opens by narrating the work it holds.
+  if (lower.includes("zz-narrated plan")) {
+    return [
+      {
+        assistant: [
+          "I understood you want a balcony tomato plan, and I'm writing it from the loaded skill without tools.",
+          "1. Pick a compact variety that stays under a metre.",
+          "2. Use a 20-litre pot with drainage holes and a loose mix with compost.",
+          "3. Give it six to eight hours of sun every day.",
+          "4. Water deeply when the top 2 cm of soil is dry.",
+          "5. Feed every two weeks once the first flowers open.",
+          "6. Stake the plant early and pinch the side shoots.",
+        ].join("\n"),
         complete: true,
       },
     ];

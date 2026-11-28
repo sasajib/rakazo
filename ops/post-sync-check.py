@@ -163,7 +163,17 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             # the send log, the device poller's persisted history and push records
             ("recipientsAfterRepeatGuard(", 2), ("NOTIFY_REPEAT_GUARD", 2), ("noticeKey(message)", 1),
             ("notification.sent", 2), ("recordPushedRun(", 2), ("AttentionAlerts(", 2),
-            ("CHAT_WATERMARKS", 1)]
+            ("CHAT_WATERMARKS", 1),
+            # message routing (1.42): every message into a busy chat is judged (override redirect/replace,
+            # addition, answer, new task); a waiting question is retired only by an answer or a replace;
+            # new tasks run beside others (chatTask), replies quote their task; transient retry; stop audit
+            ("holdMessageForRouting(", 2), ("scheduleMessageRoute(", 2), ("ROUTING_JUDGE_INSTRUCTIONS", 3),
+            ("decideMessageRoute(", 3), ("routeHeldUntil", 3), ("separateChatTasks(", 2),
+            ("chatTaskBlock(", 2), ("chatTaskReplyTag(", 2), ("chatTasksPromptLine(", 2),
+            ("retryRunAfterTransientFailure(", 2), ("markRunStopped(", 3), ("MESSAGE_ROUTING", 3),
+            ("CHAT_CONCURRENT_TASKS", 2), ("RUN_TRANSIENT_RETRY", 2),
+            # open-work promise (live test 1128d): an opening sentence narrating the work never promises
+            ("deliversWork(", 1), ("CLOSING_SENTENCES", 1)]
 results = []
 
 
@@ -218,6 +228,7 @@ def migrations():
     check("helper queue migration on disk", os.path.isdir(mdir + "/20270129090000_helper_queue"))
     check("queued_helpers table exists with row security", psql("select count(*) from pg_class where relname='queued_helpers' and relrowsecurity") == "1")
     check("open work migration on disk", os.path.isdir(mdir + "/20270130090000_open_work"))
+    check("message routing migration on disk", os.path.isdir(mdir + "/20270131090000_message_routing"))
     check("open_work_states table exists with row security", psql("select count(*) from pg_class where relname='open_work_states' and relrowsecurity") == "1")
     check("scratchpad_items.threadId column exists", psql("select 1 from information_schema.columns where table_name='scratchpad_items' and column_name='threadId'") == "1")
     check("memory ledger idempotency columns exist", psql("select count(*) from information_schema.columns where (table_name='memory_facts' and column_name='textKey') or (table_name='memory_ledger_jobs' and column_name='wroteAt')") == "2")

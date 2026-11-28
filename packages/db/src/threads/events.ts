@@ -56,6 +56,7 @@ import {
 import { followSpaceChanges, publishSpaceChange } from "../spaces/space-changes.js";
 import { SpaceDeletionInProgressError, spaceTakesWork } from "../spaces/spaces.js";
 import { createChatAlerts } from "./chat-alerts.js";
+import { chatTaskReplyTag } from "./chat-task-reply.js";
 import {
   followIncomingCallSignals,
   followThreadEvents,
@@ -963,6 +964,12 @@ async function finalizeRunOnce(
         ? { steps: steps?.steps ?? [], transcript: input.transcript }
         : steps;
     if (replyBlocks.length > 0) {
+      // Fork (FORK.md 1.42): with tasks side by side in the chat, the reply quotes its task's message.
+      const tag = await chatTaskReplyTag(tx, {
+        id: input.runId,
+        threadId: input.threadId,
+        botId: input.botId,
+      });
       const message = await createThreadMessageInTransaction(tx, {
         threadId: input.threadId,
         role: "bot",
@@ -970,6 +977,7 @@ async function finalizeRunOnce(
         toolHistory,
         botId: input.botId,
         runId: input.runId,
+        ...(tag ? { replyToMessageId: tag.replyToMessageId } : {}),
         ...(input.outcome === "completed"
           ? { markUnread: input.markUnread }
           : { clientNonce: partialReplyClientNonce(input.runId) }),
@@ -980,7 +988,14 @@ async function finalizeRunOnce(
         botId: input.botId,
         type: "thread.message.created",
         runId: input.runId,
-        payload: { messageId: message.id, role: "bot", blocks: replyBlocks },
+        payload: {
+          messageId: message.id,
+          role: "bot",
+          blocks: replyBlocks,
+          ...(tag
+            ? { replyToMessageId: tag.replyToMessageId, replyPreview: tag.replyPreview }
+            : {}),
+        },
       });
       firstResponse = response.firstResponse;
     }

@@ -1,4 +1,7 @@
 import { existsSync, mkdtempSync } from "node:fs";
+import type { Server } from "node:http";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runJobKey } from "@rakazo/adapter-kit";
@@ -2712,6 +2715,268 @@ describeJourneys("required product journeys", () => {
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(await prisma.run.count({ where: { threadId: chat.id, trigger: "follow_up" } })).toBe(0);
     expect(await prisma.run.count({ where: { threadId: chat.id, trigger: "user" } })).toBe(2);
+  });
+
+  // Fork (FORK.md 1.42): message routing through the real executor. The judge is a local fake
+  // model endpoint (the real client calls it), answering by a marker in the new message.
+  describe("14: a message into a busy chat is routed, never aborts work on a guess", () => {
+    let judgeServer: Server | undefined;
+    const judged: string[] = [];
+    const saved: Record<string, string | undefined> = {};
+    const setEnv = (values: Record<string, string | undefined>) => {
+      for (const [key, value] of Object.entries(values)) {
+        if (!(key in saved)) saved[key] = process.env[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    };
+    beforeAll(async () => {
+      judgeServer = createServer((request, response) => {
+        let body = "";
+        request.on("data", (chunk) => {
+          body += chunk;
+        });
+        request.on("end", () => {
+          const sent = JSON.parse(body) as { messages: Array<{ content: string }> };
+          const input = JSON.parse(sent.messages.at(-1)!.content) as { new_message: string };
+          const text = input.new_message;
+          judged.push(text);
+          const answer = text.includes("zz-replace")
+            ? { intent: "override", task: "T1", confidence: 0.95, override_kind: "replace" }
+            : text.includes("zz-redirect")
+              ? { intent: "override", task: "T1", confidence: 0.95, override_kind: "redirect" }
+              : text.includes("zz-new")
+                ? { intent: "new_task", task: null, confidence: 0.95 }
+                : text.includes("zz-answer")
+                  ? { intent: "answer", task: "T1", confidence: 0.95 }
+                  : text.includes("zz-unsure")
+                    ? { intent: "override", task: "T1", confidence: 0.4, override_kind: "replace" }
+                    : { intent: "addition", task: "T1", confidence: 0.9, adds_requirement: true };
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: { content: JSON.stringify({ ...answer, reason: "fixture" }) },
+                  finish_reason: "stop",
+                },
+              ],
+            }),
+          );
+        });
+      });
+      await new Promise<void>((resolve) => judgeServer!.listen(0, "127.0.0.1", resolve));
+      const { port } = judgeServer.address() as AddressInfo;
+      setEnv({
+        MESSAGE_ROUTING_JUDGE_URL: `http://127.0.0.1:${port}/v1`,
+        MESSAGE_ROUTING_JUDGE_MODEL: "fixture",
+        MESSAGE_ROUTING_JUDGE_TIMEOUT_MS: "3000",
+        RUN_TRANSIENT_RETRY_BASE_MS: "100",
+        RUN_TRANSIENT_RETRY_MAX_MS: "200",
+      });
+    });
+    afterAll(async () => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await new Promise((resolve) => judgeServer?.close(resolve));
+    });
+
+    async function send(cookie: string, botId: string, text: string, extra: object = {}) {
+      return rpc<{ runId: string; runIds: string[] }>(app, cookie, "threads/send", {
+        botId,
+        text,
+        ...extra,
+      });
+    }
+    async function waitStatus(runId: string, statuses: string[]) {
+      await waitForDatabase(async () => {
+        const run = await prisma.run.findUnique({ where: { id: runId }, select: { status: true } });
+        return Boolean(run && statuses.includes(run.status));
+      });
+    }
+    async function routedRun(messageId: string) {
+      await waitForDatabase(async () =>
+        Boolean(await prisma.run.findFirst({ where: { clientNonce: `route:${messageId}` } })),
+      );
+      return prisma.run.findFirstOrThrow({ where: { clientNonce: `route:${messageId}` } });
+    }
+    async function messageOf(threadId: string, text: string) {
+      await waitForDatabase(async () =>
+        (await prisma.message.findMany({ where: { threadId, role: "user" } })).some((row) =>
+          JSON.stringify(row.blocks).includes(text),
+        ),
+      );
+      return (await prisma.message.findMany({ where: { threadId, role: "user" } })).find((row) =>
+        JSON.stringify(row.blocks).includes(text),
+      )!;
+    }
+    async function heldSettled(messageId: string) {
+      await waitForDatabase(async () => {
+        const row = await prisma.steeringMessage.findFirst({ where: { messageId } });
+        return !row || row.routeHeldUntil === null;
+      });
+    }
+
+    it("14a: an addition during a tool-using run steers it and is kept as an open item", async () => {
+      const { cookie, bot, chat } = await newChief("Route Addition");
+      const { runId } = await send(cookie, bot.id, "work for 4 seconds on the report");
+      await waitStatus(runId, ["running"]);
+      await send(cookie, bot.id, "also add a summary at the top");
+      const message = await messageOf(chat.id, "also add a summary");
+      await heldSettled(message.id);
+      const steering = await prisma.steeringMessage.findFirst({ where: { messageId: message.id } });
+      expect(steering?.runId).toBe(runId);
+      expect(
+        await prisma.scratchpadItem.count({
+          where: { botId: bot.id, threadId: chat.id, status: "open" },
+        }),
+      ).toBe(1);
+      // The task kept going and finished.
+      await waitStatus(runId, ["completed"]);
+      expect(await prisma.run.count({ where: { threadId: chat.id, status: "cancelled" } })).toBe(0);
+    });
+
+    it("14b: an override that replaces stops the task in one line and works on the new instruction; a redirect stops nothing", async () => {
+      const { cookie, bot, chat } = await newChief("Route Override");
+      const first = await send(cookie, bot.id, "work for 30 seconds on the February chart");
+      await waitStatus(first.runId, ["running"]);
+      await send(cookie, bot.id, "zz-redirect rather as a table");
+      const redirect = await messageOf(chat.id, "zz-redirect");
+      await heldSettled(redirect.id);
+      expect((await prisma.run.findUniqueOrThrow({ where: { id: first.runId } })).status).toBe(
+        "running",
+      );
+      await send(cookie, bot.id, "zz-replace no, the March numbers");
+      const replace = await messageOf(chat.id, "zz-replace");
+      const replacement = await routedRun(replace.id);
+      await waitStatus(first.runId, ["cancelled"]);
+      const task = await prisma.task.findUniqueOrThrow({ where: { id: replacement.taskId } });
+      expect(task.prompt).toContain("[The person changed the task");
+      expect(task.prompt).toContain("zz-replace no, the March numbers");
+      expect(replacement.chatTask).toBe(false);
+      const lines = (
+        await prisma.message.findMany({ where: { threadId: chat.id, role: "system" } })
+      ).filter((row) => JSON.stringify(row.blocks).includes('Stopped \\"'));
+      expect(lines).toHaveLength(1);
+      // The replacement carries the old request's words, so the scripted run works on; stop it.
+      await rpc(app, cookie, "threads/stop", { botId: bot.id });
+      await waitStatus(replacement.id, ["cancelled", "completed"]);
+    });
+
+    it("14c: a new task runs beside the working one in the same chat; both finish and replies quote their task", async () => {
+      const { cookie, bot, chat } = await newChief("Route New Task");
+      const first = await send(cookie, bot.id, "work for 8 seconds on the slide deck");
+      await waitStatus(first.runId, ["running"]);
+      await send(cookie, bot.id, "zz-new run the shell command echo pineapple");
+      const asked = await messageOf(chat.id, "zz-new");
+      const second = await routedRun(asked.id);
+      expect(second.chatTask).toBe(true);
+      await waitStatus(second.id, ["completed"]);
+      // It finished while the first task was still working: they ran at the same time.
+      expect((await prisma.run.findUniqueOrThrow({ where: { id: first.runId } })).status).toBe(
+        "running",
+      );
+      const replies = await prisma.message.findMany({ where: { runId: second.id, role: "bot" } });
+      expect(replies.length).toBeGreaterThan(0);
+      for (const reply of replies) expect(reply.replyToMessageId).toBe(asked.id);
+      await waitStatus(first.runId, ["completed"]);
+      // Its prompt named the other task in flight.
+      expect(await prisma.run.count({ where: { threadId: chat.id, status: "cancelled" } })).toBe(0);
+    });
+
+    it("14d: an unrelated message leaves a waiting question open; only the answer resumes it", async () => {
+      const { cookie, bot, chat } = await newChief("Route Waiting");
+      const asking = await send(cookie, bot.id, "ask me which city to book");
+      await waitStatus(asking.runId, ["waiting_input"]);
+      await send(cookie, bot.id, "zz-new what is the weather today");
+      const unrelated = await messageOf(chat.id, "zz-new what is the weather");
+      const other = await routedRun(unrelated.id);
+      await waitStatus(other.id, ["completed"]);
+      expect((await prisma.run.findUniqueOrThrow({ where: { id: asking.runId } })).status).toBe(
+        "waiting_input",
+      );
+      await send(cookie, bot.id, "zz-answer Paris please");
+      await waitStatus(asking.runId, ["completed"]);
+      const answered = await prisma.message.findMany({
+        where: { runId: asking.runId, role: "bot" },
+      });
+      expect(JSON.stringify(answered.map((row) => row.blocks))).toContain(
+        '"status":"answered","answer":"zz-answer Paris please"',
+      );
+    });
+
+    it("14e: a new task over capacity waits in line, is told its place, and starts when a slot frees", async () => {
+      setEnv({ CHAT_CONCURRENT_TASKS_MAX: "1" });
+      try {
+        const { cookie, bot, chat } = await newChief("Route Capacity");
+        const first = await send(cookie, bot.id, "work for 2 seconds on the memo");
+        await waitStatus(first.runId, ["running"]);
+        await send(cookie, bot.id, "zz-new list three colours");
+        const asked = await messageOf(chat.id, "zz-new list three colours");
+        const queued = await routedRun(asked.id);
+        await waitForDatabase(async () =>
+          (await prisma.message.findMany({ where: { threadId: chat.id, role: "system" } })).some(
+            (row) => JSON.stringify(row.blocks).includes("Queued as task 1 in line"),
+          ),
+        );
+        expect(
+          (await prisma.run.findUniqueOrThrow({ where: { id: queued.id } })).startedAt,
+        ).toBeNull();
+        await waitStatus(first.runId, ["completed"]);
+        await waitStatus(queued.id, ["completed"]);
+        const order = await prisma.run.findMany({
+          where: { id: { in: [first.runId, queued.id] } },
+          select: { id: true, startedAt: true, completedAt: true },
+        });
+        const a = order.find((row) => row.id === first.runId)!;
+        const b = order.find((row) => row.id === queued.id)!;
+        expect(b.startedAt!.getTime()).toBeGreaterThanOrEqual(a.completedAt!.getTime());
+      } finally {
+        setEnv({ CHAT_CONCURRENT_TASKS_MAX: undefined });
+      }
+    });
+
+    it("14f: a low-confidence override is only an addition", async () => {
+      const { cookie, bot, chat } = await newChief("Route Unsure");
+      const first = await send(cookie, bot.id, "work for 3 seconds on the plan");
+      await waitStatus(first.runId, ["running"]);
+      await send(cookie, bot.id, "zz-unsure cheaper is better");
+      const message = await messageOf(chat.id, "zz-unsure");
+      await heldSettled(message.id);
+      expect(
+        (await prisma.steeringMessage.findFirst({ where: { messageId: message.id } }))?.runId,
+      ).toBe(first.runId);
+      await waitStatus(first.runId, ["completed"]);
+    });
+
+    it("14g: a transient 429 is retried with backoff and the run finishes; a permanent error fails once", async () => {
+      const { cookie, bot } = await newChief("Route Retry");
+      const { run } = await sendAndWait(app, cookie, bot.id, "fail once with a rate limit please");
+      const retried = await prisma.run.findUniqueOrThrow({ where: { id: run.id } });
+      expect(retried).toMatchObject({ status: "completed", transientRetries: 1 });
+      const failed = await send(cookie, bot.id, "fail this run with a rejected key");
+      await waitStatus(failed.runId, ["failed"]);
+      const row = await prisma.run.findUniqueOrThrow({ where: { id: failed.runId } });
+      expect(row.transientRetries).toBe(0);
+      expect(row.error).toBeTruthy();
+      expect(await prisma.attempt.count({ where: { runId: failed.runId } })).toBe(1);
+    });
+
+    it("14h: a complete answer that narrates its own work is not continued (live test 1128d)", async () => {
+      const { cookie, bot, chat } = await newChief("Narrated Answer");
+      const { run } = await sendAndWait(app, cookie, bot.id, "zz-narrated plan for tomatoes");
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      expect(
+        await prisma.run.count({
+          where: { threadId: chat.id, clientNonce: { startsWith: "open-work:" } },
+        }),
+      ).toBe(0);
+      expect(await prisma.message.count({ where: { threadId: chat.id, role: "bot" } })).toBe(
+        await prisma.message.count({ where: { runId: run.id, role: "bot" } }),
+      );
+    });
   });
 
   // Fork (FORK.md 1.33, A3/A4): the whole path through the executor. The scripted runtime keeps no

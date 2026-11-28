@@ -1,9 +1,15 @@
 import type { ReplyPreview } from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
 import { messageReplyPreview } from "@rakazo/core/message-quote";
-import type { Prisma } from "@rakazo/db";
-import { loadMessageAuthor, readMessageBlocks } from "@rakazo/db";
-import { routingConfig } from "./routing-config.js";
+import type { Prisma } from "../database/client.js";
+import { readMessageBlocks } from "./message-blocks.js";
+import { loadMessageAuthor } from "./messages.js";
+
+/** `CHAT_CONCURRENT_TASKS=0` (FORK.md 1.42) turns the reply tags off with the concurrent tasks. */
+function concurrentTasksOn(): boolean {
+  const flag = process.env.CHAT_CONCURRENT_TASKS?.trim().toLowerCase();
+  return !(flag === "0" || flag === "false" || flag === "off" || flag === "no");
+}
 
 /**
  * Fork (FORK.md 1.42): while two or more tasks of the agent work in one chat, each reply of a task's
@@ -14,7 +20,7 @@ export async function chatTaskReplyTag(
   tx: Prisma.TransactionClient,
   run: { id: string; threadId: string; botId: string },
 ): Promise<{ replyToMessageId: string; replyPreview: ReplyPreview | null } | undefined> {
-  if (!routingConfig().concurrentTasks) return undefined;
+  if (!concurrentTasksOn()) return undefined;
   // Hand-rolled transaction doubles in unit tests carry no run delegate.
   if (typeof tx.run?.findUnique !== "function") return undefined;
   const own = await tx.run.findUnique({

@@ -47,6 +47,7 @@ import {
   appendEventInTransaction,
   contentEncryptionOf,
   createThreadMessageInTransaction,
+  eligibleWaitingTextAnswer,
   pendingQuestionOf,
   readMessageBlocks,
   retireWaitingQuestionInTransaction,
@@ -154,6 +155,12 @@ export interface HeldRoute {
   prompt: string;
   hasAttachments: boolean;
   heldUntil: Date;
+  /**
+   * The waiting task this message would answer by upstream's own rule (the message right after
+   * its question): what an unsettled route falls back to instead of an addition, since that only
+   * resumes the task with the person's words.
+   */
+  fallbackAnswerRunId?: string | undefined;
 }
 
 /**
@@ -166,7 +173,7 @@ export async function holdMessageForRouting(
     actor: Actor;
     botId: string;
     threadId: string;
-    message: { id: string };
+    message: { id: string; seq: number };
     text: string;
     replyToMessageId?: string | undefined;
     runs: readonly InFlightRun[];
@@ -210,6 +217,20 @@ export async function holdMessageForRouting(
     : undefined;
   if (!fallback || !run) return null;
   const heldUntil = new Date(Date.now() + config.judgeTimeoutMs + 2_000);
+  let fallbackAnswerRunId: string | undefined;
+  for (const task of tasks) {
+    if (!task.question || fallbackAnswerRunId) continue;
+    const eligible = await eligibleWaitingTextAnswer(tx, {
+      spaceId: input.actor.spaceId,
+      threadId: input.threadId,
+      runId: task.runId,
+      answeredByUserId: input.actor.userId,
+      answer: input.text,
+      beforeMessageSeq: input.message.seq,
+      answerMessageId: input.message.id,
+    });
+    if (eligible) fallbackAnswerRunId = task.runId;
+  }
   await tx.steeringMessage.create({
     data: {
       messageId: input.message.id,
@@ -232,6 +253,7 @@ export async function holdMessageForRouting(
       prompt: input.prompt,
       hasAttachments: input.hasAttachments,
       heldUntil,
+      fallbackAnswerRunId,
     },
   };
 }
@@ -374,7 +396,26 @@ export async function routeHeldMessage(
         basis: "judge_off",
         addsRequirement: false,
       } satisfies RouteDecision);
-  const applied = await applyRoute(deps, input, decision, tasks, inFlight, hooks);
+  // Nothing settled it, and it is the reply right after a waiting question: it answers that
+  // question, as it always did (the task resumes with it; nothing is stopped).
+  const unsettled = [
+    "judge_off",
+    "judge_timeout",
+    "judge_error",
+    "judge_invalid",
+    "judge_low_confidence",
+  ];
+  const settled: RouteDecision =
+    held.fallbackAnswerRunId && unsettled.includes(decision.basis) && decision.intent === "addition"
+      ? {
+          ...decision,
+          intent: "answer",
+          targetRunId: held.fallbackAnswerRunId,
+          basis: decision.basis,
+          addsRequirement: false,
+        }
+      : decision;
+  const applied = await applyRoute(deps, input, settled, tasks, inFlight, hooks);
   const ms = Date.now() - started;
   getLogger().info("message.routed", {
     "message.id": held.messageId,
@@ -651,7 +692,8 @@ async function applyRoute(
       const queuedBefore = others.filter((run) => run.status === "queued" && run.chatTask).length;
       const lineFull =
         concurrent && (working.length >= config.concurrentTasksMax || queuedBefore > 0);
-      await tx.steeringMessage.delete({ where: { id: steering.id } });
+      // The supersede above already cleared the stopped run's steering, this row with it.
+      await tx.steeringMessage.deleteMany({ where: { id: steering.id } });
       const task = await tx.task.create({
         data: {
           spaceId: actor.spaceId,

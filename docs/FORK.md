@@ -1730,6 +1730,128 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream changing `deliverChatNotice`, `expoPushData`/`deliver`, `PollCompletions` or the service's
   history keys; re-apply on its shape.
 
+### 1.42 A new message never aborts work unless it overrides that task; new tasks run beside it (`MESSAGE_ROUTING`, `CHAT_CONCURRENT_TASKS`, `RUN_TRANSIENT_RETRY`) (owner requirement 2026-11-28)
+- **Requirement (owner's words, condensed):** a new message must not abort the previous task unless it overrides
+  that task; otherwise it is an addition to it (queued for that task) or a whole new task (worked concurrently);
+  proper retry and error handling. **Binding correction:** the routing understands meaning, so a model judge is
+  the primary decider; keyword lists never route; low confidence, timeout or error = ADDITION to the most recent
+  task; an override is destructive only when it is clearly a replacement.
+- **Before (diagnosis, stack report `WORKER-R-routing-1128.md` phase 1):** every message into a busy chat became
+  steering of the one working run (`thread-target.ts`), read after the in-flight tool; a message while the run
+  waited on a question RETIRED the question and cancelled the run when it was not the answer
+  (`retireWaitingQuestionInTransaction`; 2 such cancellations in 7 days, one a 9 h delegated run = 1.39); a second
+  task could only wait behind the first (steering, or a `follow_up` after it, avg 36 s, max 191 s); only a bare
+  stop word stopped anything.
+- **Routing (items 1-3, `apps/api/src/threads/message-routing.ts`, pure rules `core/src/runs/message-routing.ts`):**
+  for a person's message into his OWN bot chat while his runs are in flight (not a call turn, not a bare stop, not
+  `leaveCards`, no routine started by the send; group chats and other people's runs keep the old path):
+  certainties skip the model (a reply to the open question's card; one of its options typed back, both =
+  ANSWER). Everything else is saved as steering of the most recent task with `steering_messages.routeHeldUntil`
+  = now + timeout + 2 s (`claimSteering` skips held rows), nothing is retired, and after the commit
+  (`scheduleMessageRoute`, not awaited by the send) the judge is asked with the message, every task in flight
+  (key T1.., state, title, request, latest progress line, open question + options) and the last 8 turns. Output:
+  intent, task, confidence, `override_kind` (redirect|replace), `adds_requirement`, one-line reason. The route is
+  applied in one transaction under the thread lock:
+  - **addition:** hold lifted (the run reads it at its next model turn); when it adds work, an open-work item is
+    recorded for the chat (1.33, `MESSAGE_ROUTING_OPEN_ITEM`), so a run that ends first is continued for it; a talk
+    run answers beside a busy run as before (now created by the router); a takeover waiting task is released as
+    a typed message did.
+  - **override / redirect** (criteria, style, length, format change; the goal stands): steered at once like an
+    addition, nothing stopped; a task waiting on a question takes it as the answer and resumes.
+  - **override / replace** (another subject/target/period, cancelled, the work is unwanted) only with confidence
+    >= `MESSAGE_ROUTING_REPLACE_MIN_CONFIDENCE` (0.85; below = redirect): the task is stopped through the
+    supersede machinery of 1.20 (`cancelReplacedRequest` + `finishReplacedRequest` tear-down; a waiting question is
+    retired with the message), a system line says `Stopped "<title>" for your new instruction; working on that
+    now.`, and a `user` run (`clientNonce route:<message id>`) starts with a prompt that names the stopped task and
+    its request, then the message. A stopped `bot_message` request keeps its 1.39 notice to the asker.
+  - **answer:** the waiting question is answered with the message (strict card id) and its run resumes.
+  - **new task:** see item 4. A task that ended while the judge thought turns an override/answer into a new task;
+    a row already claimed (hold ran out) stays an addition (basis `late`).
+  Overrides need confidence >= 0.7 (`MESSAGE_ROUTING_OVERRIDE_MIN_CONFIDENCE`), anything >= 0.6
+  (`MESSAGE_ROUTING_MIN_CONFIDENCE`). Judge = `MESSAGE_ROUTING_JUDGE_MODEL`/`_URL`/`_API_KEY`, default the memory
+  ledger's endpoint (1.10, bee: `glm/glm-5.3-flash` on omni), `MESSAGE_ROUTING_JUDGE_TIMEOUT_MS` 8000, no retries,
+  never throws. Hand-rolled transaction doubles (unit tests) skip routing, as the admission gate does.
+- **Eval (`adapters/src/runs/routing/eval/`, 75 messages in 10 chat contexts, 20 held out of the prompt's
+  examples, EN + BN):** `npx tsx packages/adapters/src/runs/routing/eval/routing-eval.ts` with the judge env.
+  glm-5.3-flash on bee: 73/75 (override 28/28, addition 19/20, answer 7/7, new task 11/11, ambiguous 8/9, held-out
+  20/20), **0 dangerous** (work stopped on a non-override, or an override routed as a new task), 1 mild (a
+  preference steered as a redirect), latency p50 3.1 s, p90 5.1 s, max 8.0 s; first run before the redirect/replace
+  split had 1 dangerous ("cheaper is better…" read as an override at 0.78).
+- **New tasks side by side (item 4):** the route creates the run with `runs.chatTask = true` when other work of the
+  agent is in flight in the chat. `admissionHold` (`run-lifecycle.ts`) holds a chat task while the chat already has
+  `CHAT_CONCURRENT_TASKS_MAX` (3) tasks working or an older chat task waits (`chatTaskBlock`,
+  `routing/chat-task-gate.ts`; log `run.chat_task_held`); the person is told `Queued as task N in line: …` (log
+  `run.chat_task_queued`). `acquireComputerExecutionLease`'s one-writer rule no longer blocks two runs of DIFFERENT
+  tasks when one of them is a chat task (`separateChatTasks`); the screen stays one run per screen slot (1.2/1.40),
+  one task stays one writer, voice turns keep steering. While a chat task is in flight, every bot message of a
+  task's run quotes the person's message that started that task (`replyToMessageId` + live `replyPreview`,
+  `chatTaskReplyTag` in `persistMessageInTransaction`). A chat task's model session has its own suffix
+  (`task:<taskId>`). Steering stays task-bound (routed rows carry the run id). `claimWaitsForChat` (routines,
+  `bot_message`) is unchanged: deliveries still wait for the chat. `CHAT_CONCURRENT_TASKS=0`: a new task is
+  created as a plain run and waits like before; the writer guard is exact upstream.
+- **Transient retry (item 5, `routing/transient-retry.ts`, seam `run-model-turn.ts` before `failRun`):** a turn that
+  fails with `TransientModelError` or a provider status 429/408/425/5xx (or timeout/overloaded/connection text),
+  after pi's own stream retries, is requeued (`requeueInterruptedRun`, checkpoint flushed, like a database outage)
+  after `RUN_TRANSIENT_RETRY_BASE_MS`·2^(n-1) (5 s, cap `RUN_TRANSIENT_RETRY_MAX_MS` 120 s, half to all at random),
+  counted in `runs.transientRetries`, at most `RUN_TRANSIENT_RETRY_MAX` (3). Account, output, 4xx errors fail once as
+  before (one-line reason). After the last repeat it fails normally (`run.transient_retry_exhausted`); a failed run
+  is never continued (1.33 follows completed runs only). Logs `run.transient_retry` (attempt, wait_ms, reason).
+- **Task awareness (item 6, `routing/chat-tasks-prompt.ts`, seam `run-assembly-context.ts`):** with other tasks in
+  flight the skills line carries "Tasks in this chat: this run serves the task "<title>". Other tasks are in flight
+  here, each handled by its own run: …". Absent with one task, so the prompt-surface snapshot is unchanged.
+- **Stop audit (item 7):** `runLeaseLost` logs `run.stopped` once when it sees its run cancelled
+  (`runs/turn/run-stopped.ts`); a tool completion of a stopped run (registry, or one status read for a failed call)
+  gets `tool.error_class: stopped` (new class) instead of `unknown`.
+- **Also on this branch (live test 1128d findings):** (a) open-work promise false positive: only the last three
+  closing sentences can promise, an opening sentence narrating the work in the present ("I understood you want…,
+  and I'm writing it") never does, and a promise in a reply that already carries > 280 characters of other text is
+  `unclear` (judge) instead of `promise`; the judge is told that narrating work contained in the message is not a
+  promise (`core/src/runs/open-work.ts`, journey 14h). (b) skill auto-load: the task digest fetch was already
+  single-flight per text hash (`taskVector`); the 1128d timeout was the first request itself taking > 700 ms, so a
+  helper's brief is now embedded when the helper is created (`startBackgroundHelper` → `warmTaskVector`), giving
+  the shared request a head start; test: four helpers with one brief → one request, all `early`.
+- **Env (all three compose files):** `MESSAGE_ROUTING`, `MESSAGE_ROUTING_JUDGE`, `MESSAGE_ROUTING_JUDGE_TIMEOUT_MS`,
+  `MESSAGE_ROUTING_JUDGE_MODEL`, `MESSAGE_ROUTING_JUDGE_URL`, `MESSAGE_ROUTING_JUDGE_API_KEY`,
+  `MESSAGE_ROUTING_MIN_CONFIDENCE`, `MESSAGE_ROUTING_OVERRIDE_MIN_CONFIDENCE`, `MESSAGE_ROUTING_REPLACE_MIN_CONFIDENCE`,
+  `MESSAGE_ROUTING_OPEN_ITEM`, `CHAT_CONCURRENT_TASKS`, `CHAT_CONCURRENT_TASKS_MAX`, `RUN_TRANSIENT_RETRY`,
+  `RUN_TRANSIENT_RETRY_MAX`, `RUN_TRANSIENT_RETRY_BASE_MS`, `RUN_TRANSIENT_RETRY_MAX_MS`. Kill switches:
+  `MESSAGE_ROUTING=0` (old steering/retire path exactly), `MESSAGE_ROUTING_JUDGE=0` (every uncertain message is an
+  addition), `CHAT_CONCURRENT_TASKS=0`, `RUN_TRANSIENT_RETRY=0`.
+- **Migration:** `20270131090000_message_routing` (`runs.chatTask` bool default false, `runs.transientRetries` int
+  default 0, `steering_messages.routeHeldUntil` timestamp; additive, idempotent, no new table; rollback = previous
+  image, columns ignored).
+- **Logs:** `message.routed` (intent, action, basis, confidence, reason, target/default/started/stopped run ids,
+  queued position, judge model and ms, total ms; never message text), `message.route_failed`,
+  `message.route_judge_unavailable`, `run.chat_task_held`, `run.chat_task_queued`, `run.transient_retry`,
+  `run.transient_retry_exhausted`, `run.stopped`.
+- **Seams in upstream files:** `apps/api/src/threads/thread-target.ts` (route before the waiting-question loop,
+  certain answer strict by card id, no retire while routing, schedule after commit, `createTalkRunBeside`
+  exported), `packages/db/src/threads/thread-steering.ts` (hold filter), `thread-ask.ts` (+`pendingQuestionOf`),
+  `computer-lifecycle.ts` (writer rule), `run-lifecycle.ts` (`admissionHold` branch), `run-messages.ts` (tag),
+  `run-model-turn.ts` (session suffix, retry call), `run-assembly-context.ts`, `run-turn.ts`,
+  `tool-completion-audit.ts`, `tool-error-class.ts`, `scripted-runtime.ts` (journey phrases), `schema.prisma`,
+  `background-helpers.ts`, `core/src/runs/open-work.ts`.
+- **Tests:** `core/src/runs/message-routing.test.ts` (15), `routing/transient-retry.test.ts` (14),
+  `open-work.test.ts` (+8, the live wording and variants), `autoload.test.ts` (+1), journeys `14a`-`14h` through the
+  real executor with a fake judge endpoint (addition during a tool-using run; replace vs redirect; a new task
+  concurrent with a working one, both finish, replies quote; unrelated message vs answer on a waiting question;
+  over capacity queued with its place told; low-confidence override = addition; transient 429 retried and a
+  permanent error failing once; a narrated complete answer not continued).
+- **Live check (after deploy):** throwaway agent; "work for a while: list the files 5 times with 20 s pauses"; then
+  (1) "also count them" → `message.routed intent=addition`, run not cancelled, a scratchpad item; (2) "what's 2+2?"
+  → `intent=new_task`, a second `user` run with `"chatTask"=true` that finishes while the first works, its reply
+  quoting the question; (3) "never mind, stop that" → `intent=override action=replace`, first run `cancelled`, one
+  "Stopped" line; (4) ask it to ask a question, then type something unrelated → the question stays
+  (`waiting_input`), a new run answers; then the answer resumes it.
+- **Not covered / risks:** group chats keep the old path (routing is per bot chat). The judge adds its latency
+  (p50 ~3 s) before a running task can read an addition (bounded by the timeout + 2 s). With
+  `bots.concurrency` 1 two tasks share one screen slot: a second task that needs the screen waits for it
+  (commands/files run side by side, 1.40). Open-work wakers count every run in the chat, so a continuation of one
+  task waits while another task works. A reply-to of a task's message pins the task but the intent is still judged.
+- **Conflicts:** `thread-target.ts` (upstream rewrites the send often: keep the route block before the
+  waiting-question loop and the schedule after the commit), `claimSteering` where-clause, the writer rule in
+  `acquireComputerExecutionLease`, `admissionHold`, `persistMessageInTransaction`.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

@@ -9,6 +9,7 @@ import {
 import type { Prisma, RunLease } from "@rakazo/db";
 import {
   appendEventInTransaction,
+  chatTaskReplyTag,
   createThreadMessageInTransaction,
   THREAD_LOCK_TRANSACTION_OPTIONS,
   withTransactionRetry,
@@ -16,7 +17,6 @@ import {
 import { getLogger } from "@rakazo/logging";
 import { redactConnectorPayload } from "../../integrations/connector-safety.js";
 import type { ExecutorDeps } from "../executor/executor-deps.js";
-import { chatTaskReplyTag } from "../routing/chat-task-reply.js";
 
 /** Deps for one attempt: its run's history writes carry the lease, so a superseded attempt cannot write. */
 export function withRunLease(
