@@ -58,7 +58,7 @@ export async function retryRunAfterTransientFailure(
     where: { id: runId },
     select: { transientRetries: true, status: true },
   });
-  if (!current || current.status !== "running") return false;
+  if (current?.status !== "running") return false;
   const reason = redactSecrets(error instanceof Error ? error.message : String(error), ctx.secrets)
     .replace(/\s+/g, " ")
     .slice(0, 200);

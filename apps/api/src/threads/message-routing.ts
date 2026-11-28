@@ -582,7 +582,7 @@ async function applyRoute(
         if (!redirect) decision = { ...decision, intent: "addition", basis: "judge_invalid" };
       }
       if (decision.intent === "addition" || decision.intent === "answer" || redirect) {
-        const steerTo = target && target.steerable && targetLive ? target.runId : steering.runId;
+        const steerTo = target?.steerable && targetLive ? target.runId : steering.runId;
         await tx.steeringMessage.update({
           where: { id: steering.id },
           data: { runId: steerTo, routeHeldUntil: null },

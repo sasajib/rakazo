@@ -77,6 +77,7 @@ export * from "./spaces/space-settings.js";
 export * from "./spaces/spaces.js";
 export * from "./speech/costs.js";
 export * from "./threads/chat-alerts.js";
+export * from "./threads/chat-task-reply.js";
 export {
   eventsAfter,
   followThreadEvents,
@@ -86,7 +87,6 @@ export {
 export * from "./threads/events.js";
 export * from "./threads/message-blocks.js";
 export * from "./threads/messages.js";
-export * from "./threads/chat-task-reply.js";
 export * from "./threads/thread-ask.js";
 export { botRunStatuses, primaryActiveRun } from "./threads/thread-listing.js";
 export * from "./threads/thread-reads.js";
