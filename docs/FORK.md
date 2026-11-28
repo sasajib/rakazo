@@ -1602,7 +1602,7 @@ their siblings and fix `index.ts` exports.
 3. **Vitest in chunks ≤ 5 min:** at least `packages/adapters/src/{tools,tasks,runs/assembly,runs/tools,runs/lifecycle,memory,memory-ledger,shell-jobs,computers}`,
    `packages/core/src`, `apps/api/src`, `apps/web/src/pages/shell`, `infra/updater/src/compose-env.test.ts`,
    `packages/testkit/src/runtime/executor-turn-checkpoint.test.ts`, mobile call tests. Compare failures against
-   `git stash -u` / upstream (`desktop-runtime` (8), `infra/sandboxes/supervisor/src/focus-or-launch.test.ts` (1, since upstream
+   `git stash -u` / upstream (`desktop-runtime` (8; 9 at upstream `7364bc727`), `infra/sandboxes/supervisor/src/focus-or-launch.test.ts` (1, since upstream
    `dbc0c9d46`: no xdotool + screen-gateway marker on bee), `mcp-package-installer` fail on bee without the fork too).
    A pure-upstream worktree for comparison: `git worktree add --detach ../upstream-<mmdd> upstream/main`
    + `pnpm install --frozen-lockfile` + `pnpm --filter @rakazo/db generate`.
@@ -1683,6 +1683,62 @@ Tell him: stale web tabs keep the old bundle until reloaded.
 ---
 
 ## 4. Sync log
+
+### 2026-11-28 (b) — upstream `50de80b1f..7364bc727` (78 commits) → `sync/upstream-1128`, image `main-1128b`
+- **Base:** fork `main` `cb7267034` (tag `pre-sync-1128`, image `main-1128a`, live). `git merge upstream/main` =
+  `555b31186`. **Decision: merge** (8 content conflicts, all in ledger seams; no upstream release tag in the range;
+  mobile app version 1.0.22).
+- **Conflicts and resolutions** (ours kept, upstream's change ported onto it):
+  - `apps/api/src/integrations/mcp-servers.ts`: **upstream fixed the 1.29 reply defect** (`availability` falls back
+    to the viewer's Space). The local hunk is dropped and upstream's line taken; the two fork tests and the
+    `post-sync-check.py` marker now pin upstream's shape. The list guard (`readableMcpServers`) stays.
+  - `apps/api/src/routes/threads.ts`: upstream moved the send body to `threads/thread-send.ts` (`sendAsUser`,
+    which keeps the teaching check). Upstream's `send` taken; the plans service and `plans.*` routes (1.20) on top.
+  - `runs/lifecycle/chat-wait.ts` + `chat-wait.postgres.test.ts`, `runs/lifecycle/run-lifecycle.ts`: fork `lane`
+    (1.6) beside upstream's `clientNonce` (#6960: a follow-up after an app is connected waits for its chat).
+  - `runs/turn/run-model-turn.ts`: imports of both sides (`TALK_RUN_TRIGGER`, `isAppConnectionFollowUp`).
+  - `tools/skill-tools.ts`: upstream's organization-skill reads (`visibleSkillQuery`,
+    `personalOrOrganizationItemIn`, `findPersonalSkillName`, #6855) with the fork's per-agent selection filter
+    (1.17) applied to them, so an organization's shared skill is chosen, filtered, pinned and auto-loaded like any
+    other. **Upstream's rule taken** for name clashes: a new skill's name is checked against the member's own
+    skills only (an organization's skill may carry the same name; the member's own is listed first).
+  - `tools/builtin-tool-bridge.test.ts`: upstream's async `find` helper and comment; fork expectations (scratchpad
+    always listed); cap re-measured 49_983 (find_tool wording +21) → `50_040`.
+- **Not a textual conflict, fixed after the merge:**
+  - `core/messages/message-visibility.ts`: upstream's new block kind `feedback_receipt` (#6958) is `false` in
+    `NEEDS_PERSON_BY_KIND` (1.21); tsc failed in core, db, adapters, api, worker, web, mobile and testkit until then.
+  - **Team's shared screen (1.14) vs upstream #6773** (a Team Computer desktop with no run on it closes after 30
+    minutes): the shared screen has no run lease, so it would have been closed 30 minutes after set-up whoever was
+    working. Its idle time now counts from its last use; see 1.14. **Ours wins** on "the browser stays while bots
+    use it"; upstream's close still applies 30 minutes after the last use.
+  - Skill curator (1.19): an organization's shared skill reads as source `user`; it is now named to the curator
+    but never offered for a patch (`readOnly` on `VisibleSkill`; `planProposal` answers `read_only`).
+- **Upstream changes checked against fork features:** #6821 (`find_tool` finds apps and paid services; `findTools`
+  is async and takes sources): the pinned core tools (1.7) and the fork's tool labels merged untouched, bridge tests
+  green. #6960 (`sendAsUser`, app-connection follow-up runs): such a run is a `follow_up` of the owner, so lanes,
+  the plan gate and admission apply as for his own message. #6855/#6853/#6835/#6856 (organization skills, plugins,
+  app connections, models): `agent_skills.spaceId`/`userId` are nullable now; every fork reader goes through
+  `listAgentSkillRecords`, and the fork's `bot_skills`, `space_pinned_skills`, curator and learning specs pass on a
+  migrated database. Upstream renamed `mcpServerIn` to `personalOrOrganizationItemIn`; the 1.23 reuse rule still
+  reads the owner's own servers only. #6843, #6963, #6885 (tool-result replay, MCP result budget, one retry of a
+  malformed tool call) are additive. 1.30 (removed bot is not read again): upstream did not touch the batcher or
+  the log line; the local patch stays.
+- **Prompt surface:** 4 tool snapshots regenerated; the only difference is `save_page`'s schema (+640 bytes,
+  upstream #6772 lists a bot's pages). Tool counts unchanged (owner chat 68), `prompts.md` and `vault-fill.md`
+  unchanged, every fork tool and argument intact.
+- **Migrations (9 upstream, none of ours):** `20270102130000_organization_app_connections`,
+  `20270102140000_multiple_organization_app_accounts`, `20270102140000_organization_model_connections`,
+  `20270102140000_organization_vault`, `20270102150000_organization_login_session`,
+  `20270102150000_organization_model_selection`, `20270103120000_organization_skills_plugins`,
+  `20270104120000_page_version_abilities`, `20270104130000_page_apps`. They sort before the fork's
+  `20270105090000_agent_concurrency`. On a copy of the live schema + `_prisma_migrations` (356 rows) `migrate
+  deploy` applied exactly these nine (365 after); a second run had nothing pending.
+- **New upstream env keys:** `PROTECTED_BROWSER_IMAGE`, `PROTECTED_BROWSER_SECCOMP_PROFILE` (API host only, not
+  passed by compose; needed only for an organization's shared sign-in sessions, #6858). No compose anchor change.
+- **Host-computer bundle:** differs from the deployed one (shared contracts and core code only; nothing under
+  `computers/host`); rebuild + restart the unit at deploy.
+- **Gates, numbers, behaviour changes, image id:** stack `SYNC-1128.md`. Rollback = image `main-1128a` + tag
+  `pre-sync-1128`.
 
 ### 2026-11-28 — three fix branches of the 2026-11-28 audit (no upstream change) → `integrate/1128`, image `main-1128a`
 - **Base:** fork `main` `6573e5f6a` (image `main-1126d`, live). Merged, in this order, with real merge commits:
