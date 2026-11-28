@@ -1,15 +1,19 @@
 import { UpdateBotInput } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  backgroundYieldsRunSlot,
   backgroundYieldsSlot,
   botConcurrency,
+  COMMAND_SLOT_BASE,
   CONVERSATIONAL_RUN_TRIGGERS,
+  commandSlotCount,
   compareQueueOrder,
   DEFAULT_BOT_CONCURRENCY,
   effectiveRunPriority,
   MAX_BOT_CONCURRENCY,
   PRIORITY_AGE_BOOST_CAP,
   planLeaseSlot,
+  planRunLeaseSlot,
   priorityAgeBoost,
   runPriority,
   sameThreadWriterBlocks,
@@ -327,5 +331,143 @@ describe("sameThreadWriterBlocks", () => {
         otherRunThreadId: "t1",
       }),
     ).toBe(false);
+  });
+});
+
+describe("command slots (fork 1.40)", () => {
+  const later = new Date(now.getTime() + 60_000);
+  const lease = (slot: number, runId: string, expiresAt = later) => ({ slot, runId, expiresAt });
+  const plan = (
+    need: "commands" | "screen",
+    leases: ReturnType<typeof lease>[],
+    extra: { runId?: string; maxSlots?: number; commandSlots?: number } = {},
+  ) =>
+    planRunLeaseSlot({
+      leases,
+      runId: extra.runId ?? "run-new",
+      maxSlots: extra.maxSlots ?? 1,
+      commandSlots: extra.commandSlots ?? 5,
+      need,
+      now,
+    });
+
+  it("gives each run that only runs commands its own slot beside the others", () => {
+    const leases: ReturnType<typeof lease>[] = [];
+    for (const runId of ["helper-1", "helper-2", "helper-3", "helper-4"]) {
+      const next = plan("commands", leases, { runId });
+      expect(next.kind).toBe("create");
+      if (next.kind !== "busy") leases.push(lease(next.slot, runId));
+    }
+    expect(leases.map(({ slot }) => slot)).toEqual([
+      COMMAND_SLOT_BASE,
+      COMMAND_SLOT_BASE + 1,
+      COMMAND_SLOT_BASE + 2,
+      COMMAND_SLOT_BASE + 3,
+    ]);
+  });
+
+  it("leaves the screen slot free for the run that needs the screen", () => {
+    const leases = [lease(COMMAND_SLOT_BASE, "helper-1"), lease(COMMAND_SLOT_BASE + 1, "helper-2")];
+    expect(plan("screen", leases)).toEqual({ kind: "create", slot: 0 });
+  });
+
+  it("still serialises the screen: one run at a time on the default concurrency", () => {
+    expect(plan("screen", [lease(0, "run-screen")])).toEqual({ kind: "busy" });
+    // A command slot the run holds does not answer its request for the screen.
+    expect(plan("screen", [lease(0, "run-screen"), lease(COMMAND_SLOT_BASE, "run-new")])).toEqual({
+      kind: "busy",
+    });
+    expect(plan("screen", [lease(COMMAND_SLOT_BASE, "run-new")])).toEqual({
+      kind: "create",
+      slot: 0,
+    });
+    expect(
+      plan("screen", [lease(0, "gone", minutesAgo(1)), lease(COMMAND_SLOT_BASE, "run-new")]),
+    ).toEqual({ kind: "reclaim", slot: 0 });
+  });
+
+  it("lets commands run beside a run that holds the screen", () => {
+    expect(plan("commands", [lease(0, "run-screen")])).toEqual({
+      kind: "create",
+      slot: COMMAND_SLOT_BASE,
+    });
+  });
+
+  it("bounds the runs that use the computer at once, screen holders included", () => {
+    const full = [
+      lease(0, "run-screen"),
+      lease(COMMAND_SLOT_BASE, "h1"),
+      lease(COMMAND_SLOT_BASE + 1, "h2"),
+    ];
+    expect(plan("commands", full, { commandSlots: 3 })).toEqual({ kind: "busy" });
+    expect(plan("commands", full, { commandSlots: 4 })).toEqual({
+      kind: "create",
+      slot: COMMAND_SLOT_BASE + 2,
+    });
+    // A slot whose run ended is taken again, so the rows never outgrow the bound.
+    const ended = [
+      lease(COMMAND_SLOT_BASE, "h1", minutesAgo(1)),
+      lease(COMMAND_SLOT_BASE + 1, "h2"),
+    ];
+    expect(plan("commands", ended, { commandSlots: 2 })).toEqual({
+      kind: "reclaim",
+      slot: COMMAND_SLOT_BASE,
+    });
+  });
+
+  it("keeps the slot a run holds", () => {
+    expect(plan("commands", [lease(COMMAND_SLOT_BASE + 2, "run-new")])).toEqual({
+      kind: "reclaim",
+      slot: COMMAND_SLOT_BASE + 2,
+    });
+    // A run on a screen slot runs its commands there too.
+    expect(plan("commands", [lease(0, "run-new")])).toEqual({ kind: "reclaim", slot: 0 });
+    expect(plan("screen", [lease(0, "run-new"), lease(COMMAND_SLOT_BASE, "run-new")])).toEqual({
+      kind: "reclaim",
+      slot: 0,
+    });
+  });
+
+  it.each([1, 0, -3, Number.NaN, undefined])(
+    "is the old one-lease rule when the setting is %s",
+    (commandSlots) => {
+      const leases = [lease(0, "run-screen")];
+      const input = { leases, runId: "run-new", maxSlots: 1, commandSlots, now };
+      expect(planRunLeaseSlot({ ...input, need: "commands" })).toEqual({ kind: "busy" });
+      expect(planRunLeaseSlot({ ...input, need: "commands", leases: [] })).toEqual({
+        kind: "create",
+        slot: 0,
+      });
+      expect(planRunLeaseSlot({ ...input, need: "commands", maxSlots: 2 })).toEqual(
+        planLeaseSlot({ leases, runId: "run-new", maxSlots: 2, now }),
+      );
+    },
+  );
+
+  it("keeps the setting whole and bounded", () => {
+    expect(commandSlotCount(5)).toBe(5);
+    expect(commandSlotCount(2.9)).toBe(2);
+    expect(commandSlotCount(99)).toBe(16);
+    expect(commandSlotCount(0)).toBe(1);
+  });
+
+  it("makes background commands yield only when people need the slots that are left", () => {
+    const yields = (leases: ReturnType<typeof lease>[], waitingPeople: number, need = "commands") =>
+      backgroundYieldsRunSlot({
+        leases,
+        runId: "run-new",
+        maxSlots: 1,
+        commandSlots: 3,
+        need: need as "commands" | "screen",
+        waitingPeople,
+        now,
+      });
+    expect(yields([], 1)).toBe(false);
+    expect(yields([lease(COMMAND_SLOT_BASE, "h1")], 1)).toBe(false);
+    expect(yields([lease(COMMAND_SLOT_BASE, "h1"), lease(0, "s")], 1)).toBe(true);
+    expect(yields([lease(COMMAND_SLOT_BASE, "h1"), lease(0, "s")], 0)).toBe(false);
+    // Wanting the screen is upstream's rule on the screen slots, whatever the command slots hold.
+    expect(yields([lease(COMMAND_SLOT_BASE, "h1")], 1, "screen")).toBe(true);
+    expect(yields([], 0, "screen")).toBe(false);
   });
 });

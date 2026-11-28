@@ -1516,6 +1516,82 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   visible to the asker, it does not keep the work alive.
 - **Conflicts:** upstream extending its own outcome query to plain cancels (then drop this file).
 
+### 1.40 Runs of one agent run commands on its computer at the same time (`COMPUTER_COMMAND_SLOTS`) (live test 1128a, L4)
+- **What was seen:** six helpers of one agent each ran `sleep 25`; the calls took 34 to 200 s each and 4 min 11 s
+  together. Earlier the same day (before 1.36) another agent's four helpers show first shell calls of 8 s, 179 s,
+  375 s and 545 s in the audit store; every later call of the same helper took 50 to 230 ms. So only a run's FIRST
+  use of the computer waited, and it waited until the run before it had ENDED, not until its command had.
+- **Cause (older than 1.36, and deliberate upstream):** the computer execution lease. A run takes it on its first
+  computer use (`prepareRunComputer` → `waitForRunComputerLease`, `runs/assembly/run-assembly-capabilities.ts`) and
+  holds it to the end of the run (`finishRunAttempt`). `acquireComputerExecutionLease`
+  (`computers/computer-lifecycle.ts`) gives one bot `bots.concurrency` slots (1.2), default 1, and every bot on bee has
+  1: one run of a bot on its computer at a time, whatever the run does there. Upstream's test names the purpose:
+  "serializes one bot's screen". The host computer runner, the shell tool and `COMPUTER_WRITES_IN_ORDER` (1.36,
+  order inside ONE step of ONE run) do not queue anything across runs.
+- **What the lease protects, and what it does not:** the bot's screen (one browser profile, one desktop, one fence
+  that the sandbox checks on the browser / observe / actions / screen / terminal / input routes), one writer per
+  conversation, and a computer reset, update or person's control having the computer to itself. Commands and file
+  tools use none of that: the sandbox's exec and files routes take no screen lease, the host runner starts one
+  process per command (up to 16 requests at once for the whole computer), stopping a run's work is by run id, and
+  thirteen bots already run commands side by side on bee's one Team Computer. Two runs of one agent in one folder are
+  two terminals of one co-worker.
+- **Rule (pure, `planRunLeaseSlot` in `packages/core/src/runs/agent-concurrency.ts`):** a run whose computer use is a
+  command or a file (`shell`, `read_file`, `write_file`, `list_files`, `attach_file`, `render_plot`:
+  `computerNeedFor`, fork file `computers/command-slots.ts`) takes a **command slot**: a lease row in slots
+  `COMMAND_SLOT_BASE` (100) and up, beside the bot's other runs, while fewer than `COMPUTER_COMMAND_SLOTS` runs of
+  the bot hold a live lease (screen holders count). Screen slots stay `0 .. concurrency-1` with every rule they had.
+  Anything else (screen and browser tools, opening an app, a takeover, the end-of-run script, a caller that names no
+  tool) asks for the screen: unknown means the old exclusive rule. A run on a command slot that then needs the screen
+  waits for a screen slot like any run (`createRunComputerLease.ensure`), takes it, and only then gives its command
+  slot back (`releaseCommandSlots`); the heartbeat renews whichever lease the run holds at that moment
+  (`renewHeldComputerLease`), so the change is never read as a lost lease.
+  **Kept:** one writer per conversation (a `helper_result` run and the person's run in the agent's own chat still
+  take turns; helpers have chats of their own, so they do not); an operation that is not a run (reset, update,
+  person's control, teaching) is refused while any command slot of the bot is live, as it was while the one lease
+  was; background work that wants the SCREEN yields to a waiting person as upstream; background work that wants
+  commands yields only when the slots left are no more than the people waiting; a dedicated (private) computer is
+  unchanged, one run at a time. Order inside one step of one run is 1.36, untouched.
+  Runs that ask at the same moment lose only a row lock to each other, so a wait for a command slot retries after
+  40 to 120 ms six times before upstream's 250 ms to 5 s backoff.
+- **Seams in upstream files:** `computer-lifecycle.ts` (`acquireComputerExecutionLease`: `use`, `commandSlots`, the
+  not-a-run refusal, `planRunLeaseSlot` / `backgroundYieldsRunSlot` where `planLeaseSlot` / `backgroundYieldsSlot`
+  were called; `lockOwnedRun`: which slots count as "has its turn"; `waitForRunComputerLease`: two inputs and the
+  retry interval; `releaseCommandSlots`), `run-assembly-capabilities.ts` (`prepareRunComputer`: the lease is taken
+  through `createRunComputerLease`, `getRunComputer` names the need), `runs/lifecycle/run-attempt.ts` (the heartbeat's
+  renew call), `apps/api/src/computers/computer-control.ts` (`computerScreenContext` reads a screen slot's lease
+  only). `planLeaseSlot` and `backgroundYieldsSlot` are unchanged and still decide the screen slots.
+- **Env (all three compose files):** `COMPUTER_COMMAND_SLOTS` = runs of one agent that may use its computer at once.
+  Default 5 (four helpers, `MAX_PARALLEL_SUBAGENTS`, and the agent's own run), at most 16; `1`, `0` or `off` = one
+  run at a time, exactly as before. **Migration:** none (`slot` has no range constraint). **Prompt:** none.
+- **Host computer bundle: NOT changed** (nothing under `computers/host`, `computer-support.ts` or the desktop
+  provider). api, worker and supervisor take it with the app image.
+- **Logs:** `computer.requested` gains `lease.slot` (>= 100 = command slot); `computer.screen_slot_taken`
+  (`lease.slot`, `lease.waited_ms`) when a run changes its command slot for a screen slot.
+- **Tests:** `core/src/runs/agent-concurrency.test.ts` ("command slots (fork 1.40)", 14),
+  `computers/command-slots.test.ts` (28: tool table, setting, first need, change of slot shared by calls of one
+  step, heartbeat during the change), `computers/command-slots.postgres.test.ts` (7, real
+  `waitForRunComputerLease`: five runs' 600 ms commands overlap and end in under 1 s where the setting 1 runs three
+  300 ms commands one after another in 5.9 s; one more run waits for a freed slot; the screen stays one at a time
+  while commands run beside it and the change of slot; one writer per conversation; reset refused; person's turn),
+  journey `13g-3` (real executor: two helpers' commands are in flight together and hold slots 100 and 101; the
+  scripted runtime gained the helper phrase "run the shell command …"). Mutations caught: the setting at 1 and the
+  need forced to "screen" fail `13g-3`; the screen need ignored fails 2 core cases; the not-a-run refusal removed
+  fails its postgres case.
+- **Live check:** a throwaway agent asked for six pieces "each by its own separate worker", each `sleep 25` then a
+  file: the six `agent.tool.completed tool=shell` lines of the first wave carry `tool.duration_ms` near 25 000 and
+  end within a few seconds of each other; `select slot, "runId", "expiresAt" > now() from computer_execution_leases
+  where "botId" = …` shows slots 100 and up while they work; `computer.requested` lines carry `lease.slot`.
+  Then one agent run that calls `computer_observe` while a helper of it runs a long command: it does not wait for
+  the helper. Kill switch: `COMPUTER_COMMAND_SLOTS=1` in `.env` + recreate api and worker.
+- **Not covered / risks:** a dedicated computer (one row per bot, `acquireDedicatedScreenLeaseFence`) stays one run
+  at a time. A command that itself drives the display (`xdotool`, a GUI program) is not held back by the screen
+  lease; it was not before either across bots. The host runner refuses a request when 16 are in flight on the whole
+  computer; with many agents each at five that bound is nearer than it was. Two runs of one agent that write the
+  same file race like two people would.
+- **Conflicts:** upstream edits around the lease plan in `acquireComputerExecutionLease` and the `lazyRunComputer`
+  callback in `prepareRunComputer`; an upstream test that reads the run's lease by slot 0 after a `shell` call needs
+  the screen first or `COMPUTER_COMMAND_SLOTS=1`.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

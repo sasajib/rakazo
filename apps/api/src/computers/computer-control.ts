@@ -22,7 +22,7 @@ import {
   screenLeaseIdForRun,
 } from "@rakazo/adapters";
 import type { Actor, ComputerStatus } from "@rakazo/contracts";
-import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
+import { ACTIVE_RUN_STATUSES, COMMAND_SLOT_BASE } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { createRepos, IsolationError, recordComputerRunEnd, spaceIsShared } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -309,7 +309,9 @@ export async function computerScreenContext(
 ): Promise<AdapterContext> {
   const context = computerContext(actor, botId, operationId);
   const lease = await prisma.computerExecutionLease.findFirst({
-    where: { computerId, botId },
+    // Fork (1.40): only a screen slot's lease speaks for the screen; a command slot's fence is
+    // its own row's and would be refused as older than the screen's.
+    where: { computerId, botId, slot: { lt: COMMAND_SLOT_BASE } },
     orderBy: { expiresAt: "desc" },
     select: { runId: true, fence: true, expiresAt: true },
   });

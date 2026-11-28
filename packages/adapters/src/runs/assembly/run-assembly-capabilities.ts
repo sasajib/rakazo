@@ -19,10 +19,17 @@ import { createApprovedEffectReplayQueue } from "../../approvals/approval-effect
 import { appendOutsideText, taskPromptIsOutside } from "../../approvals/review-target-sources.js";
 import { loadGroupContext } from "../../bots/group-handoff.js";
 import { USER_CLOUD_AGENT_KEY_PREFIX } from "../../cloud-agents/cloud-agent-factory.js";
+import {
+  computerCommandSlots,
+  computerNeedFor,
+  createRunComputerLease,
+} from "../../computers/command-slots.js";
 import { diskNoteInstruction, recordComputerDisk } from "../../computers/computer-disk.js";
 import { scheduleComputerSleep } from "../../computers/computer-idle.js";
+import type { ComputerExecutionLease } from "../../computers/computer-lifecycle.js";
 import {
   provisionComputer,
+  releaseCommandSlots,
   screenLeaseIdForRun,
   waitForRunComputerLease,
 } from "../../computers/computer-lifecycle.js";
@@ -271,25 +278,42 @@ export async function prepareRunComputer(
   };
   // Files from earlier messages that history tools surfaced this run.
   const earlierFiles = createEarlierFileQueue();
+  // Fork (1.40 command slots): a run whose computer use is commands and files takes a command
+  // slot beside the bot's other runs; the screen keeps its one-run-at-a-time lease.
+  const runLease = createRunComputerLease<ComputerExecutionLease>({
+    current: () => hold.computerLease,
+    acquire: (need) =>
+      waitForRunComputerLease(
+        deps.prisma,
+        {
+          computerId: storedComputer.id,
+          botId: bot.id,
+          runId,
+          threadId: run.threadId,
+          maxSlots: bot.concurrency,
+          use: need,
+          commandSlots: computerCommandSlots(),
+          workerId: hold.workerId,
+          runFence: hold.fence,
+        },
+        context.signal,
+      ),
+    hold: (lease) => {
+      hold.computerLease = lease;
+      context.screenLeaseId = screenLeaseIdForRun(lease, runId, hold.fence);
+    },
+    releaseCommandSlots: (kept) => releaseCommandSlots(deps.prisma, kept),
+    onScreenSlot: (lease, waitedMs) =>
+      getLogger().info("computer.screen_slot_taken", {
+        "run.id": runId,
+        "lease.slot": lease.slot,
+        "lease.waited_ms": waitedMs,
+      }),
+  });
   const runComputer = lazyRunComputer(
     async () => {
-      if (!hold.computerLease) {
-        hold.computerLease = await waitForRunComputerLease(
-          deps.prisma,
-          {
-            computerId: storedComputer.id,
-            botId: bot.id,
-            runId,
-            threadId: run.threadId,
-            maxSlots: bot.concurrency,
-            workerId: hold.workerId,
-            runFence: hold.fence,
-          },
-          context.signal,
-        );
-        context.screenLeaseId = screenLeaseIdForRun(hold.computerLease, runId, hold.fence);
-      }
-      getLogger().info("computer.requested");
+      await runLease.take();
+      getLogger().info("computer.requested", { "lease.slot": hold.computerLease?.slot });
       const computer = await provisionComputer(deps, storedComputer.id, context, "bot");
       earlierFiles.computerStarted();
       computerUse.screenRelease = { computer, context, keepWarm: false };
@@ -334,7 +358,10 @@ export async function prepareRunComputer(
         "computer.id": storedComputer.id,
       },
       async () => {
+        const need = computerNeedFor(reason, tool);
+        runLease.request(need);
         const computer = await runComputer.get();
+        await runLease.ensure(need);
         copyingTurnFiles = copyingTurnFiles
           .catch(() => undefined)
           .then(async () => {

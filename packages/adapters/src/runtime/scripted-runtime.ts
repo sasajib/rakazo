@@ -164,8 +164,11 @@ export function inferScript(
     const task = prompt.split("Task from the bot (not from the user):\n").at(-1) ?? prompt;
     const url = /\bfetch (https?:\/\/\S+)/i.exec(task)?.[1];
     const write = /\bcrm\b/i.test(task);
+    // Fork (1.40 journey): a helper that runs a command on the bot's computer.
+    const command = /\brun the shell command\s+(.+)$/im.exec(task)?.[1]?.trim();
     return [
       ...(url ? [{ toolCalls: [{ name: "web_fetch", args: { url } }] }] : []),
+      ...(command ? [{ toolCalls: [{ name: "shell", args: { command } }] }] : []),
       ...(write
         ? [
             {

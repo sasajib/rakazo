@@ -170,6 +170,105 @@ export function planLeaseSlot(input: {
 }
 
 /**
+ * Fork (FORK.md 1.40): command slots.
+ *
+ * The execution lease serialises a bot's SCREEN: one browser profile, one desktop, one fence. It
+ * was also the only way onto the computer at all, so a run that only ran commands or read files
+ * waited for every other run of its bot to END (the lease is held from first use to the end of a
+ * run). Four helpers of one bot therefore worked one after another.
+ *
+ * Commands and file tools do not use the screen (the sandbox routes for them take no screen
+ * lease), so a run whose computer use is commands only takes a command slot: a lease row in a
+ * slot range of its own. Screen slots stay `0 .. concurrency-1` and keep every rule they had;
+ * command slots are `COMMAND_SLOT_BASE ..`. A run that later needs the screen takes a screen
+ * slot the old way and then gives its command slot back.
+ */
+export const COMMAND_SLOT_BASE = 100;
+/** Runs of one bot that may use its computer at once: four helpers and the bot's own run. */
+export const DEFAULT_COMMAND_SLOTS = 5;
+export const MAX_COMMAND_SLOTS = 16;
+
+/** What a run wants from its bot's computer: commands and files only, or everything. */
+export type ComputerNeed = "commands" | "screen";
+
+export function isCommandSlot(slot: number): boolean {
+  return slot >= COMMAND_SLOT_BASE;
+}
+
+/** A configured number of command slots, made safe. One (or less) means none: upstream's rule. */
+export function commandSlotCount(configured: number | null | undefined): number {
+  if (configured == null || !Number.isFinite(configured)) return 1;
+  return Math.min(MAX_COMMAND_SLOTS, Math.max(1, Math.trunc(configured)));
+}
+
+type RunLeaseInput = {
+  leases: readonly LeaseSlotView[];
+  runId: string;
+  /** Screen slots: the bot's concurrency. */
+  maxSlots: number;
+  /** Runs of the bot that may use the computer at once, screen holders included. */
+  commandSlots: number | null | undefined;
+  need: ComputerNeed;
+  now: Date;
+};
+
+/**
+ * Which slot a run takes for what it needs. With `commandSlots` of one, or for a run that needs
+ * the screen, this is {@link planLeaseSlot} over the screen slots: nothing changes. A run that
+ * needs commands only takes a free command slot while fewer than `commandSlots` other runs of
+ * the bot hold a live lease. A run keeps a screen slot it holds, whatever it asks for next; a
+ * command slot it holds does not answer a request for the screen.
+ */
+export function planRunLeaseSlot(input: RunLeaseInput): LeaseSlotPlan {
+  const screenLeases = input.leases.filter((lease) => !isCommandSlot(lease.slot));
+  const ownScreen = screenLeases.find((lease) => lease.runId === input.runId);
+  if (ownScreen) return { kind: "reclaim", slot: ownScreen.slot };
+  const total = commandSlotCount(input.commandSlots);
+  if (input.need === "screen" || total <= 1) {
+    return planLeaseSlot({
+      leases: screenLeases,
+      runId: input.runId,
+      maxSlots: input.maxSlots,
+      now: input.now,
+    });
+  }
+  const ownCommand = input.leases.find((lease) => lease.runId === input.runId);
+  if (ownCommand) return { kind: "reclaim", slot: ownCommand.slot };
+  const live = (lease: LeaseSlotView) => lease.expiresAt.getTime() > input.now.getTime();
+  if (input.leases.filter(live).length >= total) return { kind: "busy" };
+  const bySlot = new Map(input.leases.map((lease) => [lease.slot, lease]));
+  for (let slot = COMMAND_SLOT_BASE; slot < COMMAND_SLOT_BASE + total; slot += 1) {
+    const existing = bySlot.get(slot);
+    if (!existing) return { kind: "create", slot };
+    if (!live(existing)) return { kind: "reclaim", slot };
+  }
+  return { kind: "busy" };
+}
+
+/**
+ * {@link backgroundYieldsSlot} for either need. Background work that wants the screen yields the
+ * screen slots as before. Background work that wants commands only yields when the command
+ * slots left are no more than the people waiting for the computer.
+ */
+export function backgroundYieldsRunSlot(input: RunLeaseInput & { waitingPeople: number }): boolean {
+  const total = commandSlotCount(input.commandSlots);
+  if (input.need === "screen" || total <= 1) {
+    return backgroundYieldsSlot({
+      leases: input.leases.filter((lease) => !isCommandSlot(lease.slot)),
+      runId: input.runId,
+      maxSlots: input.maxSlots,
+      waitingPeople: input.waitingPeople,
+      now: input.now,
+    });
+  }
+  if (input.waitingPeople <= 0) return false;
+  const held = input.leases.filter(
+    (lease) => lease.runId !== input.runId && lease.expiresAt.getTime() > input.now.getTime(),
+  ).length;
+  return Math.max(0, total - held) <= input.waitingPeople;
+}
+
+/**
  * Whether a run may start in a thread another run of the same bot is still writing.
  *
  * One writer per (thread, bot) is what keeps a conversation, its history and its pi session

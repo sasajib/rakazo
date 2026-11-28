@@ -17,15 +17,18 @@ import {
 } from "@rakazo/adapter-kit";
 import type { ComputerSize, ComputerUpdate } from "@rakazo/contracts";
 import { COMPUTER_RECOVERY_REQUIRED_ERROR } from "@rakazo/contracts";
+import type { ComputerNeed } from "@rakazo/core";
 import {
   ACTIVE_RUN_STATUSES,
   abortableDelay,
-  backgroundYieldsSlot,
+  backgroundYieldsRunSlot,
   ClientError,
+  COMMAND_SLOT_BASE,
   computerUsingRuns,
+  isCommandSlot,
   isRetryableError,
   PERSON_RUN_TRIGGERS,
-  planLeaseSlot,
+  planRunLeaseSlot,
   pollUntil,
   QUEUE_HOLDING_RUN_STATUSES,
 } from "@rakazo/core";
@@ -72,6 +75,8 @@ type ComputerUpdateProgress = (
 ) => Promise<void>;
 
 export const EXECUTION_LEASE_MS = 5 * 60_000;
+/** Fork (1.40): quick retries of a wait for a command slot, one per run that may hold one. */
+const COMMAND_SLOT_QUICK_RETRIES = 6;
 const BOOT_WAIT_ATTEMPTS = 40;
 const BOOT_WAIT_MS = 250;
 const SUSPEND_WAIT_MS = 500;
@@ -1003,7 +1008,11 @@ async function lockOwnedRun(
   // Fork (1.2 execution slots): a bot with several slots yields only the slots the waiting people
   // need. The caller that knows the slots passes "count" and decides; everyone else yields at once.
   yieldTo: "any" | "count" = "any",
+  // Fork (1.40 command slots): a lease in a command slot is not a hold on the screen, so for a
+  // request for the screen only screen slots count as "has its turn already".
+  need: ComputerNeed = "commands",
 ): Promise<number> {
+  const slotsBelow = need === "screen" ? COMMAND_SLOT_BASE : 2_147_483_647;
   const now = new Date();
   const people = [...PERSON_RUN_TRIGGERS];
   // Background work leaves a free computer to a person's run waiting for it, but keeps one it
@@ -1016,6 +1025,7 @@ async function lockOwnedRun(
         WHERE "computerId" = ${input.computerId}
           AND "botId" = ${input.botId}
           AND "runId" = ${input.runId}
+          AND slot < ${slotsBelow}
           AND "expiresAt" > ${now})
       THEN (
         SELECT count(*)::int FROM runs waiting
@@ -1029,6 +1039,7 @@ async function lockOwnedRun(
             SELECT 1 FROM computer_execution_leases
             WHERE "computerId" = ${input.computerId}
               AND "botId" = ${input.botId}
+              AND slot < ${slotsBelow}
               AND "runId" = waiting.id))
       ELSE 0 END
     ) AS "waitingPeople"
@@ -1056,6 +1067,13 @@ export async function acquireComputerExecutionLease(
     threadId?: string;
     /** Execution slots the bot may use at once. Omitted means the product default, one. */
     maxSlots?: number;
+    /**
+     * Fork (1.40): what the run needs. "commands" may take a command slot beside the bot's other
+     * runs; omitted means the screen, which is every rule this lease had before.
+     */
+    use?: ComputerNeed;
+    /** Runs of the bot that may use the computer at once. Omitted or one: no command slots. */
+    commandSlots?: number;
   } & ({ workerId: string; runFence: number } | { workerId?: never; runFence?: never }),
 ): Promise<ComputerExecutionLease | null> {
   const computer = await prisma.computer.findUniqueOrThrow({ where: { id: input.computerId } });
@@ -1066,6 +1084,7 @@ export async function acquireComputerExecutionLease(
   // checkpoint. API operations have no executing run that could, so they are refused until it ends.
   const ownsRun = input.workerId !== undefined;
   if (!ownsRun && isLiveSuspending(computer)) throw new ComputerBusyError();
+  const need: ComputerNeed = input.use ?? "screen";
   return withTransactionRetry(() =>
     prisma.$transaction(async (tx) => {
       // Only the locked current worker claim may reclaim a live same-run lease.
@@ -1079,7 +1098,7 @@ export async function acquireComputerExecutionLease(
           AND "computerId" = ${input.computerId} AND "computerSwitching" = false
         FOR UPDATE SKIP LOCKED`;
         if (assigned.length !== 1) throw new ComputerBusyError();
-        waitingPeople = await lockOwnedRun(tx, input, "count");
+        waitingPeople = await lockOwnedRun(tx, input, "count", need);
         await tx.run.update({
           where: { id: input.runId },
           data: { computerUseStartedAt: new Date() },
@@ -1120,23 +1139,31 @@ export async function acquireComputerExecutionLease(
       // people need and may take one beyond that. With one slot (the default) this is upstream's
       // rule exactly: it yields. With several, a person held back by the one-writer rule above
       // does not freeze the bot's other conversations and lanes.
+      // Fork (1.40): an operation that is not a run (reset, update, a person's control, teaching)
+      // wants the computer to itself, as it had it when one lease was the only way onto it.
       if (
-        backgroundYieldsSlot({
-          leases,
-          runId: input.runId,
-          maxSlots: input.maxSlots ?? 1,
-          waitingPeople,
-          now,
-        })
+        !ownsRun &&
+        leases.some(
+          (lease) =>
+            isCommandSlot(lease.slot) &&
+            lease.runId !== input.runId &&
+            lease.expiresAt.getTime() > now.getTime(),
+        )
       ) {
         throw new ComputerBusyError();
       }
-      const plan = planLeaseSlot({
+      const slotInput = {
         leases,
         runId: input.runId,
         maxSlots: input.maxSlots ?? 1,
+        commandSlots: input.commandSlots,
+        need,
         now,
-      });
+      };
+      if (backgroundYieldsRunSlot({ ...slotInput, waitingPeople })) {
+        throw new ComputerBusyError();
+      }
+      const plan = planRunLeaseSlot(slotInput);
       if (plan.kind === "busy") throw new ComputerBusyError();
       if (plan.kind === "reclaim") {
         const [reclaimed] = await tx.computerExecutionLease.updateManyAndReturn({
@@ -1228,6 +1255,9 @@ export async function waitForRunComputerLease(
     threadId?: string;
     /** Execution slots the bot may use at once. */
     maxSlots?: number;
+    /** Fork (1.40): see acquireComputerExecutionLease. */
+    use?: ComputerNeed;
+    commandSlots?: number;
   },
   signal: AbortSignal,
 ): Promise<ComputerExecutionLease | null> {
@@ -1265,7 +1295,12 @@ export async function waitForRunComputerLease(
       }
     },
     {
-      intervalMs: (attempt) => Math.min(250 * 2 ** Math.min(attempt - 1, 5), 5_000),
+      intervalMs: (attempt) =>
+        // Fork (1.40): runs that ask for command slots at the same moment lose only the row
+        // lock to each other, not the computer, so the first retries come quickly and apart.
+        input.use === "commands" && attempt <= COMMAND_SLOT_QUICK_RETRIES
+          ? 40 + Math.floor(Math.random() * 80)
+          : Math.min(250 * 2 ** Math.min(attempt - 1, 5), 5_000),
       timeoutMs: Number.POSITIVE_INFINITY,
       signal,
       waitingFor: "the bot's computer",
@@ -1327,6 +1362,23 @@ export async function releaseComputerExecutionLease(
     botId: lease.botId,
     runId: lease.runId,
     fence: lease.fence,
+  });
+}
+
+/**
+ * Fork (1.40): a run that took a screen slot gives back the command slot it held before. Its
+ * other lease rows are left alone. Expired as a tombstone, like every release.
+ */
+export async function releaseCommandSlots(
+  prisma: PrismaClient,
+  kept: ComputerExecutionLease | null,
+): Promise<void> {
+  if (!kept) return;
+  await expireComputerExecutionLeases(prisma, {
+    computerId: kept.computerId,
+    botId: kept.botId,
+    runId: kept.runId,
+    slot: { gte: COMMAND_SLOT_BASE },
   });
 }
 

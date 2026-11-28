@@ -144,7 +144,11 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             # one finished notification for a continued job (1.33): held for a continuation run, sent
             # when the chain ends, dropped when the job goes on or the stalled notice went out
             ("holdsFinishNotice(", 2), ("settleFinishNotice(", 1), ("holdFinishNotice", 2),
-            ("run.finish_notice_held", 1)]
+            ("run.finish_notice_held", 1),
+            # command slots (1.40): runs of one agent run commands on its computer at the same time;
+            # the screen keeps its one-run lease
+            ("planRunLeaseSlot(", 3), ("createRunComputerLease", 3), ("releaseCommandSlots(", 3),
+            ("renewHeldComputerLease(", 2), ("COMPUTER_COMMAND_SLOTS", 2), ("COMMAND_SLOT_BASE", 5)]
 results = []
 
 

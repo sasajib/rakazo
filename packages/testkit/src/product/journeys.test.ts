@@ -25,6 +25,7 @@ import type { MessageBlock, ThreadSnapshot } from "@rakazo/contracts";
 import {
   ACTIVE_RUN_STATUSES,
   answerableAskMessageIds,
+  COMMAND_SLOT_BASE,
   ONCE_ROUTINE_CRON,
   settleRunSubagents,
   stuckWorkStatusMessages,
@@ -2647,6 +2648,54 @@ describeJourneys("required product journeys", () => {
       ).map((row) => row.status),
     ).toEqual(["cancelled"]);
     expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper" } })).toBe(4);
+  });
+
+  // Fork (FORK.md 1.40): through the real executor. Before, the second helper's command started
+  // only after the first helper's run had ended (one computer lease per bot).
+  it("13g-3: two helpers of one bot run their commands at the same time", async () => {
+    const { cookie, bot } = await newChief("Command Slots");
+    let inFlight = 0;
+    let most = 0;
+    const original = sandbox.execute.bind(sandbox);
+    const spy = vi
+      .spyOn(sandbox, "execute")
+      .mockImplementation(async function* (computer, request, context) {
+        const slow = request.argv.join(" ").includes("zz-slow");
+        if (slow) {
+          inFlight += 1;
+          most = Math.max(most, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+        }
+        try {
+          yield* original(computer, request, context);
+        } finally {
+          if (slow) inFlight -= 1;
+        }
+      });
+    try {
+      await startHelper(cookie, bot.id, "run the shell command echo zz-slow-1");
+      await startHelper(cookie, bot.id, "run the shell command echo zz-slow-2");
+      await waitForDatabase(
+        async () =>
+          (await prisma.run.count({
+            where: { botId: bot.id, trigger: "helper", status: "completed" },
+          })) === 2,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(most).toBe(2);
+    const helpers = await prisma.run.findMany({
+      where: { botId: bot.id, trigger: "helper" },
+      select: { id: true },
+    });
+    const slots = await prisma.computerExecutionLease.findMany({
+      where: { botId: bot.id, runId: { in: helpers.map(({ id }) => id) } },
+      select: { slot: true },
+      orderBy: { slot: "asc" },
+    });
+    // Each took a command slot of its own; neither needed the screen slot (0).
+    expect(slots.map(({ slot }) => slot)).toEqual([COMMAND_SLOT_BASE, COMMAND_SLOT_BASE + 1]);
   });
 
   // Fork (FORK.md 1.33, A3/A4): the whole path through the executor. The scripted runtime keeps no

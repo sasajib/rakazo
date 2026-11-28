@@ -14,6 +14,7 @@ import {
   settleReleasedTakeoverCards,
 } from "@rakazo/db";
 import { bestEffort, enrichLogContext, getLogger } from "@rakazo/logging";
+import { renewHeldComputerLease } from "../../computers/command-slots.js";
 import type { ComputerExecutionLease } from "../../computers/computer-lifecycle.js";
 import {
   acquireComputerExecutionLease,
@@ -336,7 +337,8 @@ export function holdRun(baseDeps: ExecutorDeps, claim: RunClaim): RunHold {
     if (lease.completed) return;
     void Promise.all([
       renewRunLease(deps, runId, workerId, fence),
-      renewComputerExecutionLease(deps.prisma, hold.computerLease),
+      // Fork (1.40): the run may change its command slot for a screen slot between beats.
+      renewHeldComputerLease(hold, (held) => renewComputerExecutionLease(deps.prisma, held)),
     ])
       .then(([runRenewed, computerRenewed]) => {
         if (lease.completed) return;
