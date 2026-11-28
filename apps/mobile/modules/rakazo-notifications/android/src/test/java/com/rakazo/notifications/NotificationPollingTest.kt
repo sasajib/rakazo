@@ -333,6 +333,171 @@ class NotificationPollingTest {
     assertEquals(8_000L, cadence.delayMs(90_000, true, 0))
   }
 
+
+  // Fork (1.41): an old completion is never posted again, however the recent page moves.
+
+  @Test
+  fun `a run that leaves a page of more than 20 chats and comes back is not posted again`() {
+    val seen = linkedSetOf<String>()
+    val posted = mutableListOf<String>()
+    val completions = PollCompletions(seen)
+    val old = (1..20).map { run("old-$it").copy(botId = "bot-$it", threadId = "thread-$it") }
+    completions.page(old, seeded = false)
+    // 20 newer chats (agents created for a test) push every old chat off the page ...
+    val newer = (1..20).map { run("new-$it").copy(botId = "test-$it", threadId = "test-thread-$it") }
+    completions.page(newer).forEach { completions.complete(it, { false }) { posted += it.runId } }
+    assertEquals(newer.map { it.runId }.reversed(), posted)
+    // ... the test agents are removed, and the old chats are the page again.
+    posted.clear()
+    completions.page(old).forEach { completions.complete(it, { false }) { posted += it.runId } }
+    assertEquals(emptyList<String>(), posted)
+    assertTrue(old.all { it.runId in seen })
+  }
+
+  @Test
+  fun `a deleted newer run does not bring the chat's old reply back`() {
+    val seen = linkedSetOf<String>()
+    val marks = linkedMapOf<String, Long>()
+    val completions = PollCompletions(seen, marks)
+    val old = run("old").copy(updatedAtMs = 1_000)
+    completions.page(listOf(old), seeded = false)
+    val newer = run("newer").copy(updatedAtMs = 2_000)
+    var posts = 0
+    completions.page(listOf(newer)).forEach { completions.complete(it, { false }) { posts++ } }
+    assertEquals(1, posts)
+    assertTrue(completions.page(listOf(old)).isEmpty())
+    // Even with the id gone from the bounded seen set, the chat's watermark keeps it out.
+    val forgetful = PollCompletions(linkedSetOf(), linkedMapOf<String, Long>().apply { putAll(marks) })
+    assertTrue(forgetful.page(listOf(old)).isEmpty())
+    // A different, older run of the same chat that the device never saw is not news either.
+    assertTrue(forgetful.page(listOf(run("older").copy(updatedAtMs = 1_500))).isEmpty())
+  }
+
+  @Test
+  fun `a removed chat leaves the other chats alone and its replies are not posted again`() {
+    val seen = linkedSetOf<String>()
+    val completions = PollCompletions(seen, linkedMapOf())
+    val kept = run("kept").copy(botId = "kept-bot", threadId = "kept-thread", updatedAtMs = 1_000)
+    val removed = run("removed").copy(botId = "removed-bot", threadId = "removed-thread", updatedAtMs = 2_000)
+    completions.page(listOf(removed, kept), seeded = false)
+    assertTrue(completions.page(listOf(kept)).isEmpty())
+    val reply = run("reply").copy(botId = "kept-bot", threadId = "kept-thread", updatedAtMs = 3_000)
+    assertEquals(listOf(reply), completions.page(listOf(reply)))
+    var posts = 0
+    completions.complete(reply, { false }) { posts++ }
+    assertEquals(1, posts)
+    assertTrue(completions.page(listOf(reply)).isEmpty())
+  }
+
+  @Test
+  fun `a restarted poller keeps its history and leaves replies that finished while it was off to the push`() {
+    val seen = linkedSetOf<String>()
+    val marks = linkedMapOf<String, Long>()
+    val writes = mutableListOf<PollState>()
+    val history = PollHistoryWrites()
+    val first = PollCompletions(seen, marks, { 10_000 })
+    val morning = run("morning").copy(botId = "umar", threadId = "umar-thread", updatedAtMs = 9_000)
+    val jobs = run("jobs").copy(botId = "jobs", threadId = "jobs-thread", updatedAtMs = 9_500)
+    first.page(listOf(morning, jobs), seeded = false)
+    history.persistSnapshot(false, PollState(seen.toList(), marks.toMap(), emptyList())) { writes += it }
+
+    // Hours later a routine finished and its push was shown; the app starts a new poller.
+    val stored = writes.last()
+    val restartedSeen = decodeIds(encodeIds(stored.seen))
+    val restartedMarks = decodeWatermarks(encodeWatermarks(stored.watermarks))
+    assertEquals(stored.watermarks, restartedMarks)
+    val logs = mutableListOf<String>()
+    val restarted = PollCompletions(restartedSeen, restartedMarks, { 50_000 }, { logs += it })
+    val routine = run("routine").copy(botId = "umar", threadId = "umar-thread", updatedAtMs = 40_000)
+    assertTrue(restarted.page(listOf(routine, jobs)).isEmpty())
+    assertTrue("routine" in restartedSeen)
+    assertTrue(logs.any { it == "skip run=routine reason=before_poller" })
+    // A reply that finishes while this poller runs is posted, once.
+    val live = run("live").copy(botId = "umar", threadId = "umar-thread", updatedAtMs = 60_000)
+    var posts = 0
+    restarted.page(listOf(live, jobs)).forEach { restarted.complete(it, { false }) { posts++ } }
+    restarted.page(listOf(live, jobs)).forEach { restarted.complete(it, { false }) { posts++ } }
+    assertEquals(1, posts)
+    assertTrue(logs.any { it.startsWith("post run=live reason=new_completion") })
+  }
+
+  @Test
+  fun `a reply a push announced is never posted by the poller`() {
+    val seen = linkedSetOf<String>()
+    val completions = PollCompletions(seen)
+    val reply = run("reply")
+    assertEquals(listOf(reply), completions.page(listOf(reply)))
+    completions.pushed("reply")
+    var posts = 0
+    completions.complete(reply, { false }) { posts++ }
+    assertEquals(0, posts)
+    assertTrue(completions.page(listOf(reply)).isEmpty())
+  }
+
+  @Test
+  fun `an old failure is not alerted again after a restart`() {
+    val attention = mutableListOf<String>()
+    val completions = PollCompletions(linkedSetOf("old-failure"), linkedMapOf(), { 5_000 })
+    val old = run("old-failure").copy(status = "failed", updatedAtMs = 1_000)
+    val earlier = run("earlier-failure").copy(status = "failed", updatedAtMs = 2_000, botId = "other")
+    completions.prepare(listOf(old, earlier), true, NotificationSettings(), { false }) { attention += it.runId }
+    assertEquals(emptyList<String>(), attention)
+    val fresh = run("fresh-failure").copy(status = "failed", updatedAtMs = 9_000, botId = "third")
+    completions.prepare(listOf(fresh), true, NotificationSettings(), { false }) { attention += it.runId }
+    assertEquals(listOf("fresh-failure"), attention)
+  }
+
+  @Test
+  fun `the seen set is bounded and keeps the newest ids`() {
+    val seen = linkedSetOf<String>()
+    repeat(PollCompletions.MAX_SEEN + 5) { seen.addBounded("run-$it", PollCompletions.MAX_SEEN) }
+    assertEquals(PollCompletions.MAX_SEEN, seen.size)
+    assertFalse("run-0" in seen)
+    assertTrue("run-${PollCompletions.MAX_SEEN + 4}" in seen)
+    seen.addBounded("run-5", PollCompletions.MAX_SEEN)
+    assertEquals("run-5", seen.last())
+  }
+
+  @Test
+  fun `a wait alerts once across restarts and again only for a new wait`() {
+    val alerted = linkedSetOf<String>()
+    val wait = run("asks").copy(status = "waiting_input", updatedAtMs = 10_000)
+    assertEquals(listOf(wait), AttentionAlerts(alerted, { 5_000 }).due(listOf(wait)))
+    assertTrue(AttentionAlerts(alerted, { 5_000 }).due(listOf(wait)).isEmpty())
+    // A new service reloads the persisted keys.
+    val reloaded = AttentionAlerts(decodeIds(encodeIds(alerted)), { 20_000 })
+    assertTrue(reloaded.due(listOf(wait)).isEmpty())
+    val again = wait.copy(updatedAtMs = 30_000)
+    assertEquals(listOf(again), reloaded.due(listOf(again)))
+    // A wait that began before this poller started was the push's to announce.
+    val logs = mutableListOf<String>()
+    val older = run("older").copy(status = "waiting_takeover", updatedAtMs = 1_000)
+    assertTrue(AttentionAlerts(linkedSetOf(), { 20_000 }, { logs += it }).due(listOf(older)).isEmpty())
+    assertEquals(listOf("skip run=older reason=wait_before_poller status=waiting_takeover"), logs)
+    // Muted chats and finished runs never alert.
+    assertTrue(AttentionAlerts(linkedSetOf()).due(listOf(wait.copy(notificationsEnabled = false), run("done"))).isEmpty())
+  }
+
+  @Test
+  fun `a push key is taken once and falls back to the delivery id`() {
+    val repeats = PushRepeats(linkedSetOf())
+    assertEquals("completion:run-1", PushRepeats.key("completion:run-1", "d-1"))
+    assertEquals("delivery:d-1", PushRepeats.key("", "d-1"))
+    assertEquals("", PushRepeats.key("", ""))
+    assertTrue(repeats.firstTime("completion:run-1"))
+    assertFalse(repeats.firstTime("completion:run-1"))
+    assertTrue(repeats.firstTime(""))
+    assertTrue(repeats.firstTime(""))
+  }
+
+  @Test
+  fun `server times parse from toISOString and anything else is ignored`() {
+    assertEquals(1_764_288_000_123L, parseServerTime("2025-11-28T00:00:00.123Z"))
+    assertNull(parseServerTime("yesterday"))
+    assertNull(parseServerTime(null))
+    assertEquals(mapOf("group:g=1" to 5L, "bot:b" to 7L), decodeWatermarks("group:g=1=5\nbot:b=7\nbroken"))
+  }
+
   private fun run(id: String) = RunRecord(
     runId = id,
     spaceId = "space",

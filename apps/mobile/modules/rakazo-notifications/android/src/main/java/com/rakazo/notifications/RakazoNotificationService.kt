@@ -51,9 +51,13 @@ class RakazoNotificationService : Service() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private lateinit var manager: NotificationManager
   private var pollJob: Job? = null
-  private val knownCompleted = mutableSetOf<String>()
-  private val completions = PollCompletions(knownCompleted)
-  private val alertedAttention = mutableSetOf<String>()
+  private val knownCompleted = linkedSetOf<String>()
+  private val chatWatermarks = linkedMapOf<String, Long>()
+  private val alertedAttention = linkedSetOf<String>()
+  /** Work that finished before this service started was the server push's to announce. */
+  private val pollingSince = System.currentTimeMillis() - START_GRACE_MS
+  private val completions = PollCompletions(knownCompleted, chatWatermarks, { pollingSince }, ::logEvent)
+  private val attention = AttentionAlerts(alertedAttention, { pollingSince }, ::logEvent)
   private var historySpaceId: String? = null
   private val tokenCache = PollTokenCache()
   private val historyWrites = PollHistoryWrites()
@@ -67,6 +71,7 @@ class RakazoNotificationService : Service() {
       state.edit().putBoolean(THREAD_NOTIFICATION_IDS, true).apply()
     }
     createRakazoChannels(this)
+    logEvent("poller start since=$pollingSince")
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -145,17 +150,14 @@ class RakazoNotificationService : Service() {
             if (visibleWorking.isEmpty()) clearLive() else {
               showLive(visibleWorking, avatarStyle, copyContext)
             }
+            takePushedRuns().forEach(completions::pushed)
             replyLookups = completions.prepare(recent, seeded, settings, ::isOpenThread) { run ->
               immediate += run to attentionCopy(copyContext, run)
             }
-            persistCompleted(seeded)
             if (settings.needsAttention) {
-              active.filter { it.status == "waiting_input" || it.status == "waiting_takeover" }
-                .filter { it.notificationsEnabled }
-                .filter { alertedAttention.add("${it.runId}:${it.status}") }
-                .forEach { immediate += it to attentionCopy(copyContext, it) }
+              attention.due(active).forEach { immediate += it to attentionCopy(copyContext, it) }
             }
-            alertedAttention.retainAll(active.map { "${it.runId}:${it.status}" }.toSet())
+            persistCompleted(seeded)
             immediate.forEach { (run, copy) -> post(run, copy) }
           }
         ) {
@@ -234,12 +236,24 @@ class RakazoNotificationService : Service() {
   }
 
   private fun persistCompleted(seeded: Boolean) {
-    historyWrites.persistIfChanged(seeded, knownCompleted) { seen ->
+    val state = PollState(knownCompleted.toList(), chatWatermarks.toMap(), alertedAttention.toList())
+    historyWrites.persistSnapshot(seeded, state) { snapshot ->
       getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE).edit()
-        .putStringSet(SEEN_RUNS, seen)
+        .remove(SEEN_RUNS)
+        .putString(SEEN_RUN_IDS, encodeIds(snapshot.seen))
+        .putString(CHAT_WATERMARKS, encodeWatermarks(snapshot.watermarks))
+        .putString(ALERTED_WAITS, encodeIds(snapshot.alerted))
         .putBoolean(SEEN_RUNS_SEEDED, true)
         .apply()
     }
+  }
+
+  /** Runs a push already announced on this device; the poller never posts them again. */
+  private fun takePushedRuns(): Set<String> {
+    val state = getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE)
+    val pushed = decodeIds(state.getString(PUSHED_RUNS, null))
+    if (pushed.isNotEmpty()) state.edit().remove(PUSHED_RUNS).apply()
+    return pushed
   }
 
   private fun prepareHistorySpace(generation: Long, endpoint: String, spaceId: String, token: String): Boolean? =
@@ -249,16 +263,26 @@ class RakazoNotificationService : Service() {
       val state = getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE)
       if (historySpaceId != spaceId) {
         knownCompleted.clear()
+        chatWatermarks.clear()
         alertedAttention.clear()
         historyWrites.reset()
         if (state.getString(SEEN_RUNS_SPACE_ID, null) == spaceId) {
-          knownCompleted += state.getStringSet(SEEN_RUNS, emptySet()).orEmpty()
+          // Builds before 1.41 kept an unordered set trimmed to the last page.
+          knownCompleted += state.getString(SEEN_RUN_IDS, null)?.let(::decodeIds)
+            ?: state.getStringSet(SEEN_RUNS, emptySet()).orEmpty()
+          chatWatermarks += decodeWatermarks(state.getString(CHAT_WATERMARKS, null))
+          alertedAttention += decodeIds(state.getString(ALERTED_WAITS, null))
+          logEvent("history loaded seen=${knownCompleted.size} chats=${chatWatermarks.size} waits=${alertedAttention.size}")
         } else {
           state.edit()
             .putString(SEEN_RUNS_SPACE_ID, spaceId)
             .remove(SEEN_RUNS)
+            .remove(SEEN_RUN_IDS)
+            .remove(CHAT_WATERMARKS)
+            .remove(ALERTED_WAITS)
             .putBoolean(SEEN_RUNS_SEEDED, false)
             .apply()
+          logEvent("history reset for a new space")
         }
         historySpaceId = spaceId
       }
@@ -403,6 +427,13 @@ class RakazoNotificationService : Service() {
     private const val EXTRA_MUTED_BOT_ID = "com.rakazo.notifications.MUTED_BOT_ID"
     private const val STATE_PREFERENCES = "com.rakazo.notification_state"
     private const val SEEN_RUNS = "seen_runs"
+    private const val SEEN_RUN_IDS = "seen_run_ids"
+    private const val CHAT_WATERMARKS = "chat_watermarks"
+    private const val ALERTED_WAITS = "alerted_waits"
+    private const val PUSHED_RUNS = "pushed_runs"
+    private const val MAX_PUSHED_RUNS = 200
+    /** Device and server clocks differ a little; a reply this close to the start is still posted. */
+    private const val START_GRACE_MS = 2 * 60_000L
     private const val SEEN_RUNS_SEEDED = "seen_runs_seeded"
     private const val SEEN_RUNS_SPACE_ID = "seen_runs_space_id"
     internal const val EXTRA_RUN_ID = "rakazo.runId"
@@ -424,6 +455,22 @@ class RakazoNotificationService : Service() {
 
     fun stop(context: Context) {
       context.stopService(Intent(context, RakazoNotificationService::class.java))
+    }
+
+    /** Ids and reasons only, never message text: `adb logcat -s RakazoNotifications`. */
+    internal fun logEvent(message: String) {
+      runCatching { Log.i(TAG, message) }
+    }
+
+    /** A push announced this run: the poller, running or started later, skips it. */
+    fun recordPushedRun(context: Context, runId: String) {
+      if (runId.isBlank()) return
+      synchronized(sessionLock) {
+        val state = context.getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE)
+        val pushed = decodeIds(state.getString(PUSHED_RUNS, null))
+        pushed.addBounded(runId, MAX_PUSHED_RUNS)
+        state.edit().putString(PUSHED_RUNS, encodeIds(pushed)).apply()
+      }
     }
 
     fun isOpenThread(botId: String, threadId: String): Boolean = synchronized(sessionLock) {
@@ -511,6 +558,7 @@ private fun runs(
       prompt = row.optString("promptSnippet"),
       trigger = row.requiredString("trigger"),
       notificationsEnabled = row.optBoolean("notificationsEnabled", true),
+      updatedAtMs = parseServerTime(row.optionalString("updatedAt")),
     )
   }
 }

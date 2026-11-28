@@ -56,6 +56,18 @@ class SenderPushTest {
   }
 
   @Test
+  fun `the same notice delivered twice is shown once`() {
+    assertEquals(
+      PushDisposition.DROP,
+      SenderPush.disposition(push("completion"), hasSession = { true }, openThread = { false }, foreground = { false }, firstTime = { false }),
+    )
+    assertEquals(
+      PushDisposition.POST,
+      SenderPush.disposition(push("completion"), hasSession = { true }, openThread = { false }, foreground = { false }, firstTime = { true }),
+    )
+  }
+
+  @Test
   fun `only an opted-in background push may play sound`() {
     val silent = push("help")
     val audible = push("help").put("notificationSound", true)

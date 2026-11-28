@@ -80,8 +80,11 @@ describe("Android mobile platform contract", () => {
     expect(service).toContain("working.filterNot(::isOpenThread)");
     expect(service).toContain("createConfigurationContext");
     expect(service).toContain("!run.notificationsEnabled || isOpenThread(run)");
-    expect(service).toMatch(
-      /waiting_input[\s\S]*filter \{ it\.notificationsEnabled \}[\s\S]*alertedAttention\.add/,
+    // Fork (1.41): wait alerts moved into NotificationPolling.kt's AttentionAlerts, persisted per wait.
+    const polling = readFileSync(resolve(nativeRoot, "NotificationPolling.kt"), "utf8");
+    expect(service).toContain("attention.due(active)");
+    expect(polling).toMatch(
+      /waiting_input[\s\S]*filter \{ it\.notificationsEnabled \}[\s\S]*alerted\.addBounded/,
     );
     expect(service).toContain(
       "if (openThreadId != null) openThreadId == threadId else openBotId == botId",

@@ -158,7 +158,12 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             ("STOPPED_HELPER_CARD", 6), ("helperWasStopped(", 3),
             # one decision path for "announced work, used no tool" and open work (1.3 + 1.33)
             ("replyIsTheWork(", 3), ("announcedWorkOnly(", 2), ("olderRuleDecidesAlone(", 2),
-            ("CONTINUATION_ONE_PATH", 2)]
+            ("CONTINUATION_ONE_PATH", 2),
+            # old notifications do not come back (1.41): the repeat guard and its seam, the stable push key,
+            # the send log, the device poller's persisted history and push records
+            ("recipientsAfterRepeatGuard(", 2), ("NOTIFY_REPEAT_GUARD", 2), ("noticeKey(message)", 1),
+            ("notification.sent", 2), ("recordPushedRun(", 2), ("AttentionAlerts(", 2),
+            ("CHAT_WATERMARKS", 1)]
 results = []
 
 

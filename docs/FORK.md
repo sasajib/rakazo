@@ -1682,6 +1682,53 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits around the lease plan in `acquireComputerExecutionLease` and the `lazyRunComputer`
   callback in `prepareRunComputer`; an upstream test that reads the run's lease by slot 0 after a `shell` call needs
   the screen first or `COMPUTER_COMMAND_SLOTS=1`.
+### 1.41 Old notifications do not come back (`NOTIFY_REPEAT_GUARD`) (owner report 2026-11-28, Android 1.0.20/1.0.22)
+- **Report:** "I get old obsolete notifications again and again" (no detail yet). Evidence and every path checked:
+  stack report `WORKER-N-notifications-1128.md`.
+- **Causes (code, reproduced by unit tests on `main`):**
+  1. *Server, unattended repeats:* a routine (or webhook, agent request, continuation) that reports the same thing
+     again pushed it again. 27 Nov 03:00-18:00 UTC a 30-minute status routine (since ended) posted "Status 22:30 …
+     Nothing has changed since 22:00 …" 30 times, each a push; reminders "the designs are still waiting on your pick"
+     repeat the same way.
+  2. *Android poller, page trim:* `PollCompletions.prepare` ended with `seen.retainAll(recent ids)`, so a run that left
+     the 20-chat recent page and came back (a newer run in its chat deleted, more than 20 chats and back) was posted
+     again with its old reply.
+  3. *Android poller, restart:* the service stops whenever nothing works and starts on every app start, send, thread
+     change; a new service seeded from that trimmed set and posted every chat's latest reply that finished while it
+     was off, which the push had already shown (often while the app was open: the poller does not check foreground),
+     and alerted every open wait again (`alertedAttention` lived in memory only).
+  4. *Push:* a retried or redelivered push of one notice was shown again.
+- **Now (server, `notifications/repeat-notice.ts`, seam `deliverChatNotice` in `run-notifications.ts`):** a notice of an
+  unattended run (trigger not user/follow_up/call_end/talk/reaction/resume/created) is not pushed or alerted when the
+  last notice of the same kind to the same person in the same chat said the same thing in the last 12 h; times,
+  dates and day names do not count as a change, any other word or number does. The message still lands in the chat
+  and marks it unread. Ledger is per process (a restart can let one repeat through, never loses one); a failed
+  delivery is forgotten so the next one goes out. `notifyRun` stamps `message.trigger` (adapter-kit
+  `NotificationMessage.trigger`, log/guard only, never pushed).
+- **Now (push payload, `expo-push.ts`):** `data.noticeKey` = `completion:<runId>` or `<kind>:message:<messageId>`, the same
+  on every send of one notice; devices fall back to `deliveryId`.
+- **Now (Android, needs a new APK):** `NotificationPolling.kt`: seen ids persisted in order, bounded 1000, never trimmed;
+  per-chat completion watermark (API `updatedAt` = completedAt) persisted; work finished before this poller started is
+  left to the push (2 min clock grace); waits alert once per `runId:status:updatedAt`, persisted. `SenderPush` records the
+  run id of every completion push (the poller never posts it) and drops a second push with the same key. Old
+  `seen_runs` set is read once for the upgrade.
+- **Env (default on, all three compose files):** `NOTIFY_REPEAT_GUARD=0` pushes every repeat again (upstream).
+  The device changes and the logging have no switch.
+- **Logs:** api/worker `notification.sent` (kind, key, collapse id = thread, devices, accepted, failed, run, trigger, bot,
+  thread, message, user; never text), `notification.suppressed` (reason `repeat`), `notification.receipt` (status, error,
+  device digest). Phone: `adb logcat -s RakazoNotifications` = poller start, history load, every `post run=… reason=
+  new_completion|attention`, every `skip run=… reason=seen|older_than_chat|before_poller|push_delivered|already_showing|
+  muted|wait_before_poller`, every `push kind=… run=… key=… decision=post|drop|expo|drop_repeat`.
+- **Tests:** `notifications/repeat-notice.fork.test.ts` (the 27 Nov status series, person-started replies always,
+  switch off, failed send), `notifications/expo-push-notice.fork.test.ts` (key, log without text, receipt log),
+  `expo-push.test.ts` (one assertion now ignores the send line), Kotlin `NotificationPollingTest` (+10: >20 chats and
+  back, deleted newer run, removed chat, restart with persisted state, pushed run, old failure, bounds, waits across
+  restarts, push keys, time parsing) and `SenderPushTest` (+1). Kotlin tests run without Gradle: see the report.
+- **Live check:** `docker logs rakazo-api-1 2>&1 | grep -c notification.sent` grows with pushes;
+  `grep notification.suppressed` shows a routine's repeat held back; on the phone (new APK) `adb logcat -s
+  RakazoNotifications` names the reason of every post.
+- **Conflicts:** upstream changing `deliverChatNotice`, `expoPushData`/`deliver`, `PollCompletions` or the service's
+  history keys; re-apply on its shape.
 
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.

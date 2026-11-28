@@ -13,6 +13,12 @@ import type { PrismaClient, ThreadEvents } from "@rakazo/db";
 import { countUnreadInboxChats, membersSnoozing } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { notificationIdentity } from "../../notifications/notification-identity.js";
+import {
+  noticeFingerprint,
+  recipientsAfterRepeatGuard,
+  repeatNoticeKey,
+  repeatNotices,
+} from "../../notifications/repeat-notice.js";
 import { messageBlocksText } from "../assembly/run-replies.prompt.js";
 import type { ExecutorDeps } from "../executor/executor-deps.js";
 
@@ -107,6 +113,8 @@ export async function notifyRun(
     return null;
   });
   if (!notice?.enabled) return;
+  // Fork (1.41): the run's trigger rides along for the send log and the repeat guard (never pushed).
+  message = { ...message, trigger: run.trigger };
   // A reply is news to everyone in the Space. Only the person whose run it is can answer its
   // questions, take its screen, or fix what made it fail, and a reply to another bot is theirs.
   const recipients =
@@ -215,7 +223,13 @@ async function deliverChatNotice(
           return new Set<string>();
         })
       : new Set<string>();
-  const recipients = input.recipients.filter((userId) => !snoozing.has(userId));
+  // Fork (1.41): an unattended run repeating its last notice to this person in this chat stays in the
+  // chat only (`notification.suppressed`).
+  const recipients = recipientsAfterRepeatGuard({
+    recipients: input.recipients.filter((userId) => !snoozing.has(userId)),
+    message,
+    trigger: message.trigger,
+  });
   for (const userId of recipients) {
     publishChatAlert(deps.events, { spaceId, userId }, message, groupId);
   }
@@ -250,6 +264,11 @@ async function deliverChatNotice(
         () => undefined,
         (error: unknown) => {
           getLogger().error("run notification", error);
+          // Not delivered, so the next notice with this text is not held back as a repeat.
+          repeatNotices.forget(
+            repeatNoticeKey({ userId, threadId: message.threadId, kind: message.kind }),
+            noticeFingerprint(message.title, message.body),
+          );
           return { error };
         },
       );
