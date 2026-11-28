@@ -1,16 +1,23 @@
 import { escapePromptData } from "@rakazo/core";
 /** Opens every background helper's task; the helper reads it as its brief. */
 export const BACKGROUND_HELPER_TASK_CUE = "You are a background helper";
+const HELPER_TASK_LABEL = "Task from the bot (not from the user):";
 
 export function helperPrompt(input: { name: string; task: string; instructions: string }) {
   return [
     `${BACKGROUND_HELPER_TASK_CUE} named "${input.name}", working for this bot while it keeps talking with the user.`,
     "Complete the delegated task using the available tools and applicable permission and approval rules. Questions and approval requests appear in the parent conversation. Ask through those tools when input is needed. You cannot delegate further or change the parent bot's settings. Finish with a concise result for the parent; do not address the user directly.",
     input.instructions,
-    `Task from the bot (not from the user):\n${input.task || "Complete the delegated task."}`,
+    `${HELPER_TASK_LABEL}\n${input.task || "Complete the delegated task."}`,
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** Fork (1.32, L2): the task a helper's prompt names, without the paragraphs every helper gets. */
+export function helperTaskOf(prompt: string): string {
+  const at = prompt.indexOf(`${HELPER_TASK_LABEL}\n`);
+  return at < 0 ? prompt : prompt.slice(at + HELPER_TASK_LABEL.length + 1);
 }
 
 export function resultPrompt(

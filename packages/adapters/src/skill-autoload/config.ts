@@ -10,6 +10,9 @@
  *   SKILL_AUTOLOAD_EMBEDDINGS=0      never use the embeddings endpoint (lexical only)
  *   SKILL_AUTOLOAD_EMBEDDINGS_MIN    cosine similarity that counts as a match (default 0.6)
  *   SKILL_AUTOLOAD_TIMEOUT_MS        longest wait for the task's embedding (default 700)
+ *   SKILL_AUTOLOAD_EMBED_CHARS       most characters of a task sent to the embeddings endpoint
+ *                                    (default 400: its opening and headings; 4000 = the whole
+ *                                    text as far as the endpoint takes it, as before)
  *   SKILL_PINNED=0                   Space-pinned skills are not put in the prompt
  *   SKILL_PINNED_MAX_BYTES           bytes of pinned skill bodies per run (default 16384)
  *
@@ -18,6 +21,7 @@
  */
 import type { LedgerConfig } from "../memory-ledger/config.js";
 import { ledgerConfig } from "../memory-ledger/config.js";
+import { TASK_DIGEST_MAX_CHARS } from "./task-digest.js";
 
 type Env = Record<string, string | undefined>;
 
@@ -32,6 +36,8 @@ export interface SkillAutoloadConfig {
     enabled: boolean;
     minSimilarity: number;
     timeoutMs: number;
+    /** Most characters of a task that are embedded (task-digest.ts). */
+    maxChars: number;
     endpoint: LedgerConfig["embeddings"];
   };
   pinned: { enabled: boolean; maxBytes: number };
@@ -62,6 +68,7 @@ export function skillAutoloadConfig(env: Env = process.env): SkillAutoloadConfig
       enabled: notOff(env.SKILL_AUTOLOAD_EMBEDDINGS) && Boolean(endpoint.url),
       minSimilarity: float(env.SKILL_AUTOLOAD_EMBEDDINGS_MIN, 0.6, 0.1, 0.99),
       timeoutMs: int(env.SKILL_AUTOLOAD_TIMEOUT_MS, 700, 50, 5_000),
+      maxChars: int(env.SKILL_AUTOLOAD_EMBED_CHARS, TASK_DIGEST_MAX_CHARS, 100, 4_000),
       endpoint,
     },
     pinned: {

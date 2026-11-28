@@ -1,4 +1,9 @@
-export { autoloadAppliesTo, autoloadSkills, logSkillAutoload } from "./autoload.js";
+export {
+  autoloadAppliesTo,
+  autoloadSkills,
+  logSkillAutoload,
+  warmTaskVector,
+} from "./autoload.js";
 export { skillAutoloadConfig } from "./config.js";
 export {
   loadPinnedSkillRefs,

@@ -4,6 +4,7 @@ import { hostedMediaWithinAllowance } from "../../media/media-usage.js";
 import { isMeetingChat, recentChatMeetings } from "../../meetings/meeting-chat.js";
 import { recentMeetingContext } from "../../meetings/meeting-chat.prompt.js";
 import { READ_MEETING_TRANSCRIPT } from "../../meetings/meeting-chat.tool-definition.js";
+import { warmTaskVector } from "../../skill-autoload/index.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { mayOpenModelStream, requeueComputerRun } from "../lifecycle/run-lifecycle.js";
 import { takeoverCheckpointOf } from "../turn/takeover-resume.js";
@@ -24,6 +25,9 @@ import { loadModelFallbacks } from "./run-model-fallbacks.js";
 export async function assembleRunTurn(services: RunExecutorServices, hold: RunHold) {
   const saved = await loadSavedTurn(services, hold);
   const records = await loadRunRecords(services, hold, { saved });
+  // Fork (1.32, L2): the task's embedding for skill auto-load is asked for now and read in
+  // buildTurnPrompt, so it runs beside the rest of assembly instead of holding the run for it.
+  warmTaskVector({ trigger: hold.run.trigger, task: records.task.prompt });
   const connected = await connectRun(services, hold, { records });
   const thread = await readThreadHistory(hold, { records });
   const turnContext = await loadTurnContext(hold, { records, connected, thread });

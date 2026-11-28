@@ -6,6 +6,11 @@
  * Never blocks a run: lexical matching is in-process; the optional embeddings step waits at most
  * SKILL_AUTOLOAD_TIMEOUT_MS for the task's vector and falls back to the lexical result. Skill
  * vectors are computed in the background and reused, so a run never waits for them.
+ *
+ * The task's vector (L2): a digest of the task is embedded, not the whole text (task-digest.ts);
+ * the request starts as soon as the run's task is read (`warmTaskVector`), beside the rest of run
+ * assembly, and its result is kept by the digest's hash, so the wait here is what is left of it:
+ * usually nothing. A request that outlives the wait still fills the cache for the next attempt.
  */
 import { createHash } from "node:crypto";
 import { getLogger } from "@rakazo/logging";
@@ -19,12 +24,14 @@ import {
   contentWords,
   cosine,
   matchText,
+  SHORT_TASK_WORDS,
   scoreSkills,
   skillTriggerText,
   withSimilarity,
 } from "./match.js";
 import type { LoadableSkill, SkillBlock } from "./skill-autoload.prompt.js";
 import { renderLoadedSkills } from "./skill-autoload.prompt.js";
+import { taskDigest, taskFocus } from "./task-digest.js";
 
 /** Runs that carry no task of their own: the tool-less talk lane, a bot's creation intro, a hang-up note, a reaction. */
 const NO_TASK_TRIGGERS = new Set(["talk", "created", "call_end", "reaction"]);
@@ -63,6 +70,8 @@ export interface SkillAutoloadLog {
   omitted: string[];
   bytes: number;
   ms: number;
+  /** The task's embedding: characters sent, where the vector came from, how long the run waited. */
+  embed?: { chars: number; source: TaskVectorSource; waitMs: number };
 }
 
 export interface SkillAutoloadResult {
@@ -117,10 +126,83 @@ function warmSkillVectors(embedder: Embedder, texts: ReadonlyMap<string, string>
   }
 }
 
-/** For tests: forget cached skill vectors. */
+/** For tests: forget cached skill and task vectors. */
 export function resetSkillVectorCache(): void {
   vectors.clear();
   pending.clear();
+  taskVectors.clear();
+  taskVectorsInFlight.clear();
+}
+
+/** `cache`: computed by an earlier run; `early`: asked for before this step; `request`: asked here. */
+export type TaskVectorSource = "cache" | "early" | "request" | "busy";
+
+const taskVectors = new Map<string, number[]>();
+const taskVectorsInFlight = new Map<string, Promise<number[] | undefined>>();
+const TASK_VECTOR_CACHE_MAX = 500;
+/** Requests for task vectors at once. Beyond it a run matches by words: the endpoint is behind. */
+const TASK_VECTORS_IN_FLIGHT_MAX = 8;
+
+/**
+ * The vector of a task digest: from the cache, from the request already on its way, or from a
+ * new one. The request is shared and not tied to one caller's wait, so it is made once per text.
+ */
+function taskVector(
+  embedder: Embedder,
+  digest: string,
+): { source: TaskVectorSource; vector?: Promise<number[] | undefined> } {
+  const key = vectorKey(digest);
+  const cached = taskVectors.get(key);
+  if (cached) {
+    // Most recently used last, so the oldest entry is the one dropped.
+    taskVectors.delete(key);
+    taskVectors.set(key, cached);
+    return { source: "cache", vector: Promise.resolve(cached) };
+  }
+  const flying = taskVectorsInFlight.get(key);
+  if (flying) return { source: "early", vector: flying };
+  if (taskVectorsInFlight.size >= TASK_VECTORS_IN_FLIGHT_MAX) return { source: "busy" };
+  const request = embedder
+    .embed(digest)
+    .catch(() => undefined)
+    .then((vector) => {
+      if (vector) {
+        if (taskVectors.size >= TASK_VECTOR_CACHE_MAX)
+          taskVectors.delete(taskVectors.keys().next().value as string);
+        taskVectors.set(key, vector);
+      }
+      return vector;
+    })
+    .finally(() => taskVectorsInFlight.delete(key));
+  taskVectorsInFlight.set(key, request);
+  return { source: "request", vector: request };
+}
+
+/** What is embedded for a run's task: a digest of the part that states the work. */
+function embeddedText(trigger: string, task: string, maxChars: number): string {
+  return taskDigest(taskFocus(trigger, task), maxChars);
+}
+
+/**
+ * Starts the task's embedding as soon as the task is known, so run assembly does not wait for it
+ * later. Never awaited, never throws; does nothing when auto-load or embeddings are off.
+ */
+export function warmTaskVector(
+  input: { trigger: string; task: string },
+  dependencies: Dependencies = {},
+): void {
+  try {
+    const config = dependencies.config ?? skillAutoloadConfig();
+    if (!config.enabled || !config.embeddings.enabled || !autoloadAppliesTo(input.trigger)) return;
+    // A short task may be matched with the request before it, which only the later step knows.
+    if (contentWords(input.task).length < SHORT_TASK_WORDS) return;
+    const embedder = "embedder" in dependencies ? dependencies.embedder : defaultEmbedder(config);
+    if (embedder)
+      void taskVector(embedder, embeddedText(input.trigger, input.task, config.embeddings.maxChars))
+        .vector;
+  } catch {
+    // The later step asks again.
+  }
 }
 
 async function taskSimilarity(
@@ -128,7 +210,12 @@ async function taskSimilarity(
   task: string,
   skills: readonly LoadableSkill[],
   timeoutMs: number,
-): Promise<{ similarity?: Map<string, number>; note?: string }> {
+  now: () => number,
+): Promise<{
+  similarity?: Map<string, number>;
+  note?: string;
+  embed?: SkillAutoloadLog["embed"];
+}> {
   const keys = new Map(skills.map((skill) => [skill.id, vectorKey(skillText(skill))]));
   warmSkillVectors(
     embedder,
@@ -136,23 +223,29 @@ async function taskSimilarity(
   );
   const known = skills.filter((skill) => vectors.has(keys.get(skill.id)!));
   if (known.length === 0) return { note: "skill vectors not ready" };
-  const abort = new AbortController();
+  const started = now();
+  const { source, vector } = taskVector(embedder, task);
+  const embed = (): SkillAutoloadLog["embed"] => ({
+    chars: task.length,
+    source,
+    waitMs: now() - started,
+  });
+  if (!vector) return { note: "embeddings busy", embed: embed() };
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const taskVector = await Promise.race([
-    embedder.embed(task, abort.signal).catch(() => undefined),
+  // The request is not cancelled when the wait ends: its vector is kept for the next attempt.
+  const found = await Promise.race([
+    vector,
     new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => {
-        abort.abort();
-        resolve(undefined);
-      }, timeoutMs);
+      timer = setTimeout(() => resolve(undefined), timeoutMs);
     }),
   ]);
   if (timer) clearTimeout(timer);
-  if (!taskVector) return { note: "embeddings timed out or unavailable" };
+  if (!found) return { note: "embeddings timed out or unavailable", embed: embed() };
   return {
     similarity: new Map(
-      known.map((skill) => [skill.id, cosine(taskVector, vectors.get(keys.get(skill.id)!)!)]),
+      known.map((skill) => [skill.id, cosine(found, vectors.get(keys.get(skill.id)!)!)]),
     ),
+    embed: embed(),
   };
 }
 
@@ -236,10 +329,15 @@ async function matchAndRender(
   if (embedder && config.embeddings.enabled && !input.fast) {
     const semantic = await taskSimilarity(
       embedder,
-      task,
+      // The digest of the task; with the earlier request when a short go-ahead borrowed it.
+      usedEarlier
+        ? taskDigest(task, config.embeddings.maxChars)
+        : embeddedText(input.trigger, input.task, config.embeddings.maxChars),
       skills,
       config.embeddings.timeoutMs,
-    ).catch(() => ({ similarity: undefined, note: "embeddings failed" }));
+      now,
+    ).catch(() => ({ similarity: undefined, note: "embeddings failed", embed: undefined }));
+    if (semantic.embed) log.embed = semantic.embed;
     if (semantic.similarity) {
       scores = withSimilarity(scores, semantic.similarity, {
         minScore: config.minScore,
@@ -295,6 +393,13 @@ export function logSkillAutoload(
     "autoload.omitted": log.omitted,
     "autoload.bytes": log.bytes,
     "autoload.ms": log.ms,
+    ...(log.embed
+      ? {
+          "autoload.embed_chars": log.embed.chars,
+          "autoload.embed_source": log.embed.source,
+          "autoload.embed_wait_ms": log.embed.waitMs,
+        }
+      : {}),
     "pinned.names": pinned?.names ?? [],
     "pinned.bytes": pinned?.bytes ?? 0,
     "pinned.truncated": pinned?.truncated ?? [],

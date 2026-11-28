@@ -1144,6 +1144,33 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `skill-autoload/continuation.test.ts` (5 kinds that continue, 4 that do not, 3 to 21 wordings each, through both
   the rule and `matchText`), `autoload.test.ts` ("a greeting, thanks or a new short question after a task loads
   nothing", the switch). Known misses: a new question that uses "it"/"that" ("is it raining?") still borrows.
+- **B1, the task's embedding (live test 1128a, L2):** the whole task (up to 8000 characters) was embedded with a
+  700 ms limit (`taskSimilarity`, `skill-autoload/autoload.ts`), and the endpoint's time grows with the text: every
+  helper brief, delegated request and continuation brief (17 of 17 helper runs, 3 of 3 delegated ones) waited the
+  full 0.7 s and then matched by words only. Now: (1) a **digest** is embedded (`taskDigest`, fork file
+  `skill-autoload/task-digest.ts`): a task of up to `SKILL_AUTOLOAD_EMBED_CHARS` (400) characters whole and
+  unchanged; of a longer one the opening lines (about two thirds of the digest) and then its signposts in order
+  (markdown headings, the line a label such as "Output:" introduces, the start of each list item), lines of pure
+  markup skipped; for a helper the task it was given (`taskFocus` → `helperTaskOf`), not the paragraphs every helper
+  gets. (2) The vector is **kept by the digest's hash** (500 tasks, least recently used dropped) and a request in
+  flight is shared, so one text is embedded once per process; a request that outlives the wait is not cancelled
+  and fills the cache for the next attempt. (3) The request **starts when the run's task is read**
+  (`warmTaskVector`, one line in `runs/assembly/run-assembly.ts` right after `loadRunRecords`) and runs beside
+  connecting, history, the model start and tool selection; `buildTurnPrompt` waits only for what is left (at most
+  `SKILL_AUTOLOAD_TIMEOUT_MS`), usually nothing. At most 8 such requests at once; beyond that a run matches by
+  words (`autoload.note: embeddings busy`). Not started early for a short message (it may borrow the earlier
+  request, which only the later step knows), a run with no task, or with auto-load or embeddings off.
+  Lexical matching is unchanged (whole task). `skill.autoload` gains `autoload.embed_chars`,
+  `autoload.embed_source` (`cache|early|request|busy`) and `autoload.embed_wait_ms`.
+  **Measured from the host against bee's endpoint (bge-m3,
+  `embeddings-timing.live.test.ts`, skipped unless `SKILL_AUTOLOAD_LIVE_EMBEDDINGS_URL` is set):** whole text /
+  digest: 60 characters 110 / 95 ms, 600: 500 / 336 ms, 3000: 1776 / 168 ms, 8000 (endpoint takes 4000): 2468 /
+  160 ms. A 3000-character request and a 3000-character helper brief, paraphrased (no word shared with the skill's
+  name): asked in the step, waited 157 ms; asked early with 300 ms of other work, waited 0 ms; both
+  `lexical+embeddings`, similarity to the fitting skill 0.641 (whole text 0.620, an unrelated skill 0.375).
+  Inside the worker the endpoint measured about twice as slow as from the host, so expect about 0.3 s in the
+  step and 0 when asked early. Tests: `task-digest.test.ts` (6), `autoload.test.ts` "a long task (L2)" (7),
+  `executor-skills-rules-triggers.test.ts` (3: real assembly asks once, as the task is read).
 - **B2 Space-pinned skills** (`skill-autoload/pinned.ts`, table `space_pinned_skills`): a set of skills per Space
   member (skills belong to the account that added them, so the set is the member's and reaches every agent that
   member owns in the Space) whose bodies are in EVERY run's system instructions as `<pinned_skills>`, stated as
@@ -1187,7 +1214,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Env (all default ON; in the 3 compose files):** `SKILL_AUTOLOAD` (0 = off), `SKILL_AUTOLOAD_MAX_BYTES` (12288),
   `SKILL_AUTOLOAD_MAX_SKILLS` (3), `SKILL_AUTOLOAD_MIN_SCORE` (2), `SKILL_AUTOLOAD_EMBEDDINGS` (0 = lexical only),
   `SKILL_AUTOLOAD_EMBEDDINGS_MIN` (0.6), `SKILL_AUTOLOAD_TIMEOUT_MS` (700),
-  `SKILL_AUTOLOAD_CONTINUATION_CHECK` (0 = any short message borrows the earlier request), `SKILL_PINNED` (0 = pinned skills not in
+  `SKILL_AUTOLOAD_CONTINUATION_CHECK` (0 = any short message borrows the earlier request),
+  `SKILL_AUTOLOAD_EMBED_CHARS` (400; 4000 = the whole text as far as the endpoint takes it, as before), `SKILL_PINNED` (0 = pinned skills not in
   prompts nor opened to limited agents; the stored set stays), `SKILL_PINNED_MAX_BYTES` (16384). On bee the api AND
   the worker need the embeddings URL and the `hermes_memory` network (both already have them for 1.5/1.10).
 - **Migration:** `20270129100000_space_pinned_skills` (raw SQL, no Prisma model: PK (spaceId, userId, skillRef);

@@ -2,6 +2,7 @@ import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import { RUN_TRIGGERS } from "@rakazo/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "../../computers/computer-lifecycle.js";
+import type * as SkillAutoloadModule from "../../skill-autoload/index.js";
 import { createRunExecutor } from "./executor.js";
 
 vi.mock("../../computers/computer-lifecycle.js", async (importOriginal) => ({
@@ -15,6 +16,18 @@ vi.mock("../../computers/computer-lifecycle.js", async (importOriginal) => ({
   provisionComputer: async () => ({ id: "computer-1", kind: "desktop" }),
   renewComputerExecutionLease: async () => true,
 }));
+
+const warmed = vi.hoisted(() => ({ calls: [] as Array<{ trigger: string; task: string }> }));
+vi.mock("../../skill-autoload/index.js", async (importOriginal) => {
+  const original = await importOriginal<typeof SkillAutoloadModule>();
+  return {
+    ...original,
+    warmTaskVector: (input: { trigger: string; task: string }) => {
+      warmed.calls.push(input);
+      original.warmTaskVector(input);
+    },
+  };
+});
 
 /**
  * Fork (1.32): what reaches the model for every kind of run, through the real run assembly.
@@ -416,6 +429,17 @@ describe("the skill that fits the task is loaded by the platform (fork 1.32)", (
     expect(request.instructions).toContain("MARK-LEDGER");
     expect(request.prompt).not.toContain("MARK-LEDGER");
   });
+
+  // L2: the task's embedding is asked for when the task is read, beside the rest of assembly.
+  it.each(["user", "helper", "bot_message"] as const)(
+    "%s: run assembly asks for the task's embedding once, as soon as the task is read",
+    async (trigger) => {
+      warmed.calls.length = 0;
+      const taskPrompt = `${TASK}\n${"Then check every row of the sheet against last month. ".repeat(40)}`;
+      await assemble({ trigger, taskPrompt });
+      expect(warmed.calls).toEqual([{ trigger, task: taskPrompt }]);
+    },
+  );
 
   it("SKILL_AUTOLOAD=0 leaves the catalog only", async () => {
     vi.stubEnv("SKILL_AUTOLOAD", "0");

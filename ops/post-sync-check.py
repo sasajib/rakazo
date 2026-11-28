@@ -151,7 +151,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             ("renewHeldComputerLease(", 2), ("COMPUTER_COMMAND_SLOTS", 2), ("COMMAND_SLOT_BASE", 5),
             # skill auto-load leftovers (1.32): a short message borrows the earlier request only when it
             # goes on with it
-            ("continuesEarlierRequest(", 3), ("SKILL_AUTOLOAD_CONTINUATION_CHECK", 2)]
+            ("continuesEarlierRequest(", 3), ("SKILL_AUTOLOAD_CONTINUATION_CHECK", 2),
+            # a digest of the task is embedded, kept by its hash, and asked for when the task is read
+            ("taskDigest(", 3), ("warmTaskVector(", 3), ("helperTaskOf(", 2), ("SKILL_AUTOLOAD_EMBED_CHARS", 2)]
 results = []
 
 

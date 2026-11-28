@@ -1,7 +1,13 @@
 import { buildSkillMd, byteLength } from "@rakazo/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Embedder } from "../memory-ledger/embeddings.js";
-import { autoloadAppliesTo, autoloadSkills, resetSkillVectorCache } from "./autoload.js";
+import { helperPrompt } from "../tasks/background-helpers.prompt.js";
+import {
+  autoloadAppliesTo,
+  autoloadSkills,
+  resetSkillVectorCache,
+  warmTaskVector,
+} from "./autoload.js";
 import { skillAutoloadConfig } from "./config.js";
 import {
   chooseSkills,
@@ -337,10 +343,184 @@ describe("skill auto-load: embeddings (optional)", () => {
     expect(second.log.method).toBe("lexical+embeddings");
     expect(second.log.chosen).toEqual(["Plain Voice"]);
     expect(second.log.candidates[0]).toMatchObject({ name: "Plain Voice", similarity: 1 });
-    // Skill vectors are computed once.
+    // Skill vectors are computed once, and so is the vector of a task seen before (L2).
     const third = calls.length;
-    await autoloadSkills({ trigger: "user", task, skills: CATALOG }, deps);
-    expect(calls.length).toBe(third + 1);
+    const again = await autoloadSkills({ trigger: "user", task, skills: CATALOG }, deps);
+    expect(calls.length).toBe(third);
+    expect(again.log.embed).toMatchObject({ source: "cache", chars: task.length });
+    expect(again.log.chosen).toEqual(["Plain Voice"]);
+  });
+
+  // Live test 1128a: every helper brief, delegated request and continuation brief (anything over
+  // about 700 characters) waited the whole 700 ms and then matched by words only.
+  describe("a long task (L2)", () => {
+    const long = (opening: string) =>
+      [
+        opening,
+        "",
+        ...Array.from(
+          { length: 60 },
+          (_, index) =>
+            `Step ${index}: check row ${index} of the sheet and note what differs from last month.`,
+        ),
+      ].join("\n");
+    const warmSkills = async (deps: Parameters<typeof autoloadSkills>[1]) => {
+      await autoloadSkills(
+        { trigger: "user", task: "warm the skill vectors up", skills: CATALOG },
+        deps,
+      );
+      await settle();
+    };
+
+    it("sends a digest of at most 400 characters, and matches by meaning", async () => {
+      const calls: string[] = [];
+      const deps = { config: config(env), embedder: embedder(0, calls) };
+      await warmSkills(deps);
+      calls.length = 0;
+      const task = long("Rewrite the attached draft so that it reads as if a person wrote it.");
+      expect(task.length).toBeGreaterThan(3_000);
+      const result = await autoloadSkills({ trigger: "bot_message", task, skills: CATALOG }, deps);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.length).toBeLessThanOrEqual(400);
+      expect(calls[0]).toContain("as if a person wrote it");
+      expect(result.log.method).toBe("lexical+embeddings");
+      expect(result.log.embed).toMatchObject({ source: "request", chars: calls[0]!.length });
+      expect(result.log.candidates.find(({ name }) => name === "Plain Voice")?.similarity).toBe(1);
+    });
+
+    it("SKILL_AUTOLOAD_EMBED_CHARS sets how much is sent; 4000 is the whole text as before", async () => {
+      const calls: string[] = [];
+      const task = long("Rewrite the attached draft so that it reads as if a person wrote it.");
+      for (const [chars, sent] of [
+        ["4000", 4_000],
+        ["150", 150],
+      ] as const) {
+        const deps = {
+          config: config({ ...env, SKILL_AUTOLOAD_EMBED_CHARS: chars }),
+          embedder: embedder(0, calls),
+        };
+        resetSkillVectorCache();
+        await warmSkills(deps);
+        calls.length = 0;
+        await autoloadSkills({ trigger: "user", task, skills: CATALOG }, deps);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]!.length).toBeLessThanOrEqual(sent);
+        expect(calls[0]!.length).toBeGreaterThan(sent * 0.6);
+      }
+    });
+
+    it("embeds a helper's task, not the paragraphs every helper gets", async () => {
+      const calls: string[] = [];
+      const deps = { config: config(env), embedder: embedder(0, calls) };
+      await warmSkills(deps);
+      calls.length = 0;
+      const brief = helperPrompt({
+        name: "writer",
+        task: long("Rewrite the attached draft so that it reads as if a person wrote it."),
+        instructions: "",
+      });
+      await autoloadSkills({ trigger: "helper", task: brief, skills: CATALOG }, deps);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatch(/^Rewrite the attached draft/);
+      expect(calls[0]).not.toContain("background helper");
+    });
+
+    it("asks once when it is asked for early, and the run waits only for what is left", async () => {
+      const calls: string[] = [];
+      const deps = { config: config(env), embedder: embedder(120, calls) };
+      await warmSkills({ ...deps, embedder: embedder(0) });
+      const task = long("File the supplier invoices of the quarter in the ledger.");
+      warmTaskVector({ trigger: "helper_result", task }, deps);
+      expect(calls).toHaveLength(1);
+      // Other assembly work happens here.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const result = await autoloadSkills(
+        { trigger: "helper_result", task, skills: CATALOG },
+        deps,
+      );
+      expect(calls).toHaveLength(1);
+      expect(result.log.method).toBe("lexical+embeddings");
+      expect(result.log.embed?.source).toBe("early");
+      expect(result.log.embed!.waitMs).toBeLessThan(90);
+      // Asked for early enough, there is nothing left to wait for.
+      const other = long("Plan the flights and the hotel for the conference trip.");
+      warmTaskVector({ trigger: "user", task: other }, deps);
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      const ready = await autoloadSkills({ trigger: "user", task: other, skills: CATALOG }, deps);
+      expect(ready.log.embed).toMatchObject({ source: "cache" });
+      expect(ready.log.embed!.waitMs).toBeLessThan(20);
+      expect(calls).toHaveLength(2);
+    });
+
+    it("keeps the vector of a request that outlived the wait, for the next attempt", async () => {
+      const calls: string[] = [];
+      const slow = {
+        config: config({ ...env, SKILL_AUTOLOAD_TIMEOUT_MS: "50" }),
+        embedder: embedder(150, calls),
+      };
+      await warmSkills({ ...slow, embedder: embedder(0) });
+      const task = long("File the supplier invoices of the quarter in the ledger.");
+      const first = await autoloadSkills({ trigger: "user", task, skills: CATALOG }, slow);
+      expect(first.log.note).toBe("embeddings timed out or unavailable");
+      expect(first.log.embed!.waitMs).toBeLessThan(140);
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      const second = await autoloadSkills({ trigger: "user", task, skills: CATALOG }, slow);
+      expect(second.log.method).toBe("lexical+embeddings");
+      expect(second.log.embed?.source).toBe("cache");
+      expect(calls).toHaveLength(1);
+    });
+
+    it("does not pile requests on an endpoint that is behind", async () => {
+      const calls: string[] = [];
+      const deps = { config: config(env), embedder: embedder(200, calls) };
+      await warmSkills({ ...deps, embedder: embedder(0) });
+      for (let index = 0; index < 12; index += 1)
+        warmTaskVector(
+          {
+            trigger: "user",
+            task: long(`Compare vendor contract number ${index} with the renewal terms.`),
+          },
+          deps,
+        );
+      expect(calls).toHaveLength(8);
+      const started = Date.now();
+      const result = await autoloadSkills(
+        {
+          trigger: "user",
+          task: long("Compare vendor contract number 11 with the renewal terms."),
+          skills: CATALOG,
+        },
+        deps,
+      );
+      expect(result.log.note).toBe("embeddings busy");
+      expect(result.log.embed?.source).toBe("busy");
+      expect(Date.now() - started).toBeLessThan(100);
+    });
+
+    it("asks for nothing early when it would not be used", () => {
+      const calls: string[] = [];
+      const on = { config: config(env), embedder: embedder(0, calls) };
+      const task = long("File the supplier invoices of the quarter in the ledger.");
+      warmTaskVector({ trigger: "created", task }, on);
+      warmTaskVector({ trigger: "talk", task }, on);
+      // A short message may borrow the request before it; only the later step knows.
+      warmTaskVector({ trigger: "user", task: "ok, go" }, on);
+      warmTaskVector(
+        { trigger: "user", task },
+        { ...on, config: config({ ...env, SKILL_AUTOLOAD: "0" }) },
+      );
+      warmTaskVector(
+        { trigger: "user", task },
+        { ...on, config: config({ ...env, SKILL_AUTOLOAD_EMBEDDINGS: "0" }) },
+      );
+      warmTaskVector(
+        { trigger: "user", task },
+        { config: config({}), embedder: embedder(0, calls) },
+      );
+      expect(calls).toEqual([]);
+      warmTaskVector({ trigger: "user", task }, on);
+      expect(calls).toHaveLength(1);
+    });
   });
 
   it("a slow embeddings service is not waited for: the lexical result stands", async () => {
