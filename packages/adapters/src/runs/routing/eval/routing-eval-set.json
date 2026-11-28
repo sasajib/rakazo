@@ -1,730 +1,697 @@
 {
- "contexts": {
-  "blog": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Write a 1500-word blog post about our Q1 product launch for the company site.",
-     "progress": "Drafting section 2 of 5: what we shipped in January."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Write a 1500-word blog post about our Q1 product launch for the company site."
-    },
-    {
-     "role": "agent",
-     "text": "On it. I'll outline five sections and draft them one by one."
-    }
-   ]
-  },
-  "banner": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Design a wide web banner for the Dhaka meetup using our logo.",
-     "progress": "First draft done with the blue logo on a dark background; refining the type now."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Design a wide web banner for the Dhaka meetup using our logo."
-    },
-    {
-     "role": "agent",
-     "text": "First draft is up with the blue logo. Tweaking the fonts next."
-    }
-   ]
-  },
-  "sales": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Pull the February sales numbers from the shop database and make a bar chart.",
-     "progress": "Querying the February orders table."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Pull the February sales numbers and make a bar chart."
-    },
-    {
-     "role": "agent",
-     "text": "Querying the February orders now."
-    }
-   ]
-  },
-  "dinner": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "waiting_question",
-     "request": "Book a table for four for dinner on Friday near Gulshan.",
-     "progress": "Found three places with tables at 7:30.",
-     "question": {
-      "text": "Which restaurant should I book: Izumi, Bistro C, or Spitfire?",
-      "options": [
-       "Izumi",
-       "Bistro C",
-       "Spitfire"
+  "contexts": {
+    "blog": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Write a 1500-word blog post about our Q1 product launch for the company site.",
+          "progress": "Drafting section 2 of 5: what we shipped in January."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Write a 1500-word blog post about our Q1 product launch for the company site."
+        },
+        {
+          "role": "agent",
+          "text": "On it. I'll outline five sections and draft them one by one."
+        }
       ]
-     }
+    },
+    "banner": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Design a wide web banner for the Dhaka meetup using our logo.",
+          "progress": "First draft done with the blue logo on a dark background; refining the type now."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Design a wide web banner for the Dhaka meetup using our logo."
+        },
+        {
+          "role": "agent",
+          "text": "First draft is up with the blue logo. Tweaking the fonts next."
+        }
+      ]
+    },
+    "sales": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Pull the February sales numbers from the shop database and make a bar chart.",
+          "progress": "Querying the February orders table."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Pull the February sales numbers and make a bar chart."
+        },
+        {
+          "role": "agent",
+          "text": "Querying the February orders now."
+        }
+      ]
+    },
+    "dinner": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "waiting_question",
+          "request": "Book a table for four for dinner on Friday near Gulshan.",
+          "progress": "Found three places with tables at 7:30.",
+          "question": {
+            "text": "Which restaurant should I book: Izumi, Bistro C, or Spitfire?",
+            "options": ["Izumi", "Bistro C", "Spitfire"]
+          }
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Book a table for four for dinner on Friday near Gulshan."
+        },
+        {
+          "role": "agent",
+          "text": "Which restaurant should I book: Izumi, Bistro C, or Spitfire?"
+        }
+      ]
+    },
+    "two": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Translate the onboarding document into Bangla.",
+          "progress": "Translated pages 1-3 of 9."
+        },
+        {
+          "key": "T2",
+          "state": "working",
+          "request": "Find the pricing pages of five competitors and summarise their plans.",
+          "progress": "Collected Asana, Trello and Monday so far."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Translate the onboarding document into Bangla."
+        },
+        {
+          "role": "person",
+          "text": "Also, separately: find the pricing pages of five competitors and summarise their plans."
+        },
+        {
+          "role": "agent",
+          "text": "Pricing: Asana, Trello and Monday collected."
+        }
+      ]
+    },
+    "investor": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "waiting_question",
+          "request": "Email the monthly investor update to the investor list.",
+          "progress": "The update is written and the list is loaded.",
+          "question": {
+            "text": "Should I send it from your work address or your personal address?",
+            "options": []
+          }
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Email the monthly investor update to the investor list."
+        },
+        {
+          "role": "agent",
+          "text": "Should I send it from your work address or your personal address?"
+        }
+      ]
+    },
+    "flights": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Research flights from Dhaka to Singapore for next Tuesday.",
+          "progress": "Comparing Biman and Singapore Airlines fares."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Research flights from Dhaka to Singapore for next Tuesday."
+        },
+        {
+          "role": "agent",
+          "text": "Comparing Biman and Singapore Airlines now."
+        }
+      ]
+    },
+    "report": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Make a slide deck from the Q3 board report: 10 slides, our template.",
+          "progress": "Slides 1-4 done: overview, revenue, costs, hiring."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Make a slide deck from the Q3 board report: 10 slides, our template."
+        },
+        {
+          "role": "agent",
+          "text": "Slides 1-4 are done."
+        }
+      ]
+    },
+    "memo": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Write a memo to the team announcing the new leave policy.",
+          "progress": "First draft written, polishing the wording."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Write a memo to the team announcing the new leave policy."
+        },
+        {
+          "role": "agent",
+          "text": "Drafted it; polishing now."
+        }
+      ]
+    },
+    "shop": {
+      "tasks": [
+        {
+          "key": "T1",
+          "state": "working",
+          "request": "Find me a 27-inch 4K monitor under 40000 taka from Star Tech or Ryans.",
+          "progress": "Shortlisted three Dell and LG models."
+        }
+      ],
+      "recent": [
+        {
+          "role": "person",
+          "text": "Find me a 27-inch 4K monitor under 40000 taka."
+        },
+        {
+          "role": "agent",
+          "text": "Shortlisted three Dell and LG models."
+        }
+      ]
     }
-   ],
-   "recent": [
+  },
+  "cases": [
     {
-     "role": "person",
-     "text": "Book a table for four for dinner on Friday near Gulshan."
+      "ctx": "blog",
+      "text": "actually make it shorter",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
     },
     {
-     "role": "agent",
-     "text": "Which restaurant should I book: Izumi, Bistro C, or Spitfire?"
-    }
-   ]
-  },
-  "two": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Translate the onboarding document into Bangla.",
-     "progress": "Translated pages 1-3 of 9."
+      "ctx": "blog",
+      "text": "also add a section with two customer quotes",
+      "expect": "addition",
+      "task": "T1"
     },
     {
-     "key": "T2",
-     "state": "working",
-     "request": "Find the pricing pages of five competitors and summarise their plans.",
-     "progress": "Collected Asana, Trello and Monday so far."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Translate the onboarding document into Bangla."
+      "ctx": "blog",
+      "text": "thanks!",
+      "expect": "addition",
+      "task": "T1"
     },
     {
-     "role": "person",
-     "text": "Also, separately: find the pricing pages of five competitors and summarise their plans."
+      "ctx": "blog",
+      "text": "how far along are you?",
+      "expect": "addition",
+      "task": "T1"
     },
     {
-     "role": "agent",
-     "text": "Pricing: Asana, Trello and Monday collected."
-    }
-   ]
-  },
-  "investor": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "waiting_question",
-     "request": "Email the monthly investor update to the investor list.",
-     "progress": "The update is written and the list is loaded.",
-     "question": {
-      "text": "Should I send it from your work address or your personal address?",
-      "options": []
-     }
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Email the monthly investor update to the investor list."
+      "ctx": "blog",
+      "text": "what's the capital of Australia?",
+      "expect": "new_task"
     },
     {
-     "role": "agent",
-     "text": "Should I send it from your work address or your personal address?"
-    }
-   ]
-  },
-  "flights": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Research flights from Dhaka to Singapore for next Tuesday.",
-     "progress": "Comparing Biman and Singapore Airlines fares."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Research flights from Dhaka to Singapore for next Tuesday."
+      "ctx": "blog",
+      "text": "forget it, we're not publishing that after all",
+      "expect": "override",
+      "task": "T1"
     },
     {
-     "role": "agent",
-     "text": "Comparing Biman and Singapore Airlines now."
-    }
-   ]
-  },
-  "report": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Make a slide deck from the Q3 board report: 10 slides, our template.",
-     "progress": "Slides 1-4 done: overview, revenue, costs, hiring."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Make a slide deck from the Q3 board report: 10 slides, our template."
+      "ctx": "blog",
+      "text": "can you write it in a more casual tone",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
     },
     {
-     "role": "agent",
-     "text": "Slides 1-4 are done."
-    }
-   ]
-  },
-  "memo": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Write a memo to the team announcing the new leave policy.",
-     "progress": "First draft written, polishing the wording."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Write a memo to the team announcing the new leave policy."
+      "ctx": "blog",
+      "text": "can you set a reminder for my dentist tomorrow at 10?",
+      "expect": "new_task"
     },
     {
-     "role": "agent",
-     "text": "Drafted it; polishing now."
-    }
-   ]
-  },
-  "shop": {
-   "tasks": [
-    {
-     "key": "T1",
-     "state": "working",
-     "request": "Find me a 27-inch 4K monitor under 40000 taka from Star Tech or Ryans.",
-     "progress": "Shortlisted three Dell and LG models."
-    }
-   ],
-   "recent": [
-    {
-     "role": "person",
-     "text": "Find me a 27-inch 4K monitor under 40000 taka."
+      "ctx": "blog",
+      "text": "make sure you mention the 30% growth in signups",
+      "expect": "addition",
+      "task": "T1"
     },
     {
-     "role": "agent",
-     "text": "Shortlisted three Dell and LG models."
+      "ctx": "blog",
+      "text": "hmm, 1500 is too much, 600 words max",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "banner",
+      "text": "use the other logo",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "banner",
+      "text": "no, the green one",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "banner",
+      "text": "put the date in the bottom corner too",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "banner",
+      "text": "looks great so far",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "banner",
+      "text": "send me the latest invoice from Acme",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "banner",
+      "text": "make it square, it's for instagram",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "banner",
+      "text": "hold off on that for now",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "sales",
+      "text": "no, I meant the March numbers",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "sales",
+      "text": "and break it down by region",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "sales",
+      "text": "wrong month",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "sales",
+      "text": "while you're at it, what's on my calendar Monday?",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "sales",
+      "text": "a pie chart would be better than bars",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "sales",
+      "text": "is the database slow today?",
+      "accept": ["addition", "new_task"],
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "Izumi",
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "the second one",
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "let's do Spitfire, and make it 8pm",
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "actually skip dinner, get us lunch on Saturday",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "what's the weather going to be on Friday?",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "dinner",
+      "text": "hmm let me think about it",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "can you also order a cake for the table, it's Rafi's birthday",
+      "accept": ["addition", "answer"],
+      "task": "T1"
+    },
+    {
+      "ctx": "two",
+      "text": "for the translation, keep it formal",
+      "accept": ["addition", "override"],
+      "task": "T1"
+    },
+    {
+      "ctx": "two",
+      "text": "stop the pricing one, I already have it",
+      "expect": "override",
+      "task": "T2"
+    },
+    {
+      "ctx": "two",
+      "text": "add Notion to the competitor list",
+      "expect": "addition",
+      "task": "T2"
+    },
+    {
+      "ctx": "two",
+      "text": "nice",
+      "expect": "addition"
+    },
+    {
+      "ctx": "two",
+      "text": "remind me to call mom at 6",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "two",
+      "text": "only the first 5 pages need translating actually",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "investor",
+      "text": "work",
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "investor",
+      "text": "personal, but cc my work one",
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "investor",
+      "text": "don't send it at all yet, the numbers changed",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "investor",
+      "text": "how long has it been waiting?",
+      "accept": ["addition"],
+      "task": "T1"
+    },
+    {
+      "ctx": "investor",
+      "text": "draft a thank-you note to Karim for the intro",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "flights",
+      "text": "actually make it Kuala Lumpur",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "flights",
+      "text": "and check hotels near Marina Bay too",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "flights",
+      "text": "book me a cab to the office for 9am tomorrow",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "flights",
+      "text": "cheaper is better, I don't care which airline",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "flights",
+      "text": "never mind, the trip is off",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "flights",
+      "text": "only direct flights please",
+      "accept": ["addition", "override"],
+      "task": "T1"
+    },
+    {
+      "ctx": "report",
+      "text": "use the new template, not the old one",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "report",
+      "text": "add a slide about the new office at the end",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "report",
+      "text": "good morning!",
+      "accept": ["addition", "new_task"]
+    },
+    {
+      "ctx": "report",
+      "text": "8 slides is enough",
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "report",
+      "text": "who won the match last night?",
+      "expect": "new_task"
+    },
+    {
+      "ctx": "report",
+      "text": "please hurry, the board meets at 3",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "report",
+      "text": "ঠিক আছে, চালিয়ে যাও",
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "report",
+      "text": "না, পুরনো টেমপ্লেট না, নতুনটা ব্যবহার করো",
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "memo",
+      "text": "bit more friendly please",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "memo",
+      "text": "oh wait, it's the remote work policy, not leave",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "replace"
+    },
+    {
+      "ctx": "memo",
+      "text": "cc HR when you send it",
+      "heldout": true,
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "memo",
+      "text": "great, thanks",
+      "heldout": true,
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "memo",
+      "text": "what's 15% of 2400?",
+      "heldout": true,
+      "expect": "new_task"
+    },
+    {
+      "ctx": "memo",
+      "text": "bullet points would read better",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "memo",
+      "text": "scrap the memo, I'll tell them in the meeting",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "replace"
+    },
+    {
+      "ctx": "shop",
+      "text": "either brand is fine",
+      "heldout": true,
+      "accept": ["addition", "override"],
+      "task": "T1"
+    },
+    {
+      "ctx": "shop",
+      "text": "32 inch actually",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1"
+    },
+    {
+      "ctx": "shop",
+      "text": "I'd rather spend up to 50k if it's much better",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "shop",
+      "text": "also check Daraz",
+      "heldout": true,
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "shop",
+      "text": "forget the monitor, I found one",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "replace"
+    },
+    {
+      "ctx": "shop",
+      "text": "how many have you looked at?",
+      "heldout": true,
+      "expect": "addition",
+      "task": "T1"
+    },
+    {
+      "ctx": "shop",
+      "text": "order lunch from Kacchi Bhai for 1pm",
+      "heldout": true,
+      "expect": "new_task"
+    },
+    {
+      "ctx": "shop",
+      "text": "price is what matters most to me",
+      "heldout": true,
+      "accept": ["addition", "override"],
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "dinner",
+      "text": "Bistro C works",
+      "heldout": true,
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "dinner",
+      "text": "none of those, find somewhere in Banani instead",
+      "heldout": true,
+      "task": "T1",
+      "accept": ["override", "answer"]
+    },
+    {
+      "ctx": "investor",
+      "text": "whichever you think is better",
+      "heldout": true,
+      "expect": "answer",
+      "task": "T1"
+    },
+    {
+      "ctx": "flights",
+      "text": "whichever is quicker, price doesn't matter much",
+      "heldout": true,
+      "accept": ["addition", "override"],
+      "task": "T1",
+      "kind": "redirect"
+    },
+    {
+      "ctx": "blog",
+      "text": "tone it down a little",
+      "heldout": true,
+      "expect": "override",
+      "task": "T1",
+      "kind": "redirect"
     }
-   ]
-  }
- },
- "cases": [
-  {
-   "ctx": "blog",
-   "text": "actually make it shorter",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "blog",
-   "text": "also add a section with two customer quotes",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "blog",
-   "text": "thanks!",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "blog",
-   "text": "how far along are you?",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "blog",
-   "text": "what's the capital of Australia?",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "blog",
-   "text": "forget it, we're not publishing that after all",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "blog",
-   "text": "can you write it in a more casual tone",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "blog",
-   "text": "can you set a reminder for my dentist tomorrow at 10?",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "blog",
-   "text": "make sure you mention the 30% growth in signups",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "blog",
-   "text": "hmm, 1500 is too much, 600 words max",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "banner",
-   "text": "use the other logo",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "banner",
-   "text": "no, the green one",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "banner",
-   "text": "put the date in the bottom corner too",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "banner",
-   "text": "looks great so far",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "banner",
-   "text": "send me the latest invoice from Acme",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "banner",
-   "text": "make it square, it's for instagram",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "banner",
-   "text": "hold off on that for now",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "sales",
-   "text": "no, I meant the March numbers",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "sales",
-   "text": "and break it down by region",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "sales",
-   "text": "wrong month",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "sales",
-   "text": "while you're at it, what's on my calendar Monday?",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "sales",
-   "text": "a pie chart would be better than bars",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "sales",
-   "text": "is the database slow today?",
-   "accept": [
-    "addition",
-    "new_task"
-   ],
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "Izumi",
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "the second one",
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "let's do Spitfire, and make it 8pm",
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "actually skip dinner, get us lunch on Saturday",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "what's the weather going to be on Friday?",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "dinner",
-   "text": "hmm let me think about it",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "can you also order a cake for the table, it's Rafi's birthday",
-   "accept": [
-    "addition",
-    "answer"
-   ],
-   "task": "T1"
-  },
-  {
-   "ctx": "two",
-   "text": "for the translation, keep it formal",
-   "accept": [
-    "addition",
-    "override"
-   ],
-   "task": "T1"
-  },
-  {
-   "ctx": "two",
-   "text": "stop the pricing one, I already have it",
-   "expect": "override",
-   "task": "T2"
-  },
-  {
-   "ctx": "two",
-   "text": "add Notion to the competitor list",
-   "expect": "addition",
-   "task": "T2"
-  },
-  {
-   "ctx": "two",
-   "text": "nice",
-   "expect": "addition"
-  },
-  {
-   "ctx": "two",
-   "text": "remind me to call mom at 6",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "two",
-   "text": "only the first 5 pages need translating actually",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "investor",
-   "text": "work",
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "investor",
-   "text": "personal, but cc my work one",
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "investor",
-   "text": "don't send it at all yet, the numbers changed",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "investor",
-   "text": "how long has it been waiting?",
-   "accept": [
-    "addition"
-   ],
-   "task": "T1"
-  },
-  {
-   "ctx": "investor",
-   "text": "draft a thank-you note to Karim for the intro",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "flights",
-   "text": "actually make it Kuala Lumpur",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "flights",
-   "text": "and check hotels near Marina Bay too",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "flights",
-   "text": "book me a cab to the office for 9am tomorrow",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "flights",
-   "text": "cheaper is better, I don't care which airline",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "flights",
-   "text": "never mind, the trip is off",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "flights",
-   "text": "only direct flights please",
-   "accept": [
-    "addition",
-    "override"
-   ],
-   "task": "T1"
-  },
-  {
-   "ctx": "report",
-   "text": "use the new template, not the old one",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "report",
-   "text": "add a slide about the new office at the end",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "report",
-   "text": "good morning!",
-   "accept": [
-    "addition",
-    "new_task"
-   ]
-  },
-  {
-   "ctx": "report",
-   "text": "8 slides is enough",
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "report",
-   "text": "who won the match last night?",
-   "expect": "new_task"
-  },
-  {
-   "ctx": "report",
-   "text": "please hurry, the board meets at 3",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "report",
-   "text": "ঠিক আছে, চালিয়ে যাও",
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "report",
-   "text": "না, পুরনো টেমপ্লেট না, নতুনটা ব্যবহার করো",
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "memo",
-   "text": "bit more friendly please",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "memo",
-   "text": "oh wait, it's the remote work policy, not leave",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "replace"
-  },
-  {
-   "ctx": "memo",
-   "text": "cc HR when you send it",
-   "heldout": true,
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "memo",
-   "text": "great, thanks",
-   "heldout": true,
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "memo",
-   "text": "what's 15% of 2400?",
-   "heldout": true,
-   "expect": "new_task"
-  },
-  {
-   "ctx": "memo",
-   "text": "bullet points would read better",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "memo",
-   "text": "scrap the memo, I'll tell them in the meeting",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "replace"
-  },
-  {
-   "ctx": "shop",
-   "text": "either brand is fine",
-   "heldout": true,
-   "accept": [
-    "addition",
-    "override"
-   ],
-   "task": "T1"
-  },
-  {
-   "ctx": "shop",
-   "text": "32 inch actually",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1"
-  },
-  {
-   "ctx": "shop",
-   "text": "I'd rather spend up to 50k if it's much better",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "shop",
-   "text": "also check Daraz",
-   "heldout": true,
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "shop",
-   "text": "forget the monitor, I found one",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "replace"
-  },
-  {
-   "ctx": "shop",
-   "text": "how many have you looked at?",
-   "heldout": true,
-   "expect": "addition",
-   "task": "T1"
-  },
-  {
-   "ctx": "shop",
-   "text": "order lunch from Kacchi Bhai for 1pm",
-   "heldout": true,
-   "expect": "new_task"
-  },
-  {
-   "ctx": "shop",
-   "text": "price is what matters most to me",
-   "heldout": true,
-   "accept": [
-    "addition",
-    "override"
-   ],
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "dinner",
-   "text": "Bistro C works",
-   "heldout": true,
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "dinner",
-   "text": "none of those, find somewhere in Banani instead",
-   "heldout": true,
-   "task": "T1",
-   "accept": [
-    "override",
-    "answer"
-   ]
-  },
-  {
-   "ctx": "investor",
-   "text": "whichever you think is better",
-   "heldout": true,
-   "expect": "answer",
-   "task": "T1"
-  },
-  {
-   "ctx": "flights",
-   "text": "whichever is quicker, price doesn't matter much",
-   "heldout": true,
-   "accept": [
-    "addition",
-    "override"
-   ],
-   "task": "T1",
-   "kind": "redirect"
-  },
-  {
-   "ctx": "blog",
-   "text": "tone it down a little",
-   "heldout": true,
-   "expect": "override",
-   "task": "T1",
-   "kind": "redirect"
-  }
- ]
+  ]
 }
