@@ -81,7 +81,7 @@ type Dependencies = {
 const vectors = new Map<string, number[]>();
 const pending = new Set<string>();
 const VECTOR_CACHE_MAX = 4_000;
-const WARM_PER_RUN = 24;
+const WARM_PER_RUN = 8;
 
 let sharedEmbedder: { url: string | undefined; embedder: Embedder | undefined } | undefined;
 function defaultEmbedder(config: SkillAutoloadConfig): Embedder | undefined {
@@ -156,9 +156,40 @@ async function taskSimilarity(
   };
 }
 
+/**
+ * Matches the run's task to its skills and renders the block. Never throws: whatever goes wrong
+ * (a malformed skill row, a bad setting), the run starts with the catalog only and the log says why.
+ */
 export async function autoloadSkills(
   input: SkillAutoloadInput,
   dependencies: Dependencies = {},
+): Promise<SkillAutoloadResult> {
+  try {
+    return await matchAndRender(input, dependencies);
+  } catch (error) {
+    return {
+      block: { bytes: 0, skills: [], omitted: [] },
+      log: {
+        trigger: input.trigger,
+        method: "skipped",
+        note: `failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200),
+        skills: input.skills.length,
+        taskWords: 0,
+        usedEarlier: false,
+        candidates: [],
+        chosen: [],
+        truncated: [],
+        omitted: [],
+        bytes: 0,
+        ms: 0,
+      },
+    };
+  }
+}
+
+async function matchAndRender(
+  input: SkillAutoloadInput,
+  dependencies: Dependencies,
 ): Promise<SkillAutoloadResult> {
   const config = dependencies.config ?? skillAutoloadConfig();
   const now = dependencies.now ?? Date.now;

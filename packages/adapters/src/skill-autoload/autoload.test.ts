@@ -177,6 +177,14 @@ describe("skill auto-load: which runs", () => {
     expect(result.log.method).toBe("off");
   });
 
+  it("never throws: a malformed skill row leaves the run with the catalog only", async () => {
+    const broken = { id: "x", name: "Broken", description: undefined, content: "" } as never;
+    const result = await run("file these supplier invoices", { skills: [broken] });
+    expect(result.text).toBeUndefined();
+    expect(result.log.method).toBe("skipped");
+    expect(result.log.note).toMatch(/^failed: /);
+  });
+
   it("is on by default, with bounded settings", () => {
     expect(config()).toMatchObject({
       enabled: true,

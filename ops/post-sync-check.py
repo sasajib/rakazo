@@ -170,6 +170,7 @@ def migrations():
     check("memory ledger idempotency columns exist", psql("select count(*) from information_schema.columns where (table_name='memory_facts' and column_name='textKey') or (table_name='memory_ledger_jobs' and column_name='wroteAt')") == "2")
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")
+    check("Space-pinned skills table exists with row security (1.32)", psql("select count(*) from pg_class where relname = 'space_pinned_skills' and relrowsecurity") == "1")
     check("skill curator tables exist with row security", psql("select count(*) from pg_class where relname in ('skill_learning_settings','skill_learning_jobs','skill_learning_proposals','learned_skills','skill_teaching_sessions') and relrowsecurity") == "5")
     check("plan confirmation tables exist with row security", psql("select count(*) from pg_class where relname in ('agent_plans','plan_settings','plan_trust') and relrowsecurity") == "3")
     check("agent_plans.recipients column exists (plan coverage)", psql("select 1 from information_schema.columns where table_name='agent_plans' and column_name='recipients'") == "1")

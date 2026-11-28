@@ -1179,7 +1179,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   ~3_490 for a 3 KB skill. Three 3 KB skills = 9_619. Three 9 KB skills = 12_924 (first whole, second cut at the
   12_288 budget, third named). A pinned 1.5 KB skill = 1_954 in every run's system prompt. For `user`/`follow_up`
   runs the standing-orders block moved from the turn prompt to the system prompt (same bytes, minus JSON escaping).
-- **Tests:** `skill-autoload/autoload.test.ts` (24: matching, thresholds, short go-ahead, budget, cut note, tag
+- **Tests:** `skill-autoload/autoload.test.ts` (25: matching, thresholds, short go-ahead, budget, cut note, tag
   safety, triggers, kill switch, embeddings fallback/timeout/cache), `executor-skills-rules-triggers.test.ts` (70:
   per trigger x standing / pinned / loaded, selection limits, missing table, both switches),
   `apps/api/src/bots/pinned-skills.postgres.test.ts` (3: RPC + tool + RLS + other member + other Space + cap +
