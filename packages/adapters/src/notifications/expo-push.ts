@@ -62,7 +62,19 @@ export function expoPushData(
     deliveryId,
     ...(spaceId ? { spaceId } : {}),
     ...(message.groupId ? { groupId: message.groupId } : {}),
+    ...(noticeKey(message) ? { noticeKey: noticeKey(message) } : {}),
   };
+}
+
+/**
+ * Fork (1.41): one key per notice, the same on every send of it (a retry, a second process), so a
+ * device shows it once. Kind + run for a finished run, kind + message for a notice about one
+ * message; other notices have none and the device falls back to the per-send `deliveryId`.
+ */
+export function noticeKey(message: Pick<NotificationMessage, "kind" | "runId" | "messageId">) {
+  if (message.kind === "completion" && message.runId) return `completion:${message.runId}`;
+  if (message.messageId) return `${message.kind}:message:${message.messageId}`;
+  return undefined;
 }
 
 /** Android devices with native call support render data-only pushes themselves. */
@@ -340,6 +352,25 @@ export class ExpoPushProvider implements NotificationProvider {
     const delivered = results.some(
       (result) => result.status === "fulfilled" && result.value === "delivered",
     );
+    // Fork (1.41): one line per notice sent, ids only (no title or text), so a reported repeat
+    // can be traced to the sends that made it; the receipt outcome is logged by checkReceipt.
+    getLogger().info("notification.sent", {
+      "notification.kind": message.kind,
+      "notification.key": noticeKey(message),
+      "notification.collapse_id": message.threadId,
+      "notification.devices": registrations.length,
+      "notification.accepted": results.filter(
+        (result) => result.status === "fulfilled" && result.value === "delivered",
+      ).length,
+      "notification.failed": results.filter((result) => result.status === "rejected").length,
+      "run.id": message.runId,
+      "run.trigger": message.trigger,
+      "bot.id": message.botId,
+      "thread.id": message.threadId,
+      "message.id": message.messageId,
+      "user.id": context.userId,
+      "operation.id": context.operationId,
+    });
     const thrown = delivered ? -1 : results.findIndex((result) => result.status === "rejected");
     // The caller reports the failure it is thrown; the rest are logged here, once each.
     for (const [index, result] of results.entries())
@@ -439,6 +470,12 @@ export class ExpoPushProvider implements NotificationProvider {
       getLogger().warn("expo push receipt missing");
       return;
     }
+    // Fork (1.41): the outcome of every receipt, next to its `notification.sent` line.
+    getLogger().info("notification.receipt", {
+      "receipt.status": result.status ?? "unknown",
+      "receipt.error": result.details?.error,
+      "device.digest": receipt.tokenDigest,
+    });
     if (result.status !== "error") return;
     if (result.details?.error === "DeviceNotRegistered") {
       const devices = (await this.tokens.devices?.(receipt.userId)) ?? [];

@@ -1346,6 +1346,11 @@ export interface NotificationMessage {
   groupId?: string;
   /** Unread chats to show on the app icon, when the sender knows them. */
   badge?: number;
+  /**
+   * Fork (1.41): the trigger of the run this notice is about, for the `notification.sent` log and
+   * the repeat guard. Never sent to a device.
+   */
+  trigger?: string;
 }
 
 /** A product-authored transactional email, independent of its delivery vendor. */

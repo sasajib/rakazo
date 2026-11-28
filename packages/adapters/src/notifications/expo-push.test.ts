@@ -391,7 +391,8 @@ describe("expo push", () => {
         notifyContext,
       ),
     ).rejects.toThrow("boom");
-    expect(sink.events).toEqual([]);
+    // Fork (1.41): the ids-only send line is the one event; no error report of its own.
+    expect(sink.events.filter((event) => event.message !== "notification.sent")).toEqual([]);
   });
 
   it("rejects and cancels a declared oversized response", async () => {

@@ -144,7 +144,12 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             # one finished notification for a continued job (1.33): held for a continuation run, sent
             # when the chain ends, dropped when the job goes on or the stalled notice went out
             ("holdsFinishNotice(", 2), ("settleFinishNotice(", 1), ("holdFinishNotice", 2),
-            ("run.finish_notice_held", 1)]
+            ("run.finish_notice_held", 1),
+            # old notifications do not come back (1.41): the repeat guard and its seam, the stable push key,
+            # the send log, the device poller's persisted history and push records
+            ("recipientsAfterRepeatGuard(", 2), ("NOTIFY_REPEAT_GUARD", 2), ("noticeKey(message)", 1),
+            ("notification.sent", 2), ("recordPushedRun(", 2), ("AttentionAlerts(", 2),
+            ("CHAT_WATERMARKS", 1)]
 results = []
 
 
