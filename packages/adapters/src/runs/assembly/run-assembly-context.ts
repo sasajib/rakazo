@@ -30,6 +30,7 @@ import { builtinAgentSkillRecords } from "../../tools/skill-tools.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { buildApprovalContinuation } from "../lifecycle/run-effects.js";
 import { createReplyState } from "../lifecycle/run-progress.js";
+import { chatTasksPromptLine } from "../routing/chat-tasks-prompt.js";
 import { withLatestStepScreenshot, withRecentTurnImages } from "../turn/run-turn-images.js";
 import { missingTurnImagesInstruction } from "../turn/run-turn-images.prompt.js";
 import { checkpointAnswerHistory } from "./checkpoint-answer-history.js";
@@ -356,6 +357,10 @@ export async function buildTurnPrompt(
         ? undefined
         : skillLearningInstruction(skillLearning, task.prompt),
       planInstruction(planState),
+      // Fork (FORK.md 1.42): the task this run serves, beside the chat's other tasks in flight.
+      run.trigger === TALK_RUN_TRIGGER
+        ? undefined
+        : await chatTasksPromptLine(deps.prisma, run, task.prompt).catch(() => undefined),
     ]
       .filter(Boolean)
       .join("\n") || undefined;
