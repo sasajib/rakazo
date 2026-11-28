@@ -116,9 +116,10 @@ describe.skipIf(!enabled)("an organization's MCP server over the API (PostgreSQL
       rpc.mcp.servers.createForOrganization(remote("Team Tools", "team.test")),
     );
     expect(created).toMatchObject({ name: "Team Tools", organization: true, manageable: true });
-    // It is in no one Space: it reads as in the viewer's, and names no Space list of its own.
+    // It is in no one Space: it reads as in the viewer's (upstream's fix since sync 1128b; the
+    // fork's patch sent no list at all).
     expect(created.spaceId).toBe(spaceId);
-    expect(created.availability).toBeUndefined();
+    expect(created.availability).toEqual({ allSpaces: false, spaceIds: [spaceId] });
     const stored = await runAsSystem("organization MCP API check", () =>
       prisma.mcpServer.findUniqueOrThrow({ where: { id: created.id } }),
     );

@@ -50,9 +50,11 @@ const viewer = { spaceId: "space-9", managedOrganizationId: "org-1" };
 
 // FORK.md 1.29.
 describe("an organization's MCP server in a reply (fork)", () => {
-  it("names no Space list, and passes the reply schema", () => {
+  // Upstream fixed the reply at sync 1128b: the server reads as in the viewer's Space. The fork's
+  // own patch (no `availability` at all) is gone; this case keeps the reply schema pinned.
+  it("reads as in the viewer's Space, and passes the reply schema", () => {
     const dto = mcpServerDto(row({ spaceId: null, organizationId: "org-1" }), oauth, viewer);
-    expect(dto.availability).toBeUndefined();
+    expect(dto.availability).toEqual({ allSpaces: false, spaceIds: ["space-9"] });
     expect(dto).toMatchObject({ spaceId: "space-9", organization: true, manageable: true });
     expect(McpServerSchema.safeParse(dto).success).toBe(true);
   });

@@ -329,6 +329,13 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `computer-workspace.test.ts`, `docker-sandbox.test.ts`. Run rakazo-browser tests with `RAKAZO_BROWSER_BINARY=chromium`
   and kill leftovers (`pgrep -af 'scratch/rakazo-browser-'`, never his `--restore-last-session` neo).
 - **Live check:** two throwaway bots, httpbin cookie set/read; concurrent cold start; `ps` shows one browserclaw main process.
+- **Idle close (upstream #6773, sync 1128b):** upstream closes a Team Computer screen with no run on it after 30
+  minutes. The shared screen has no run lease (its holders are many bots), so it read as idle from the moment it was
+  set up. Fork rule: its idle time counts from its last use (`touchLeaselessScreen` in `supervisor-logic.ts`, called
+  from `screens.ts` on every screen request and from the exec route for a shell on the shared display). The shared
+  browser closes 30 minutes after the last bot used it and is set up again, same profile, on the next request; open
+  tabs are lost then. A single command longer than 30 minutes with no other screen use is not covered. Test:
+  `idle-shared-screen.fork.test.ts` (without the rule the browser is closed twice in 80 minutes of use).
 - **Status on bee:** superseded for live use by 1.15 (bots run on bee's desktop), but kept in the fork and the image.
 
 ### 1.15 Host computer = bee's desktop :1 (live screen, Take over, computer_observe/act)
@@ -990,12 +997,12 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `planActionGate`'s `never` line or to the login/card block of
   `prepareToolRequest`; upstream restoring its own Never-ask test.
 
-### 1.29 Organization MCP servers: the reply no longer fails; one unreadable row never takes the list (UPSTREAM BUG, local patch)
-- **Status: upstream bug carried as a local patch. Drop the `mcp-servers.ts` hunk at the next sync if upstream
-  fixed it** (check: `git diff <merge-base> upstream/main -- apps/api/src/integrations/mcp-servers.ts
-  packages/contracts/src/account/space-availability.ts packages/db/src/spaces/availability.ts`, then run
-  `--spec=mcp-organization-servers.fork` on pure upstream: its first case must pass there). The list guard and the
-  reuse rule below are fork features and stay.
+### 1.29 Organization MCP servers: one unreadable row never takes the list (the reply defect itself: fixed upstream, local patch dropped)
+- **Status (sync 1128b): upstream fixed the reply defect, the local `mcp-servers.ts` hunk is gone.** Upstream's
+  `mcpServerDto` now sends `availability` with the viewer's Space for an organization's server
+  (`spaceId: row.spaceId ?? viewer.spaceId`), so `spaceIds` is never empty. The fork's spec
+  `mcp-organization-servers.fork` passes its first case on pure upstream `7364bc727`. The list guard and the
+  reuse rule below are fork features and stay; "Patch (minimal)" below is history.
 - **Defect (found 2026-11-26 on `main-1126b`, same on pure upstream `50de80b1f`, still there at `6d816462a`):**
   upstream #6827 (`20270102120000_organization_mcp_servers`) lets an organization own a server: the row has
   `organizationId` and NULL `userId` / `spaceId`. `mcpServerDto` (upstream `apps/api/src/integrations/mcp-servers.ts:107`
@@ -1518,6 +1525,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (`feat/agent-skill-assign-tool`, 1.17a) merged into `integrate/1126` on fork `main` `6ae098ad1`; see §4 (2026-11-26).
 - `938172ba2` (`fix/journeys-1126`, 1.3 + gate 4b), `9691dd126` (`fix/reload-askfirst-1126`, 1.27, 1.28) merged into
   `integrate/1126c` on fork `main` `051c16885`; 1.29 committed on top; see §4 (2026-11-26 c).
+- `555b31186` merged upstream `50de80b1f..7364bc727` (78 commits) into `sync/upstream-1128`; see §4 (2026-11-28 b).
 - `0b1bafb9b` (`fix/tools-reliability-1128`, 1.36-1.39), `e4a85162c` (`fix/skills-rules-autoload-1128`, 1.32),
   `0b2dba677` (`fix/long-task-continuity-1128`, 1.33) merged into `integrate/1128` on fork `main` `6573e5f6a`; the
   one-finished-notification rule (1.33) committed on top; see §4 (2026-11-28).
