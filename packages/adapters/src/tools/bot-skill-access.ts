@@ -9,6 +9,7 @@
  * when the owner names a bot.
  */
 import type { PrismaClient } from "@rakazo/db";
+import { loadPinnedSkillRefs } from "../skill-autoload/pinned.js";
 
 export const BUILTIN_SKILL_ID_PREFIX = "builtin:";
 
@@ -17,6 +18,11 @@ export type BotSkillSelection = {
   skillIds: ReadonlySet<string>;
   /** Built-in skill names the owner unticked for the bot. */
   excludedBuiltins: ReadonlySet<string>;
+  /**
+   * Fork (1.32): skills pinned for every agent of the Space (stored id or `builtin:<name>`). They
+   * stay open to the bot whatever was chosen or unticked for it.
+   */
+  pinned?: ReadonlySet<string>;
 };
 
 type SelectionClient = Pick<PrismaClient, "botSkillSelection">;
@@ -41,6 +47,20 @@ export async function loadBotSkillSelection(
   };
 }
 
+/**
+ * What a run of the bot may use: its own selection plus the skills pinned for the Space. Null
+ * when the bot has no selection (it uses every skill, so a pin adds nothing to the list).
+ */
+export async function loadBotSkillAccess(
+  prisma: SelectionClient,
+  owner: { spaceId: string; userId: string; botId?: string | null },
+): Promise<BotSkillSelection | null> {
+  const selection = await loadBotSkillSelection(prisma, owner.botId);
+  if (!selection) return null;
+  const pinned = await loadPinnedSkillRefs(prisma as never, owner);
+  return pinned.length > 0 ? { ...selection, pinned: new Set(pinned) } : selection;
+}
+
 export function isBuiltinSkillId(id: string): boolean {
   return id.startsWith(BUILTIN_SKILL_ID_PREFIX);
 }
@@ -51,6 +71,7 @@ export function botMaySeeSkill(
   skill: { id: string; name: string },
 ): boolean {
   if (!selection) return true;
+  if (selection.pinned?.has(skill.id)) return true;
   if (isBuiltinSkillId(skill.id)) return !selection.excludedBuiltins.has(skill.name);
   return selection.skillIds.has(skill.id);
 }

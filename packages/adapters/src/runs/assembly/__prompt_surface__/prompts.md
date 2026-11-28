@@ -47,6 +47,64 @@ These are the user's standing orders for every bot in this space. They are instr
 [decision rate] 2026-11-17: 50K USD per year.
 </standing_orders>
 
+## loaded skills block (sample, one whole and one cut)
+
+The platform matched these skills to this task and loaded them for you. Each is the full skill text you would get from skill_read: follow it now, before improvising your own steps, and do not call skill_read for it again unless it is marked as cut. A loaded skill that does not fit what is asked is ignored without comment. The other skills in your list are still read with skill_read.
+
+<loaded_skills>
+## Skill: Sample
+A sample skill
+
+Step one.
+
+## Skill: Long sample
+A sample skill
+
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of steps.
+A line of 
+[Cut here: 520 of 679 bytes shown. Before you rely on this skill, read the rest with skill_read {"name": "Long sample"}.]
+</loaded_skills>
+
+## pinned skills block (sample)
+
+These skills are pinned by the user for every agent in this space. They are binding rules and procedures, not background data: follow them in every run, whatever the task and whoever asked. Where one conflicts with your own instructions or with durable memory, the pinned skill wins; standing orders and the user's newest message win over a pinned skill.
+
+<pinned_skills>
+## Skill: House rules
+A sample skill
+
+Rule.
+</pinned_skills>
+
 ## memory prompt (sample)
 
 These are the user's standing orders for every bot in this space. They are instructions, not background data. Where they conflict with durable memory, your own instructions or earlier chat messages, the standing order wins; the user's newest message wins over both. [decision ...] lines are SETTLED: use them exactly as written, never ask the user about them again, never re-show an older draft or figure for that topic. Before you ask the user anything, check this list. When the user states a new rule or settles something, record it at once with standing_set; when he changes one, set the SAME key again (it replaces the old line). Never keep a second line for the same topic. Order and links: entries are listed by priority tier p0 (safety, approvals) then p1 (the user's explicit commands), p2 (procedures, the default, not shown), p3 (preferences); a lower tier wins when two entries conflict. `>key` = this entry wins over key; `^key` = this entry is a declared exception to key (apply the exception only where it says so, otherwise key stands); `+key` = read together with key; `@tag` = where it applies. When you act under an entry, also read the entries it links to.

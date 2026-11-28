@@ -20,7 +20,7 @@ import {
 import {
   addSkillToBotSelection,
   filterSkillsForBot,
-  loadBotSkillSelection,
+  loadBotSkillAccess,
 } from "./bot-skill-access.js";
 import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.prompt.js";
 
@@ -167,7 +167,7 @@ export async function listAgentSkillRecords(
       omit: { files: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     }),
-    loadBotSkillSelection(prisma, owner.botId),
+    loadBotSkillAccess(prisma, owner),
   ]);
   return mergeBuiltinSkills(
     filterSkillsForBot(selection, builtinAgentSkillRecords()),
@@ -208,7 +208,7 @@ export async function skillReadFromTool(
       select: { id: true, name: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     }),
-    loadBotSkillSelection(prisma, owner.botId),
+    loadBotSkillAccess(prisma, owner),
   ]);
   // Builtins already have a document. Stored entries have only a name and ID here.
   const catalog = mergeBuiltinSkills<SkillKey | (SkillRecord & { id: string })>(

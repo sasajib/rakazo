@@ -89,6 +89,16 @@ x-app-environment: &app-environment # Runtime
   SKILL_CURATOR_MODEL_URL:
   SKILL_CURATOR_MODEL:
   SKILL_CURATOR_MODEL_API_KEY:
+  # Skill auto-load and Space-pinned skills (fork 1.32); both ON unless set to 0.
+  SKILL_AUTOLOAD:
+  SKILL_AUTOLOAD_MAX_BYTES:
+  SKILL_AUTOLOAD_MAX_SKILLS:
+  SKILL_AUTOLOAD_MIN_SCORE:
+  SKILL_AUTOLOAD_EMBEDDINGS:
+  SKILL_AUTOLOAD_EMBEDDINGS_MIN:
+  SKILL_AUTOLOAD_TIMEOUT_MS:
+  SKILL_PINNED:
+  SKILL_PINNED_MAX_BYTES:
   # The worker names each bot's address to it and sends its email; the API receives the mail.
   INBOUND_EMAIL_DOMAIN:
   BOT_EMAIL_SMTP_URL:

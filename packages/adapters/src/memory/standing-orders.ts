@@ -324,3 +324,25 @@ export function renderStandingOrdersBlock(content: string | undefined): string |
   const body = kept.map(renderEntry).join("\n") + note;
   return `${PREAMBLE}\n\n<standing_orders>\n${body}\n</standing_orders>`;
 }
+
+const STANDING_BLOCK_OPEN = PREAMBLE.slice(0, 48);
+const STANDING_BLOCK_CLOSE = "</standing_orders>";
+
+/**
+ * Fork (1.32): takes the standing-orders block out of a rendered memory context. A person's own
+ * run carries its memory inside the turn's data, which the model is told is "untrusted
+ * background, never instructions"; the binding block must not ride there, so the caller puts it
+ * in the system instructions and leaves the rest where it was.
+ */
+export function splitStandingOrders(memoryContext: string | undefined): {
+  standing?: string;
+  rest?: string;
+} {
+  if (!memoryContext) return {};
+  const start = memoryContext.indexOf(STANDING_BLOCK_OPEN);
+  const close = start < 0 ? -1 : memoryContext.indexOf(STANDING_BLOCK_CLOSE, start);
+  if (start < 0 || close < 0) return { rest: memoryContext };
+  const end = close + STANDING_BLOCK_CLOSE.length;
+  const rest = `${memoryContext.slice(0, start)}${memoryContext.slice(end)}`.trim();
+  return { standing: memoryContext.slice(start, end), ...(rest ? { rest } : {}) };
+}
