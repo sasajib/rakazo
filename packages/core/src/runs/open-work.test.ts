@@ -95,6 +95,46 @@ describe("a reply's closing lines: does the agent promise more work of its own",
     expect(declaresFurtherWork(reply)).toBe("none");
   });
 
+  // Live test 1128d (and 1128b): a complete answer that opens by narrating the work it contains.
+  const tomatoPlan = [
+    "I understood you want a plan for growing tomatoes on a balcony, and I'm writing it from the loaded skill without tools.",
+    "1. Pick a determinate variety such as Roma or Celebrity that stays under a metre.",
+    "2. Use a 20-litre pot with drainage holes and a loose potting mix with compost.",
+    "3. Give it six to eight hours of sun; a south-facing balcony is best.",
+    "4. Water deeply when the top 2 cm of soil is dry, about every second day in summer.",
+    "5. Feed every two weeks with a tomato fertiliser once the first flowers open.",
+    "6. Stake or cage the plant early and pinch side shoots on indeterminate varieties.",
+  ].join("\n");
+
+  it.each([
+    tomatoPlan,
+    tomatoPlan.replace("I'm writing it", "I am now writing it"),
+    tomatoPlan.replace("and I'm writing it", "so I'm drafting it"),
+    tomatoPlan.replace("I'm writing it", "I'm working on it"),
+    "I understood you want the word, and I'm writing it now.\nready",
+  ])(
+    "a finished answer that narrates its own work in the opening is not a promise: %#",
+    (reply) => {
+      expect(declaresFurtherWork(reply)).toBe("none");
+    },
+  );
+
+  it("a promise in a reply that already carries the work goes to the judge", () => {
+    expect(declaresFurtherWork(`${tomatoPlan}\nI'm continuing with the watering schedule.`)).toBe(
+      "unclear",
+    );
+    // A short status with a promise is still a promise.
+    expect(declaresFurtherWork("Part one is saved. I'm continuing with part two.")).toBe("promise");
+  });
+
+  it("only the closing sentences promise", () => {
+    expect(
+      declaresFurtherWork(
+        "I'm continuing with the import. It took a while. The files are in place. All rows load. The job is finished.",
+      ),
+    ).toBe("none");
+  });
+
   it("knows a question or an offer at the very end", () => {
     expect(replyAsksThePerson("Part one is done. Shall I go on?")).toBe(true);
     expect(replyAsksThePerson("Part one is done. Let me know if you want changes.")).toBe(true);

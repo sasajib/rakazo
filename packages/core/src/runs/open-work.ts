@@ -106,6 +106,23 @@ const MAYBE = new RegExp(
 
 export type OpenWorkPromise = "promise" | "unclear" | "none";
 
+/** How many closing sentences may carry a promise. */
+const CLOSING_SENTENCES = 3;
+
+/** Present-progressive narration of the work ("I'm writing it", "I am now drafting"). */
+const NARRATION: RegExp[] = [PROMISES[0] as RegExp, PROMISES[3] as RegExp];
+
+/**
+ * Text beyond this, besides the promising sentence, means the reply already carries work (a
+ * plan, a text, a result): its promise is put to the judge, never taken as one by the patterns.
+ */
+const DELIVERED_CHARS = 280;
+
+function deliversWork(whole: readonly string[], promising: string): boolean {
+  const rest = whole.filter((sentence) => sentence !== promising).join(" ");
+  return rest.replace(/\s+/g, " ").length > DELIVERED_CHARS;
+}
+
 /**
  * Whether a reply's closing lines promise further work of the agent's own.
  * `promise`: a first-person statement that work follows. `unclear`: future-tense wording, or a
@@ -118,11 +135,26 @@ export function declaresFurtherWork(reply: string): OpenWorkPromise {
   const parts = sentences(closing);
   // The last word is the person's when the reply ends with a question or an offer.
   if (replyAsksThePerson(reply)) return "none";
+  // Fork (live test 1128d): only the closing sentences can promise; the reply's opening sentence
+  // narrating the work in the present ("I understood you want…, and I'm writing it…") never does,
+  // and a promise in a reply that already carries the work goes to the judge instead.
+  const whole = sentences(
+    reply
+      .trim()
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[*_`#>]/g, "")
+      .toLowerCase(),
+  );
+  const opening = whole.length > 1 ? whole[0] : undefined;
+  const closingSentences = parts.slice(-CLOSING_SENTENCES);
   let unclear = false;
-  for (const sentence of parts) {
+  for (const sentence of closingSentences) {
     if (OFFER.test(sentence)) continue;
-    if (PROMISES.some((pattern) => pattern.test(sentence))) return "promise";
-    if (MAYBE.test(sentence)) unclear = true;
+    const narratesOpening =
+      sentence === opening && NARRATION.some((pattern) => pattern.test(sentence));
+    if (!narratesOpening && PROMISES.some((pattern) => pattern.test(sentence)))
+      return deliversWork(whole, sentence) ? "unclear" : "promise";
+    if (MAYBE.test(sentence) && !narratesOpening) unclear = true;
   }
   if (unclear) return "unclear";
   // Mostly non-Latin letters: the patterns above cannot read it.
@@ -326,5 +358,6 @@ export const OPEN_WORK_JUDGE_INSTRUCTIONS = [
   "You read the closing lines of a message an AI agent wrote to the person it works for, at the end of a work session. After this message the agent stops running.",
   'Answer whether the message says the agent itself is going to do MORE work on the task after this message (for example "I\'m continuing with the next part", "next I will fix the tests", "I\'ll report when it is done"), in any language.',
   "Answer false when the work is reported as finished, when the agent offers something or asks a question and waits for the person, when it waits for another party or a scheduled time, or when it only describes what was done.",
+  "Answer false as well when the message itself already contains the work it talks about (the plan, the text, the list, the answer), even if it says it is writing or doing that work: narrating the work that is in the message is not a promise of more.",
   'Reply with JSON only: {"more_work": true} or {"more_work": false}.',
 ].join("\n");

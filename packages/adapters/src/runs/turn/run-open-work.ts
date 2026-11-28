@@ -201,7 +201,13 @@ export async function judgeOpenWorkPromise(
       endpoint,
       messages: [
         { role: "system", content: OPEN_WORK_JUDGE_INSTRUCTIONS },
-        { role: "user", content: JSON.stringify({ closing_lines: replyClosing(reply) }) },
+        {
+          role: "user",
+          content: JSON.stringify({
+            closing_lines: replyClosing(reply),
+            whole_message_chars: reply.trim().length,
+          }),
+        },
       ],
       maxTokens: 4_000,
       timeoutMs: config.judgeTimeoutMs,
