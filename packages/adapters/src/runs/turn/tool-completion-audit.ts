@@ -9,6 +9,7 @@ import { commandExit, commandExitErrorFields } from "./command-exit-audit.js";
 import { redactErrorText } from "./error-redaction.js";
 import type { ToolCallAudit } from "./run-audit.js";
 import { noteToolError, noteToolRefusal, toolCallAudit, toolCallAuditFields } from "./run-audit.js";
+import { markRunStopped, runWasStopped } from "./run-stopped.js";
 import { classifyToolError } from "./tool-error-class.js";
 import type { ToolRefusal } from "./tool-refusal.js";
 import { refusalCode } from "./tool-refusal.js";
@@ -109,12 +110,19 @@ export function toolCompletionAuditPayload(
 }
 
 export async function appendToolCompletionAudit(
-  deps: { events: Pick<ThreadEvents, "append"> },
+  deps: {
+    events: Pick<ThreadEvents, "append">;
+    prisma?: { run?: { findUnique?: (args: never) => Promise<unknown> } };
+  },
   target: { spaceId: string; threadId: string; botId: string; runId: string },
   completion: AgentToolCompletion,
   secrets: string[] = [],
 ): Promise<void> {
   const payload = toolCompletionAuditPayload(completion, secrets);
+  // Fork (FORK.md 1.42): a call that failed because its run was just stopped (the computer work
+  // can be torn down before this worker's next status check) is checked once against the run.
+  if (payload.outcome === "error" && !runWasStopped(target.runId))
+    await stoppedRunCheck(deps, target).catch(() => undefined);
   getLogger().info("agent.tool.completed", {
     "run.id": target.runId,
     "space.id": target.spaceId,
@@ -166,6 +174,11 @@ function toolErrorFields(
   secrets: string[],
 ): Record<string, unknown> {
   if (payload.outcome !== "error") return {};
+  // Fork (FORK.md 1.42): a call its run's Stop ended is not a tool fault.
+  if (runWasStopped(runId)) {
+    noteToolError(runId, "stopped");
+    return { "tool.error_class": "stopped" };
+  }
   const raw =
     completion.error === undefined ? toolResultError(completion.result) : completion.error;
   const message = typeof payload.error === "string" ? payload.error : "";
@@ -252,4 +265,17 @@ export function logLoopGuardStop(
     ...(stop.refusal?.target ? { "tool.target": stop.refusal.target } : {}),
     ...(stop.refusal ? { "tool.refusal": stop.refusal.code } : {}),
   });
+}
+
+async function stoppedRunCheck(
+  deps: { prisma?: { run?: { findUnique?: (args: never) => Promise<unknown> } } },
+  target: { spaceId: string; threadId: string; botId: string; runId: string },
+): Promise<void> {
+  const find = deps.prisma?.run?.findUnique;
+  if (typeof find !== "function") return;
+  const row = (await find.call(deps.prisma?.run, {
+    where: { id: target.runId },
+    select: { status: true },
+  } as never)) as { status?: string } | null;
+  if (row?.status === "cancelled") markRunStopped({ id: target.runId, ...target });
 }

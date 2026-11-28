@@ -31,6 +31,7 @@ import {
   STEERING_RESETS_MAX_PER_RUN,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
 } from "../lifecycle/user-progress.js";
+import { markRunStopped } from "./run-stopped.js";
 import { pauseForAnswer, pauseForTakeover } from "./run-turn-pause.js";
 import { onToolCalled } from "./run-turn-tools.js";
 import { takeoverCheckpointOf } from "./takeover-resume.js";
@@ -187,6 +188,8 @@ async function runLeaseLost(ctx: RunContext, active = () => true) {
   });
   if (!active()) return false;
   if (!still || still.status === "cancelled" || still.leaseOwner !== workerId) {
+    // Fork (FORK.md 1.42): log the stop once; a command it ends completes as `stopped`.
+    if (still?.status === "cancelled") markRunStopped(ctx.run);
     lease.valid = false;
     return true;
   }

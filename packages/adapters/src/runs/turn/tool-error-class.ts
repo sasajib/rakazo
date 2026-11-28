@@ -17,6 +17,8 @@ export const TOOL_ERROR_CLASSES = [
   // Fork (1.37): a command that ran and failed by its own exit code, or was ended by a signal.
   "nonzero_exit",
   "killed",
+  // Fork (1.42): the call ended because its run was stopped (Stop, an override), not a fault.
+  "stopped",
   "unknown",
 ] as const;
 
