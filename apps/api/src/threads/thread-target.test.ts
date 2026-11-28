@@ -4729,6 +4729,7 @@ describe("stopThreadRuns", () => {
       steeringMessage: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       // Fork (1.33): no helper is waiting for a slot.
       queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
       secret: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       computer: {
         findMany: vi.fn().mockImplementation(async ({ where }: { where: unknown }) => {
@@ -4880,6 +4881,7 @@ describe("stopThreadRuns", () => {
       steeringMessage: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       // Fork (1.33): no helper is waiting for a slot.
       queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
       secret: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       computer: { findMany: vi.fn().mockResolvedValue([]) },
       computerExecutionLease: { findMany: vi.fn().mockResolvedValue([]) },
@@ -4994,6 +4996,7 @@ describe("stopThreadRuns", () => {
       steeringMessage: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       // Fork (1.33): no helper is waiting for a slot.
       queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
       secret: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       computer: { findMany: vi.fn() },
       computerExecutionLease: { findMany: vi.fn() },
@@ -5043,6 +5046,7 @@ describe("stopThreadRuns", () => {
       steeringMessage: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
       // Fork (1.33): no helper is waiting for a slot.
       queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
     };
     const $transaction = vi.fn(async (callback: (client: typeof transaction) => unknown) =>
       callback(transaction),

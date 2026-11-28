@@ -2619,15 +2619,85 @@ describeJourneys("required product journeys", () => {
     const results = await Promise.all(
       [1, 2, 3, 4].map(() => startHelper(cookie, bot.id, "keep working on the venue list")),
     );
-    expect(results.filter((result) => "ok" in result)).toHaveLength(3);
-    expect(results.filter((result) => "error" in result)).toHaveLength(1);
+    // Fork (FORK.md 1.33, A2): the helper beyond the cap is accepted and queued, not refused. Still
+    // at most four run; the fifth has a row and a card, and starts when a slot frees.
+    expect(results.filter((result) => "ok" in result)).toHaveLength(4);
+    expect(results.filter((result) => "queued" in result)).toHaveLength(1);
+    expect(results.filter((result) => "error" in result)).toHaveLength(0);
     expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper" } })).toBe(4);
+    expect(await prisma.queuedHelper.count({ where: { botId: bot.id, status: "queued" } })).toBe(1);
     await rpc(app, cookie, "threads/stop", { botId: bot.id });
     expect(
       await prisma.run.count({
         where: { botId: bot.id, trigger: "helper", status: { in: [...ACTIVE_RUN_STATUSES] } },
       }),
     ).toBe(0);
+    // Stop reached the queued one too: nothing starts after it.
+    expect(
+      (
+        await prisma.queuedHelper.findMany({ where: { botId: bot.id }, select: { status: true } })
+      ).map((row) => row.status),
+    ).toEqual(["cancelled"]);
+    expect(await prisma.run.count({ where: { botId: bot.id, trigger: "helper" } })).toBe(4);
+  });
+
+  // Fork (FORK.md 1.33, A3/A4): the whole path through the executor. The scripted runtime keeps no
+  // item itself, so the item is the fixture; everything after it is the platform.
+  it("13g-2: a run that ends with an open item is continued by the platform; a continuation that does nothing tells the owner once", async () => {
+    const { cookie, bot, chat } = await newChief("Open Work");
+    await sendAndWait(app, cookie, bot.id, "hello");
+    const owner = await prisma.thread.findUniqueOrThrow({
+      where: { id: chat.id },
+      select: { spaceId: true, userId: true },
+    });
+    await prisma.scratchpadItem.create({
+      data: {
+        spaceId: owner.spaceId,
+        botId: bot.id,
+        userId: owner.userId!,
+        title: "Write part three",
+        threadId: chat.id,
+      },
+    });
+    await sendAndWait(app, cookie, bot.id, "hello again");
+    const continuations = () =>
+      prisma.run.findMany({
+        where: { threadId: chat.id, clientNonce: { startsWith: "open-work:" } },
+        select: { id: true, status: true, trigger: true, task: { select: { prompt: true } } },
+      });
+    // Nobody sent anything: the platform started the agent again for its open item.
+    await waitForDatabase(async () => {
+      const [run] = await continuations();
+      return run?.status === "completed";
+    });
+    const [continuation, ...more] = await continuations();
+    expect(more).toHaveLength(0);
+    expect(continuation).toMatchObject({ trigger: "follow_up" });
+    expect(continuation!.task.prompt).toContain("Write part three");
+    // It did nothing with the item, so the chain ends and the owner is told, once.
+    await waitForDatabase(async () =>
+      Boolean(
+        (
+          await prisma.openWorkState.findUnique({
+            where: { threadId_botId: { threadId: chat.id, botId: bot.id } },
+          })
+        )?.stalledAt,
+      ),
+    );
+    const told = (
+      await prisma.message.findMany({ where: { threadId: chat.id, role: "system" } })
+    ).filter((message) => JSON.stringify(message.blocks).includes("1 item open: Write part three"));
+    expect(told).toHaveLength(1);
+    expect(JSON.stringify(told[0]!.blocks)).toContain("Stalled:");
+    // The untouched item starts nothing again, whatever is said next.
+    await sendAndWait(app, cookie, bot.id, "hello once more");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(await continuations()).toHaveLength(1);
+    expect(
+      (await prisma.message.findMany({ where: { threadId: chat.id, role: "system" } })).filter(
+        (message) => JSON.stringify(message.blocks).includes("Stalled:"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("13h: a bot starts a helper in the background, answers meanwhile, and passes its result on", async () => {

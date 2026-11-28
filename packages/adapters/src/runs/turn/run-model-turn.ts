@@ -29,6 +29,7 @@ import { failRun, handoffEndedTurn, requeueRunAfterDatabaseOutage } from "../lif
 import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection.js";
 import { applyTool } from "../tools/run-tools.js";
 import { holdAuditSummary, logPromptAudit, releaseAuditSummary } from "./run-audit-run.js";
+import { continueOpenWork } from "./run-open-work.js";
 import { consumeRunEvents } from "./run-turn.js";
 import { claimRunSteering } from "./run-turn-images.js";
 import { continueUnfinishedTask } from "./run-unfinished-task.js";
@@ -81,6 +82,11 @@ export async function runModelTurn(
     // The work is only done if it was done: a run that only announced it is continued once.
     await continueUnfinishedTask(ctx).catch((error) => {
       getLogger().error("continuation check", error);
+    });
+    // Fork (FORK.md 1.33): a run of any trigger that ends with its own work still open, while
+    // nothing else will wake the agent, is continued; a chain that stops moving tells the owner.
+    await continueOpenWork(ctx).catch((error) => {
+      getLogger().error("open work check", error);
     });
     await releaseAuditSummary(deps.prisma, auditTarget(hold, turn)).catch(() => undefined);
   } catch (turnError) {

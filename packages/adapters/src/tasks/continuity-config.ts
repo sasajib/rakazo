@@ -20,7 +20,11 @@ export interface ContinuityConfig {
   helperQueueMax: number;
   /** `OPEN_WORK_CONTINUATION=0`: a run that ends with its own work open is final, as upstream. */
   continueOpenWork: boolean;
-  /** Continuation runs for one task (since the last message a person sent in the chat). */
+  /**
+   * Continuation runs for one task (since the last message a person sent in the chat). A job done
+   * one part per run needs one each, so the limit is generous: what stops a loop is the
+   * no-progress rule, and this only caps a chain that keeps moving.
+   */
   maxContinuations: number;
   /** `OPEN_WORK_JUDGE=0`: an unclear promise in a final reply is never put to the small model. */
   judge: boolean;
@@ -53,9 +57,9 @@ export function continuityConfig(
     queueHelpers: on(env.HELPER_QUEUE),
     helperQueueMax: intEnv(env.HELPER_QUEUE_MAX, 16, 1, 200),
     continueOpenWork: on(env.OPEN_WORK_CONTINUATION),
-    maxContinuations: intEnv(env.OPEN_WORK_MAX_CONTINUATIONS, 8, 1, 100),
+    maxContinuations: intEnv(env.OPEN_WORK_MAX_CONTINUATIONS, 25, 1, 200),
     judge: on(env.OPEN_WORK_JUDGE),
-    judgeTimeoutMs: intEnv(env.OPEN_WORK_JUDGE_TIMEOUT_MS, 6_000, 500, 60_000),
+    judgeTimeoutMs: intEnv(env.OPEN_WORK_JUDGE_TIMEOUT_MS, 12_000, 500, 60_000),
     stalledNotice: on(env.OPEN_WORK_STALLED_NOTICE),
   };
 }

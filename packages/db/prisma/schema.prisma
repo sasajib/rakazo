@@ -784,6 +784,7 @@ model Space {
   capabilityInstallSpaces     CapabilityInstallSpace[]
   shellJobs                   ShellJob[]
   queuedHelpers               QueuedHelper[]
+  openWorkStates              OpenWorkState[]
   botSkillSelections          BotSkillSelection[]
 
   @@unique([id, organizationId])
@@ -1125,6 +1126,7 @@ model Bot {
   emailMessages     BotEmailMessage[]
   shellJobs        ShellJob[]
   queuedHelpers    QueuedHelper[]
+  openWorkStates   OpenWorkState[]
   skillSelection   BotSkillSelection?
 
   @@unique([spaceId, spawnKey])
@@ -1233,6 +1235,7 @@ model Thread {
   routines                    Routine[]
   shellJobs        ShellJob[]
   queuedHelpers    QueuedHelper[]
+  openWorkStates   OpenWorkState[]
 
   @@index([spaceId])
   @@index([spaceId, userId])
@@ -1771,13 +1774,46 @@ model ScratchpadItem {
   title     String
   status    String   @default("open")
   notes     String   @default("")
+  /// Fork (FORK.md 1.33): the chat the agent added the item in. An open item of a chat is that
+  /// chat's open work (run-open-work.ts). Null for items made before, or outside a run.
+  threadId  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([spaceId, botId, status])
   @@index([spaceId, botId, updatedAt])
   @@index([botId, status, updatedAt, id])
+  @@index([threadId, botId, status])
   @@map("scratchpad_items")
+}
+
+/// Fork (FORK.md 1.33): what the open-work rule last did for one agent in one chat. `stalledAt` is
+/// when the owner was told the work stopped moving (or pressed Stop): the same untouched items
+/// start nothing again until the agent moves one of them.
+model OpenWorkState {
+  id                    String    @id @default(cuid())
+  spaceId               String
+  space                 Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  botId                 String
+  bot                   Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  threadId              String
+  thread                Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  /// Continuation runs the platform started in this chat, ever.
+  continuations         Int       @default(0)
+  lastContinuationRunId String?
+  stalledAt             DateTime?
+  /// limit | no_progress | blocked | stopped
+  stalledReason         String?
+  /// The run whose end was reported: one notice per run.
+  stalledRunId          String?
+  openCount             Int       @default(0)
+  noticeMessageId       String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([threadId, botId])
+  @@index([spaceId, botId])
+  @@map("open_work_states")
 }
 
 model TaughtSkill {

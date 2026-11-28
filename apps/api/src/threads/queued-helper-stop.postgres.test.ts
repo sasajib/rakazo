@@ -149,4 +149,34 @@ describePostgres("stopping a chat with queued helpers (PostgreSQL)", () => {
     for (const card of w.cards)
       expect(await cardOf(card)).toMatchObject({ status: "failed", result: "stopped" });
   });
+
+  it("Stop on the chat stands the agent's open items down; Stop on one card does not", async () => {
+    const w = await chatWithQueuedHelpers(1);
+    await runAsSystem("item", () =>
+      prisma.scratchpadItem.create({
+        data: {
+          spaceId: w.spaceId,
+          botId: w.botId,
+          userId: w.spaceId,
+          title: "Write part three",
+          threadId: w.threadId,
+        },
+      }),
+    );
+    const state = () =>
+      runAsSystem("read", () =>
+        prisma.openWorkState.findUnique({
+          where: { threadId_botId: { threadId: w.threadId, botId: w.botId } },
+        }),
+      );
+    const target = { kind: "bot", botId: w.botId, threadId: w.threadId } as const;
+    await runAsSystem("stop", () =>
+      prisma.$transaction(cancelThreadRuns({ spaceId: w.spaceId }, target, undefined, w.cards[0])),
+    );
+    expect(await state()).toBeNull();
+    await runAsSystem("stop", () =>
+      prisma.$transaction(cancelThreadRuns({ spaceId: w.spaceId }, target)),
+    );
+    expect(await state()).toMatchObject({ stalledReason: "stopped", openCount: 1 });
+  });
 });

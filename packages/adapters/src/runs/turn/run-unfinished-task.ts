@@ -1,6 +1,7 @@
 import { continuationPrompt, needsContinuation, PAUSED_FOR_PERSON_EVENT_TYPES } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import type { RunContext } from "../assembly/run-context.js";
+import { delegationOriginId } from "../lifecycle/run-origin.js";
 import { wakeRun } from "../wakeups/wake-run.js";
 import { noteAutoContinuation } from "./run-audit.js";
 
@@ -32,6 +33,9 @@ export async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
       where: { runId: run.id, type: { in: [...PAUSED_FOR_PERSON_EVENT_TYPES] } },
     })) > 0;
   if (!needsContinuation({ ...facts, pausedForPerson })) return;
+  // Fork (1.33): the continuation names the conversation it works for, so a helper it starts is
+  // authorized like one of the run it continues (see delegationOriginId).
+  const originRunId = await delegationOriginId(deps.prisma, { ...run, id: run.id });
   const created = await deps.prisma.$transaction(async (tx) => {
     const nextTask = await tx.task.create({
       data: {
@@ -52,6 +56,7 @@ export async function continueUnfinishedTask(ctx: RunContext): Promise<void> {
         userId: run.userId,
         status: "queued",
         trigger: "follow_up",
+        ...(originRunId ? { delegatedFromRunId: originRunId } : {}),
       },
       select: { id: true },
     });

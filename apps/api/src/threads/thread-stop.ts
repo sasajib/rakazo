@@ -2,6 +2,7 @@ import type { SandboxProvider } from "@rakazo/adapter-kit";
 import {
   cancelComputerRunWork,
   cancelQueuedHelpersInTransaction,
+  disarmOpenWorkInTransaction,
   returnHelperOutcome,
   screenLeaseIdForRun,
   stopThreadShellJobs,
@@ -201,6 +202,14 @@ export function cancelThreadRuns(
       cardMessageId: helperMessageId,
     });
     if (queuedHelpers.eventSeq !== null) eventSeq = queuedHelpers.eventSeq;
+    // Stop means stop: open items of this chat start nothing by themselves afterwards.
+    if (!helperMessageId) {
+      await disarmOpenWorkInTransaction(tx, {
+        spaceId: actor.spaceId,
+        threadId: target.threadId,
+        botIds: target.kind === "bot" ? [target.botId] : target.memberBotIds,
+      });
+    }
     return {
       runIds: ids,
       computers,

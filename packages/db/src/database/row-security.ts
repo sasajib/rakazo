@@ -176,6 +176,7 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "ShellJob",
   // Long-task continuity (fork 1.33).
   "QueuedHelper",
+  "OpenWorkState",
   // Per-agent skills (fork).
   "BotSkillSelection",
   "BotSkill",
