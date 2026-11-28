@@ -14,7 +14,12 @@ import {
 import type { RunContext } from "../assembly/run-context.js";
 import { loadRunOrigin } from "../lifecycle/run-origin.js";
 import type { EndedRun } from "./run-open-work.js";
-import { disarmOpenWorkInTransaction, followOpenWork } from "./run-open-work.js";
+import {
+  disarmOpenWorkInTransaction,
+  followOpenWork,
+  holdsFinishNotice,
+  settleFinishNotice,
+} from "./run-open-work.js";
 
 const describePostgres =
   process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
@@ -486,6 +491,96 @@ describePostgres("open work continuation (PostgreSQL)", () => {
     expect((await follow(w, fresh, { config: continuityConfig() })).decision.action).toBe(
       "continue",
     );
+  });
+
+  it("a job done one part per run sends one finished notification, at the end of the chain", async () => {
+    const w = await world();
+    await userRun(w);
+    const ids: string[] = [];
+    for (const n of [1, 2, 3]) ids.push(await addItem(w, `Write part ${n}`));
+    await ageItems(w);
+    const finished: string[] = [];
+    const held: string[] = [];
+    /** What the turn does after a run completed: hold the notification, ask the rule, settle. */
+    const end = async (run: EndedRun) => {
+      const send = holdsFinishNotice(run) ? async () => void finished.push(run.id) : undefined;
+      if (!send) finished.push(run.id);
+      const outcome = await follow(w, run);
+      if ((await settleFinishNotice(run, outcome, send)) === "held") held.push(run.id);
+      return outcome;
+    };
+    // The run that began the job closes part 1: it is not a continuation, its notice is its own.
+    let ended = await endedRun(w, {}, 2_000);
+    await runAsSystem("done", () =>
+      completeScratchpadItemFromTool(
+        { prisma },
+        { ...scope(w), itemId: ids[0]!, threadId: w.threadId },
+      ),
+    );
+    let outcome = await end(ended);
+    expect(outcome.decision).toEqual({ action: "continue", basis: "items" });
+    expect(finished).toEqual([ended.id]);
+    const parts: string[] = [];
+    for (const itemId of ids.slice(1)) {
+      await runAsSystem("ran", () =>
+        prisma.run.update({
+          where: { id: outcome.continuationRunId! },
+          data: { status: "completed", startedAt: new Date(Date.now() - 2_000) },
+        }),
+      );
+      await runAsSystem("done", () =>
+        completeScratchpadItemFromTool({ prisma }, { ...scope(w), itemId, threadId: w.threadId }),
+      );
+      ended = await continuationRun(outcome.continuationRunId!);
+      parts.push(ended.id);
+      outcome = await end(ended);
+    }
+    // Part 2 was followed by another continuation: no notification. Part 3 closed the last item:
+    // the chain ends and the normal finished notification goes out, once.
+    expect(outcome.decision).toEqual({ action: "none", reason: "no_open_work" });
+    expect(held).toEqual([parts[0]]);
+    expect(finished.slice(1)).toEqual([parts[1]]);
+    expect(await notices(w)).toHaveLength(0);
+  });
+
+  it("a chain that stalls sends the stalled notice and no finished notification beside it", async () => {
+    const w = await world();
+    await userRun(w);
+    await addItem(w, "Write part three");
+    await ageItems(w);
+    const started = await follow(w, await endedRun(w));
+    await runAsSystem("ran", () =>
+      prisma.run.update({
+        where: { id: started.continuationRunId! },
+        data: { status: "completed", startedAt: new Date(Date.now() - 30_000) },
+      }),
+    );
+    const continuation = await continuationRun(started.continuationRunId!);
+    expect(holdsFinishNotice(continuation)).toBe(true);
+    const send = vi.fn(async () => undefined);
+    const stalled = await follow(w, continuation);
+    expect(stalled.decision.action).toBe("stalled");
+    expect(await settleFinishNotice(continuation, stalled, send)).toBe("held");
+    expect(send).not.toHaveBeenCalled();
+    expect(await notices(w)).toHaveLength(1);
+    // With the stalled notice switched off the end of the chain is still told, the normal way.
+    vi.stubEnv("OPEN_WORK_STALLED_NOTICE", "0");
+    const w2 = await world();
+    await userRun(w2);
+    await addItem(w2, "Write part four");
+    await ageItems(w2);
+    const begun = await follow(w2, await endedRun(w2), { config: continuityConfig() });
+    await runAsSystem("ran", () =>
+      prisma.run.update({
+        where: { id: begun.continuationRunId! },
+        data: { status: "completed", startedAt: new Date(Date.now() - 30_000) },
+      }),
+    );
+    const quiet = await continuationRun(begun.continuationRunId!);
+    const end = await follow(w2, quiet, { config: continuityConfig() });
+    expect(end.decision.action).toBe("stalled");
+    expect(await settleFinishNotice(quiet, end, send)).toBe("sent");
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("tells the owner the agent is blocked when a continuation parks its work", async () => {

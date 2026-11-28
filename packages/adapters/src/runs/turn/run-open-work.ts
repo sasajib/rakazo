@@ -531,15 +531,79 @@ async function tellOwnerOnce(
   return posted.messageId;
 }
 
+/** A completed run's "finished" notification, kept back until the open-work rule has spoken. */
+export type HeldFinishNotice = () => Promise<unknown>;
+
+/**
+ * Whether a completed run's "finished" notification waits for the open-work rule: only a run
+ * the platform itself started to continue open work. Such a run is one part of a longer job,
+ * so the owner hears at the end of the chain, not after every part. A run a person, a result
+ * or a schedule started keeps its notification as it was. Rides `OPEN_WORK_CONTINUATION`.
+ */
+export function holdsFinishNotice(
+  run: { trigger: string; clientNonce?: string | null },
+  config: Pick<ContinuityConfig, "continueOpenWork"> = continuityConfig(),
+): boolean {
+  return (
+    config.continueOpenWork &&
+    runIsFollowedForOpenWork(run.trigger) &&
+    (run.clientNonce ?? "").startsWith(OPEN_WORK_NONCE_PREFIX)
+  );
+}
+
+/**
+ * Send or drop a held "finished" notification, given what the rule did for the run:
+ *   - another continuation was started: the job goes on, nothing is sent (the reply is in the chat);
+ *   - the stalled notice went out: that is the owner's notification, a second one would be noise;
+ *   - anything else (work done, something else will wake the agent, the rule failed or is not
+ *     known): the chain ends here as far as the platform knows, and the normal notice is sent.
+ * Unknown always sends: a lost notification is worse than an extra one.
+ */
+export async function settleFinishNotice(
+  run: { id: string; botId: string; threadId: string },
+  outcome: OpenWorkOutcome | undefined,
+  send: HeldFinishNotice | undefined,
+): Promise<"sent" | "held" | "none"> {
+  if (!send) return "none";
+  const why = outcome?.continuationRunId
+    ? "continued"
+    : outcome?.noticeMessageId
+      ? "stalled_notice"
+      : undefined;
+  if (why) {
+    getLogger().info("run.finish_notice_held", {
+      "run.id": run.id,
+      "bot.id": run.botId,
+      "thread.id": run.threadId,
+      "open_work.why": why,
+    });
+    return "held";
+  }
+  await send();
+  return "sent";
+}
+
 /** The turn's seam: called after a run completed. Never throws into the run. */
-export async function continueOpenWork(ctx: RunContext): Promise<void> {
+export async function continueOpenWork(
+  ctx: RunContext,
+  heldFinishNotice?: HeldFinishNotice,
+): Promise<void> {
   const { reply } = ctx.state;
-  await followOpenWork(ctx.deps, {
-    run: { ...ctx.run, id: ctx.runId },
-    botName: ctx.bot.name,
-    replyText: reply.assembled || reply.assistantTurnText || "",
-    toolCallCount: reply.toolCalls.length,
-  });
+  const run = { ...ctx.run, id: ctx.runId };
+  let outcome: OpenWorkOutcome | undefined;
+  try {
+    outcome = await followOpenWork(ctx.deps, {
+      run,
+      botName: ctx.bot.name,
+      replyText: reply.assembled || reply.assistantTurnText || "",
+      toolCallCount: reply.toolCalls.length,
+    });
+  } finally {
+    // Also after a failed check: the notification is then sent, never lost.
+    await settleFinishNotice(run, outcome, heldFinishNotice).catch((error) =>
+      getLogger().error("held finish notification", error),
+    );
+  }
 }
 
 /**

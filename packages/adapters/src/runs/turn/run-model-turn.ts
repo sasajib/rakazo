@@ -32,7 +32,7 @@ import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection
 import { applyTool } from "../tools/run-tools.js";
 import { peekRunAudit } from "./run-audit.js";
 import { holdAuditSummary, logPromptAudit, releaseAuditSummary } from "./run-audit-run.js";
-import { continueOpenWork } from "./run-open-work.js";
+import { continueOpenWork, holdsFinishNotice } from "./run-open-work.js";
 import { consumeRunEvents } from "./run-turn.js";
 import { claimRunSteering } from "./run-turn-images.js";
 import { continueUnfinishedTask } from "./run-unfinished-task.js";
@@ -81,14 +81,15 @@ export async function runModelTurn(
     if (await consumeRunEvents(ctx, runtimeEvents)) return;
     if (await interruptedByShutdown()) return;
     holdAuditSummary(runId);
-    await completeRun(ctx);
+    // Fork (1.33): a continuation run's "finished" notification waits for the open-work check.
+    const completion = await completeRun(ctx, { holdFinishNotice: holdsFinishNotice(ctx.run) });
     // The work is only done if it was done: a run that only announced it is continued once.
     await continueUnfinishedTask(ctx).catch((error) => {
       getLogger().error("continuation check", error);
     });
     // Fork (FORK.md 1.33): a run of any trigger that ends with its own work still open, while
     // nothing else will wake the agent, is continued; a chain that stops moving tells the owner.
-    await continueOpenWork(ctx).catch((error) => {
+    await continueOpenWork(ctx, completion?.heldFinishNotice).catch((error) => {
       getLogger().error("open work check", error);
     });
     await releaseAuditSummary(deps.prisma, auditTarget(hold, turn)).catch(() => undefined);

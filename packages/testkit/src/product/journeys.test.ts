@@ -57,6 +57,7 @@ const describeJourneys = hasDb ? describe : describe.skip;
 let botIntroHarness: BotIntroHarness | undefined;
 
 describeJourneys("required product journeys", () => {
+  const pushed: Array<{ title: string; threadId: string; runId?: string }> = [];
   let app: App;
   let stop: () => Promise<void>;
   let prisma: Awaited<ReturnType<typeof createApp>>["prisma"];
@@ -161,6 +162,12 @@ describeJourneys("required product journeys", () => {
       agentRuntime: "scripted",
       composio: new ComposioConnector({ client: new FakeComposioClient() }),
       connectors: [connector],
+      // Fork (1.33): what would be pushed to the owner's devices, recorded per run.
+      notifications: {
+        describe: () => ({ id: "recording", capabilities: { push: true, email: false } }),
+        send: async (message: { title: string; threadId: string; runId?: string }) =>
+          void pushed.push(message),
+      } as never,
     });
     app = handles.app;
     stop = handles.stop;
@@ -2646,6 +2653,8 @@ describeJourneys("required product journeys", () => {
   // item itself, so the item is the fixture; everything after it is the platform.
   it("13g-2: a run that ends with an open item is continued by the platform; a continuation that does nothing tells the owner once", async () => {
     const { cookie, bot, chat } = await newChief("Open Work");
+    // This agent notifies its owner, so what the job pushes can be counted.
+    await prisma.bot.update({ where: { id: bot.id }, data: { notifyOnFinish: true } });
     await sendAndWait(app, cookie, bot.id, "hello");
     const owner = await prisma.thread.findUniqueOrThrow({
       where: { id: chat.id },
@@ -2690,6 +2699,21 @@ describeJourneys("required product journeys", () => {
     ).filter((message) => JSON.stringify(message.blocks).includes("1 item open: Write part three"));
     expect(told).toHaveLength(1);
     expect(JSON.stringify(told[0]!.blocks)).toContain("Stalled:");
+    // The continuation was one part of the job, not its end: its reply is in the chat, and the
+    // owner's only notification for it is the stalled one. His own runs notified as always.
+    const here = () => pushed.filter((message) => message.threadId === chat.id);
+    expect(
+      await prisma.message.count({ where: { runId: continuation!.id, role: "bot" } }),
+    ).toBeGreaterThan(0);
+    // The stalled notification is sent after its chat line is stored, and it is the last one.
+    await vi.waitFor(
+      () => expect(here().filter((message) => message.title.endsWith(" stalled"))).toHaveLength(1),
+      { timeout: 5_000 },
+    );
+    expect(here().filter((message) => message.runId === continuation!.id)).toEqual([]);
+    expect(
+      here().filter((message) => message.title.endsWith(" finished")).length,
+    ).toBeGreaterThanOrEqual(2);
     // The untouched item starts nothing again, whatever is said next.
     await sendAndWait(app, cookie, bot.id, "hello once more");
     await new Promise((resolve) => setTimeout(resolve, 500));

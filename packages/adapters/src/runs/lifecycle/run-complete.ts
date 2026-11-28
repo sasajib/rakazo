@@ -115,7 +115,16 @@ export async function enqueueConversationRetention(
 }
 
 /** The turn ended: apply a scripted runtime's files and memory, then finalize the reply. */
-export async function completeRun(ctx: RunContext) {
+export async function completeRun(
+  ctx: RunContext,
+  options: {
+    /**
+     * Fork (1.33): keep the "finished" notification back and hand it to the caller, which sends it
+     * once the open-work rule has decided that this run really is the end of the job.
+     */
+    holdFinishNotice?: boolean;
+  } = {},
+): Promise<{ heldFinishNotice?: () => Promise<void> } | undefined> {
   const { deps, run, runId, bot, thread } = ctx;
   const { reply } = ctx.state;
   recordExplicitNoResponse(reply, reply.assistantTurnText);
@@ -191,6 +200,7 @@ export async function completeRun(ctx: RunContext) {
     );
   }
   const notifyBody = completionNotificationPreview(text);
+  let heldFinishNotice: (() => Promise<void>) | undefined;
   // Agent-to-agent work the chat stays read for is not news to the user either.
   if (
     runSendsFinishNotification(run.trigger) &&
@@ -198,23 +208,38 @@ export async function completeRun(ctx: RunContext) {
     notifyBody &&
     !completed.continuationRunId
   ) {
-    await notifyRun(deps, run, {
-      kind: "completion",
-      title: `${displayName(bot.name, "Bot")} finished`,
-      body: notifyBody,
-      botId: bot.id,
-      threadId: thread.id,
-      runId: run.id,
-    });
+    const sendFinishNotice = () =>
+      notifyRun(deps, run, {
+        kind: "completion",
+        title: `${displayName(bot.name, "Bot")} finished`,
+        body: notifyBody,
+        botId: bot.id,
+        threadId: thread.id,
+        runId: run.id,
+      });
+    // Fork (1.33): one part of a continued job is not news by itself; the caller sends this
+    // when the chain ends here, and drops it when the job goes on or the stalled notice went out.
+    if (options.holdFinishNotice) heldFinishNotice = sendFinishNotice;
+    else await sendFinishNotice();
   }
-  // Fork (1.21): a delegated or background run that leaves a card waiting on the person says so.
-  await notifyOpenOwnerCards(deps, run, bot);
-  await enqueueConversationRetention(ctx, answeredMessageIds);
-  // Memory ledger seam (fork): queue the writer for the owner's messages; returns at once.
-  learnAfterRun(ctx);
-  // Skill curator seam (fork): may learn the owner's way of doing this as a skill; returns at once.
-  curateAfterRun(ctx);
-  await enqueueHistoryCompaction(ctx);
+  try {
+    // Fork (1.21): a delegated or background run that leaves a card waiting on the person says so.
+    await notifyOpenOwnerCards(deps, run, bot);
+    await enqueueConversationRetention(ctx, answeredMessageIds);
+    // Memory ledger seam (fork): queue the writer for the owner's messages; returns at once.
+    learnAfterRun(ctx);
+    // Skill curator seam (fork): may learn the owner's way of doing this as a skill; returns at once.
+    curateAfterRun(ctx);
+    await enqueueHistoryCompaction(ctx);
+  } catch (error) {
+    // A held notification is not lost with a failure after it: it goes out as it used to.
+    if (heldFinishNotice)
+      await heldFinishNotice().catch((failed) =>
+        getLogger().error("held finish notification", failed),
+      );
+    throw error;
+  }
+  return heldFinishNotice ? { heldFinishNotice } : undefined;
 }
 
 /** A scripted runtime's turns carry the files and memory it writes. */

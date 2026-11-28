@@ -1268,6 +1268,24 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   and say nothing again until the agent adds, changes or closes one of them. **Stop means stop:** `cancelThreadRuns`
   (`thread-stop.ts`) sets the same mark (`stalledReason: stopped`, `disarmOpenWorkInTransaction`), so pressing Stop is
   not undone by a continuation.
+- **One "finished" notification for a continued job (added at integration, 2026-11-28).** Before, every continuation
+  run that completed sent the normal `<agent> finished` notification: a job of 18 parts done one per run pushed up to
+  18 times. Now the notification of a continuation run (a `follow_up` run whose `clientNonce` starts with
+  `open-work:`) is held until the open-work rule has decided for that run (`holdsFinishNotice`,
+  `settleFinishNotice` in `run-open-work.ts`): another continuation was started → nothing is sent (log
+  `run.finish_notice_held`, `open_work.why: continued`); the stalled / blocked notice went out → only that one
+  (`open_work.why: stalled_notice`); anything else (all open work done, a helper or job or card will wake the agent,
+  the check failed, the stalled notice is switched off) → the normal finished notification, once. The reply of
+  every part is still posted in the chat and marks it unread; only the push and the in-app alert are held.
+  Unknown always sends. **No own switch:** it rides `OPEN_WORK_CONTINUATION` (off = no continuation runs exist, so
+  nothing is held). **Not changed:** the run that began the job (the person's own run, a result run) keeps its own
+  notification, so a continued job notifies twice at most by this path: after the first reply and at the end.
+  A chain that passes through helpers still notifies per result run. Seams: `completeRun(ctx, { holdFinishNotice })`
+  in `runs/lifecycle/run-complete.ts` (upstream file: the `notifyRun` call for `finished` became a closure that is
+  either awaited as before or returned; a failure later in `completeRun` sends it) and the two lines in
+  `run-model-turn.ts`. Tests: `run-open-work.test.ts` (4), `run-open-work.postgres.test.ts` ("a job done one part per
+  run sends one finished notification…", "a chain that stalls sends the stalled notice and no finished notification
+  beside it"), journey `13g-2` (records what would be pushed: none for the continuation run, one `stalled`).
 - **Prompt text (A3):** `openWorkClause` (after the scratchpad and follow-up guidance in `run-instructions.prompt.ts`):
   one open item per part still to do, parked for what waits on someone, and "never end a run by saying you are
   continuing… unless that work is really going on". The scratchpad block's line "it does not wake you" is now

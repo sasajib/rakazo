@@ -136,9 +136,14 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("cancelQueuedHelpersInTransaction(", 3), ("delegationContinuityClause(", 2), ('"QueuedHelper",', 1),
            # open work (1.33 A3/A4): the rule, its seam after a run completes, the wakers, the item's chat,
            # the stalled notice's state, Stop standing the items down, the prompt clause
-           ("decideOpenWork(", 2), ("continueOpenWork(ctx)", 1), ("loadOpenWorkWakers(", 1),
+           ("decideOpenWork(", 2), ("continueOpenWork(ctx, completion?.heldFinishNotice)", 1),
+            ("loadOpenWorkWakers(", 1),
            ("followOpenWork(", 2), ("disarmOpenWorkInTransaction(", 3), ("openWorkClause(", 2),
-           ("OPEN_WORK_NONCE_PREFIX", 2), ("threadId: run.threadId,", 1), ('"OpenWorkState",', 1)]
+           ("OPEN_WORK_NONCE_PREFIX", 2), ("threadId: run.threadId,", 1), ('"OpenWorkState",', 1),
+            # one finished notification for a continued job (1.33): held for a continuation run, sent
+            # when the chain ends, dropped when the job goes on or the stalled notice went out
+            ("holdsFinishNotice(", 2), ("settleFinishNotice(", 1), ("holdFinishNotice", 2),
+            ("run.finish_notice_held", 1)]
 results = []
 
 
