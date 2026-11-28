@@ -119,6 +119,8 @@ export function createHostComputerRunner(options: {
       case "environment":
         yield {
           ...(await provider.environment()),
+          // Fork (1.36): where this bot's commands run, so a path printed by `pwd` maps back.
+          workspace: computer.providerRef,
           ...(options.display ? { display: true } : {}),
         };
         break;

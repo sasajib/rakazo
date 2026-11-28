@@ -33,6 +33,8 @@ export type RunWorkspace = {
   markDirty: () => void;
   context: AdapterContext;
   runSecrets: string[];
+  /** Fork (1.36): the computer home's real path, when the provider reports one. */
+  realRoot?: string;
 };
 
 /** Names the file as the shell sees it: on a Team Computer the shell starts in the bot's home, not the Team root. */
@@ -177,11 +179,11 @@ export async function listFilesFromTool(
   workspace: RunWorkspace,
   args: Record<string, unknown>,
 ) {
-  const { botId, computerMode, computer, context, runSecrets } = workspace;
+  const { botId, computerMode, computer, context, runSecrets, realRoot } = workspace;
   const requestedPath = String(args.path ?? "");
   const entries = await sandbox.listFiles(
     await computer(),
-    resolveBotWorkspacePath(computerMode, botId, requestedPath),
+    resolveBotWorkspacePath(computerMode, botId, requestedPath, realRoot),
     context,
   );
   return {
@@ -205,9 +207,9 @@ export async function readFileFromTool(
   readStoppedFile?: (storedPath: string, maxBytes: number) => Promise<Uint8Array | undefined>,
   modelSeesImages = false,
 ) {
-  const { botId, computerMode, computer, context, runSecrets } = workspace;
+  const { botId, computerMode, computer, context, runSecrets, realRoot } = workspace;
   const filePath = String(args.path ?? "");
-  const storedPath = resolveBotWorkspacePath(computerMode, botId, filePath);
+  const storedPath = resolveBotWorkspacePath(computerMode, botId, filePath, realRoot);
   // Read up to the picture limit whatever the name: the bytes decide, and text keeps its limit below.
   const namedImage = inferAttachmentMimeType(filePath)?.startsWith("image/") === true;
   const maxBytes = TOOL_IMAGE_MAX_BYTES;
@@ -267,7 +269,7 @@ export async function renderPlotFromTool(
   workspace: RunWorkspace,
   finish: (result: unknown) => Promise<unknown>,
 ) {
-  const { botId, computerMode, computer, context, runSecrets } = workspace;
+  const { botId, computerMode, computer, context, runSecrets, realRoot } = workspace;
   if (args.charts !== undefined) {
     const query = typeof args.charts === "string" ? args.charts : undefined;
     return {
@@ -288,7 +290,7 @@ export async function renderPlotFromTool(
     if (!rows && dataPath) {
       const bytes = await deps.sandbox.readFile(
         await computer(),
-        resolveBotWorkspacePath(computerMode, botId, dataPath),
+        resolveBotWorkspacePath(computerMode, botId, dataPath, realRoot),
         context,
         { maxBytes: deps.maxUploadSizeBytes ?? ATTACHMENT_MAX_BYTES },
       );
@@ -306,7 +308,7 @@ export async function renderPlotFromTool(
     await deps.sandbox.writeFile(
       await computer(),
       {
-        path: resolveBotWorkspacePath(computerMode, botId, outPath),
+        path: resolveBotWorkspacePath(computerMode, botId, outPath, realRoot),
         content: png,
       },
       context,

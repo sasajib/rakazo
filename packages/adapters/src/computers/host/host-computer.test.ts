@@ -177,9 +177,23 @@ describe("native host computer transport", () => {
     ).toBe(`${payload}\n`);
     expect(events).toContainEqual({ type: "stderr", data: "unset\n" });
     expect(events.at(-1)).toEqual({ type: "exit", code: 0 });
-    expect(await client.environment(computer, context)).toMatchObject({
-      platform: process.platform,
-    });
+    const environment = await client.environment(computer, context);
+    expect(environment).toMatchObject({ platform: process.platform });
+    // Fork (1.36): the host reports where this bot's commands run, so a `pwd` path maps back.
+    const printed = await collect(
+      client.execute(
+        computer,
+        { argv: [process.execPath, "-e", "console.log(process.cwd())"], env: nodeEnv },
+        context,
+      ),
+    );
+    expect(environment.workspace).toBe(
+      printed
+        .filter((event) => event.type === "stdout")
+        .map((event) => event.data)
+        .join("")
+        .trim(),
+    );
   });
 
   it("uses the host shell for the real shell tool, including PowerShell on Windows", async () => {

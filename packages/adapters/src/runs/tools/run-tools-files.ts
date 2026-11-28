@@ -1,14 +1,18 @@
-import { SecretStoreUnavailableError } from "@rakazo/adapter-kit";
+import { SandboxFileTooLargeError, SecretStoreUnavailableError } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import { ATTACHMENT_MAX_BYTES } from "@rakazo/contracts";
 import {
   inferAttachmentMimeType,
   isBackgroundRunTrigger,
   messageBlockForArtifact,
+  redactSecrets,
 } from "@rakazo/core";
 import type { Artifact, Prisma } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
-import { resolveBotWorkspacePath } from "../../computers/screens/computer-support.js";
+import {
+  resolveBotWorkspacePath,
+  shellPathsEnabled,
+} from "../../computers/screens/computer-support.js";
 import {
   generateMediaFromTool,
   MEDIA_JOB_KIND,
@@ -29,6 +33,7 @@ import {
 import type { RunContext } from "../assembly/run-context.js";
 import { persistMessageInTransaction, runLeaseFor } from "../assembly/run-messages.js";
 import { textContentArg } from "../turn/tool-text.js";
+import { filePathFailure } from "./file-path-failure.js";
 import { readStoppedRunFile } from "./run-stopped-file.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
 import { recordComputerAction } from "./run-tools-computer.js";
@@ -43,7 +48,35 @@ function runWorkspace(ctx: RunContext, call: ToolCall): RunWorkspace {
     markDirty: () => ctx.computer.checkpoint.markDirty(),
     context: ctx.context,
     runSecrets: ctx.secrets,
+    realRoot: ctx.computer.hostEnvironment?.workspace,
   };
+}
+
+/** Fork (1.36): where a path a bot gave lives on its computer; the one resolution every tool uses. */
+export function botStoredPath(ctx: RunContext, requested: string): string {
+  return resolveBotWorkspacePath(
+    ctx.computer.mode,
+    ctx.bot.id,
+    requested,
+    ctx.computer.hostEnvironment?.workspace,
+  );
+}
+
+/** The text for a failure caused by the path itself, or undefined for any other failure. */
+function pathFailure(ctx: RunContext, error: unknown, requested: string): string | undefined {
+  let stored: string | undefined;
+  try {
+    stored = botStoredPath(ctx, requested);
+  } catch {
+    // The refusal itself is the failure being described.
+  }
+  const text = filePathFailure(error, {
+    scope: ctx.computer.mode,
+    botId: ctx.bot.id,
+    requested,
+    stored,
+  });
+  return text === undefined ? undefined : redactSecrets(text, ctx.secrets);
 }
 
 async function artifactGroupId(ctx: RunContext): Promise<string | undefined> {
@@ -165,22 +198,36 @@ export const fileTools: ToolHandlers = {
     const { deps } = ctx;
     const { args } = call;
     const workspace = runWorkspace(ctx, call);
-    return listFilesFromTool(deps.sandbox, workspace, args);
+    try {
+      return await listFilesFromTool(deps.sandbox, workspace, args);
+    } catch (error) {
+      const requested = String(args.path ?? "");
+      const failure = pathFailure(ctx, error, requested);
+      if (failure === undefined) throw error;
+      return { error: failure, path: requested };
+    }
   },
   async read_file(ctx, call) {
     const { deps } = ctx;
     const { args } = call;
     const workspace = runWorkspace(ctx, call);
-    return readFileFromTool(
-      deps.sandbox,
-      workspace,
-      args,
-      (path, maxBytes) => readStoppedRunFile(ctx, path, maxBytes),
-      ctx.computer.modelSeesImages,
-    );
+    try {
+      return await readFileFromTool(
+        deps.sandbox,
+        workspace,
+        args,
+        (path, maxBytes) => readStoppedRunFile(ctx, path, maxBytes),
+        ctx.computer.modelSeesImages,
+      );
+    } catch (error) {
+      const requested = String(args.path ?? "");
+      const failure = pathFailure(ctx, error, requested);
+      if (failure === undefined) throw error;
+      return { error: failure, path: requested };
+    }
   },
   async write_file(ctx, call) {
-    const { deps, bot, context } = ctx;
+    const { deps, context } = ctx;
     const { name, args } = call;
     const filePath = String(args.path ?? "notes/result.txt");
     const content = new TextEncoder().encode(textContentArg(args.content, ""));
@@ -188,13 +235,15 @@ export const fileTools: ToolHandlers = {
     try {
       await deps.sandbox.writeFile(
         await ctx.computer.get("tool", name),
-        { path: resolveBotWorkspacePath(ctx.computer.mode, bot.id, filePath), content },
+        { path: botStoredPath(ctx, filePath), content },
         context,
       );
     } catch (error) {
+      const failure = pathFailure(ctx, error, filePath);
       await recordComputerAction(ctx, call, "write_file", filePath, {
-        error: error instanceof Error ? error.message : "could not write file",
+        error: failure ?? (error instanceof Error ? error.message : "could not write file"),
       });
+      if (failure !== undefined) return call.finish({ error: failure, path: filePath });
       throw error;
     }
     await recordComputerAction(ctx, call, "write_file", filePath, { bytes: content.byteLength });
@@ -280,17 +329,25 @@ export async function readWorkspaceFile(
   call: ToolCall,
   filePath: string,
 ): Promise<{ error: string } | { bytes: Uint8Array }> {
-  const { deps, bot, context } = ctx;
+  const { deps, context } = ctx;
   if (!deps.artifacts) return { error: "artifact storage unavailable" };
   let bytes: Uint8Array;
   try {
     bytes = await deps.sandbox.readFile(
       await ctx.computer.get("tool", call.name),
-      resolveBotWorkspacePath(ctx.computer.mode, bot.id, filePath),
+      botStoredPath(ctx, filePath),
       context,
       { maxBytes: deps.maxUploadSizeBytes ?? ATTACHMENT_MAX_BYTES },
     );
-  } catch {
+  } catch (error) {
+    // Fork (1.36): say which of the three it was; "not found or unreadable" hid a refused path
+    // and a file over the limit behind the same words.
+    const failure = pathFailure(ctx, error, filePath);
+    if (failure !== undefined) return { error: failure };
+    if (error instanceof SandboxFileTooLargeError && shellPathsEnabled())
+      return {
+        error: `file is over the ${Math.floor(error.maxBytes / 1024 / 1024)} MB this computer can attach`,
+      };
     return { error: "file not found or unreadable" };
   }
   if (!inferAttachmentMimeType(filePath)) return { error: "unsupported attachment type" };

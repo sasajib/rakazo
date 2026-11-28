@@ -5,6 +5,7 @@ import {
   resolveBotUploadPath,
   resolveBotWorkspaceCwd,
   resolveBotWorkspacePath,
+  shellPathsEnabled,
   teamBotWorkspaceDirectory,
   workspaceCwd,
   workspacePath,
@@ -195,5 +196,96 @@ describe("resolveBotUploadPath", () => {
     expect(() => resolveBotUploadPath("team", "bot-1", "bots/bot-2/secret.txt")).toThrow(
       /escapes the bot workspace/,
     );
+  });
+});
+
+// Fork (1.36): one path resolution for the shell and the file tools.
+describe("a path with .. resolves the way the shell resolves it", () => {
+  it("ends in the bot's folder or in shared/ on a Team Computer", () => {
+    expect(resolveBotWorkspacePath("team", "bot-1", "../../shared/skills/x/SKILL.md")).toBe(
+      "shared/skills/x/SKILL.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", String.raw`..\..\shared\a.md`)).toBe(
+      "shared/a.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", "book/../notes/./a.md")).toBe(
+      "bots/bot-1/notes/a.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", "../bot-1/a.md")).toBe("bots/bot-1/a.md");
+    expect(resolveBotWorkspacePath("team", "bot-1", "shared/site/../brief.md")).toBe(
+      "shared/brief.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", "/bots/bot-1/x/../a.md")).toBe(
+      "bots/bot-1/a.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", "~/shared/x/../a.md")).toBe("shared/a.md");
+    expect(resolveBotWorkspaceCwd("team", "bot-1", "../../shared/site")).toBe("shared/site");
+  });
+
+  it("refuses every other place, naming what the path resolved to and the base", () => {
+    for (const [given, resolved] of [
+      ["../bot-2/a.md", "bots/bot-2/a.md"],
+      ["../../.config/x", ".config/x"],
+      ["../..", "the computer home"],
+      ["../../..", "a folder above the home"],
+      ["shared/../../x", "a folder above the home"],
+      ["bots/bot-1/../bot-2/a.md", "bots/bot-2/a.md"],
+    ] as const) {
+      expect(() => resolveBotWorkspacePath("team", "bot-1", given), given).toThrow(
+        `Path escapes the computer workspace: ${JSON.stringify(given)} resolves to ${JSON.stringify(resolved)}; relative paths start in your folder bots/bot-1`,
+      );
+    }
+  });
+
+  it("stays inside the root of a private workspace", () => {
+    expect(resolveBotWorkspacePath("dedicated", "bot-1", "notes/../a.md")).toBe("a.md");
+    expect(resolveBotWorkspacePath("dedicated", "bot-1", "/notes/../a.md")).toBe("/a.md");
+    expect(() => resolveBotWorkspacePath("dedicated", "bot-1", "../a.md")).toThrow(
+      'Path escapes the computer workspace: "../a.md" resolves to "a folder above the root"',
+    );
+  });
+
+  it("maps the computer home's real path back, and nothing beside it", () => {
+    const real = "/srv/computers/abc";
+    expect(resolveBotWorkspacePath("team", "bot-1", `${real}/bots/bot-1/a.md`, real)).toBe(
+      "bots/bot-1/a.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", `${real}/shared/a.md`, `${real}/`)).toBe(
+      "shared/a.md",
+    );
+    expect(resolveBotWorkspacePath("team", "bot-1", real, real)).toBe("");
+    expect(resolveBotWorkspacePath("dedicated", "bot-1", `${real}/a.md`, real)).toBe("/a.md");
+    // A sibling folder with the same prefix is not the home.
+    expect(resolveBotWorkspacePath("team", "bot-1", `${real}x/a.md`, real)).toBe(
+      "srv/computers/abcx/a.md",
+    );
+    expect(() => resolveBotWorkspacePath("team", "bot-1", `${real}/../other/a.md`, real)).toThrow(
+      "Path escapes the computer workspace",
+    );
+  });
+
+  it("shows a listing from the bot's folder only when the .. request ends inside it", () => {
+    expect(displayBotWorkspacePath("team", "bot-1", "book/..", "bots/bot-1/notes")).toBe("notes");
+    expect(displayBotWorkspacePath("team", "bot-1", "../../shared", "shared/site")).toBe(
+      "shared/site",
+    );
+  });
+
+  it("FILE_TOOL_SHELL_PATHS switches it off", () => {
+    expect(shellPathsEnabled({})).toBe(true);
+    expect(shellPathsEnabled({ FILE_TOOL_SHELL_PATHS: "1" })).toBe(true);
+    expect(shellPathsEnabled({ FILE_TOOL_SHELL_PATHS: " Off " })).toBe(false);
+    const previous = process.env.FILE_TOOL_SHELL_PATHS;
+    process.env.FILE_TOOL_SHELL_PATHS = "0";
+    try {
+      expect(() => resolveBotWorkspacePath("team", "bot-1", "../../shared/a.md")).toThrow(
+        /^Path escapes the computer workspace$/,
+      );
+      expect(resolveBotWorkspacePath("dedicated", "bot-1", "notes/../a.md")).toBe("notes/../a.md");
+      expect(resolveBotWorkspacePath("team", "bot-1", "/srv/c/a.md", "/srv/c")).toBe("srv/c/a.md");
+    } finally {
+      if (previous === undefined) delete process.env.FILE_TOOL_SHELL_PATHS;
+      else process.env.FILE_TOOL_SHELL_PATHS = previous;
+    }
   });
 });

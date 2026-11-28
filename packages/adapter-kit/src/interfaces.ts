@@ -124,7 +124,16 @@ export interface SandboxProvider {
   environment?(
     computer: ComputerRef,
     context: AdapterContext,
-  ): Promise<{ platform: string; home: string; shell: string } | undefined>;
+  ): Promise<
+    | {
+        platform: string;
+        home: string;
+        shell: string;
+        /** Fork (1.36): the real path of this computer's home directory, where commands run. */
+        workspace?: string;
+      }
+    | undefined
+  >;
   /** Optional live browser on the same leased screen as observe/act. */
   pageBrowser?(
     computer: ComputerRef,

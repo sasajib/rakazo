@@ -8,6 +8,7 @@ import { getLogger } from "@rakazo/logging";
 import type { PoolClient } from "pg";
 import { reconcileCallRequests } from "../../calls/call-request.js";
 import { scheduleComputerControlExpiry } from "../../computers/screens/computer-control.js";
+import { returnStoppedBotMessageOutcomes } from "../../messaging/bot-message-stopped.js";
 import { returnBotMessageOutcome } from "../../messaging/bot-messages.js";
 import { returnHelperOutcome } from "../../tasks/background-helpers.js";
 import { messageBlocksText } from "../assembly/run-replies.prompt.js";
@@ -327,6 +328,11 @@ export function createJobReconciler(
             }
           }),
         );
+        // Fork (1.39): a delegated run the user stopped, or retired by replying to its question.
+        await returnStoppedBotMessageOutcomes(
+          { prisma: deps.prisma, jobs: deps.jobs, events },
+          { now, batchSize, report },
+        ).catch((error) => report("stopped bot message outcomes", error));
         // A background helper whose result did not go back yet: a crash after it ended, or a
         // stop. A stopped helper only settles its card; anything else answers in the chat.
         const helpers = await deps.prisma.run.findMany({

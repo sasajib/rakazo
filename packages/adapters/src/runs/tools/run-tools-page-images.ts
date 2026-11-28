@@ -114,7 +114,12 @@ async function pictureBytes(
   try {
     return await deps.sandbox.readFile(
       await ctx.computer.get("tool", call.name),
-      resolveBotWorkspacePath(ctx.computer.mode, bot.id, source),
+      resolveBotWorkspacePath(
+        ctx.computer.mode,
+        bot.id,
+        source,
+        ctx.computer.hostEnvironment?.workspace,
+      ),
       context,
       { maxBytes: PAGE_IMAGE_SOURCE_MAX_BYTES },
     );

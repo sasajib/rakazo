@@ -1090,6 +1090,166 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Not covered:** the roster of one bot (a single read keeps the per-bot endpoint: one info line); other per-bot
   reads a client may make for a bot removed while its chat is open (`threads/get`): same info line, no client change.
 
+### 1.36 File tools take the paths the shell takes, and run after the command beside them (2026-11-28 audit, C1)
+- **Why:** 26 Nov 15:00 to 28 Nov 02:00 UTC: `attach_file` failed 9 of 15 calls, `read_file` 49, `list_files` 4,
+  `write_file` 1, while `shell` read the same files. Two causes, both measured from the audit store (argument
+  hashes matched against the files on disk, call start times compared inside each run):
+  1. **Same-step race (33 of 63 failures; 26 succeeded unchanged one step later).** Pi runs one model step's tool
+     calls at the same moment. "shell: make the screenshot / copy the file" + "read_file / attach_file: use it"
+     in one step read the file before the command had written it (file call started within 2 ms of the shell call
+     and ended before it).
+  2. **A path the shell accepts was refused (at least 10).** `teamWorkspaceInstruction` tells agents the shell
+     reaches shared work as `../../shared/`; `normalizeWorkspacePath` refused every `..`, so that path failed in
+     `read_file` and `write_file` ("Path escapes the computer workspace") and in `attach_file`, which reported
+     it as "file not found or unreadable" (it swallowed every error, a file over the size limit too).
+  The other 20 could not be matched (arguments are not logged); the old error named neither the path tried
+  nor the folder searched.
+- **One resolution (`resolveBotWorkspacePath`, `computers/screens/computer-support.ts`), used by the shell's `cwd`
+  and every tool that takes a path** (`read_file`, `write_file`, `list_files`, `attach_file`, `render_plot`,
+  `open_path`, page images, `message_bot` files): `..` is resolved by name against the folder the shell starts in
+  (the bot's folder on a Team Computer, the root on a private one). It is accepted when it ends in the bot's own
+  folder or in `shared/`; every other result is refused as before (another bot's folder is still reached as
+  `bots/<id>/...` only, unchanged). `shared/...`, `bots/...`, a leading `/`, `~` and `/home/rakazo` keep upstream's
+  meaning. A host computer reports the real path of the computer home (`environment` → `workspace`), so an
+  absolute path printed by `pwd` maps back. Nothing new is reachable: only new spellings of paths the same tool
+  already reached; a link that leaves is still refused by the provider (real path check, untouched).
+- **Errors name the path and the base (`runs/tools/file-path-failure.ts`):** `file not found: "book/ch9.md" was
+  looked up at "bots/<id>/book/ch9.md" in the computer home; relative paths start in your folder bots/<id> (the
+  shell's working directory); shared/... and bots/... start at the computer home…`. A refusal says what the path
+  resolved to. `attach_file` now tells a missing file, a refused path and a file over the limit apart. These
+  come back as a tool result `{error, path}` (they were thrown before; the model saw the bare message either way).
+- **Order (`runtime/pi/tools/computer-write-order.ts`):** `shell`, `write_file` and `render_plot` are
+  `executionMode: "sequential"`, upstream's own mechanism (as `remember`, `computer_act`): a step that holds one
+  runs in the order written. A step of reads only still runs at once. Cost: several commands in one step no
+  longer overlap (a long one moves to the background after the shell-job wait, 1.11).
+- **Env (default on, all three compose files):** `FILE_TOOL_SHELL_PATHS=0` restores the old resolution and the
+  old error words; `COMPUTER_WRITES_IN_ORDER=0` restores the parallel step.
+- **Host computer bundle: CHANGED.** `host-computer-runner.ts` adds `workspace` to the `environment` reply and
+  bundles `computer-support.ts`. Rebuild the stack's `host-computer` bundle and restart `bee-rakazo-host-computer`
+  after the app image. Skew is safe: an old bundle sends no `workspace`, so only the `pwd`-path mapping is missing.
+- **Seams:** `computers/screens/computer-support.ts` (resolver, `displayBotWorkspacePath`),
+  `runs/tools/run-tools-files.ts` (4 handlers + `readWorkspaceFile`), `tools/workspace-file-tools.ts`
+  (`RunWorkspace.realRoot`), `runs/tools/run-tools-{computer,messaging,page-images}.ts` (one argument each),
+  `runtime/pi/tools/pi-runtime-tools.ts` (one line), `computers/host/{host-computer-protocol,host-computer-runner}.ts`,
+  `adapter-kit/src/interfaces.ts` (`environment` → optional `workspace`).
+- **Tests:** `runs/tools/file-tool-paths.fork.test.ts` (real desktop provider and a real `sh`: the shell writes
+  `../../shared/...`, all four tools reach it; `pwd` path; traversal by name incl. another bot's folder; links
+  that leave, in the bot folder and in `shared/`; error text; kill switch; fake provider; container path
+  equality), `computer-support.test.ts` (resolver table), `computer-write-order.test.ts`,
+  `pi-runtime-tool-dispatch.test.ts` (modes), `host-computer.test.ts` (`workspace` equals the command's cwd).
+  On the old code 5 of the 8 fork cases fail.
+- **Live check:** an agent on a Team Computer: `shell` `printf x > ../../shared/t.md`, then in ONE step `shell`
+  `printf y > n.md` + `read_file n.md` → content `y`; `read_file ../../shared/t.md` → `x`; `read_file nope.md` →
+  the error names `bots/<id>/nope.md`. `tool_calls` in the audit store: `read_file` errors with
+  `computer file not found` drop to real misses.
+- **Not covered:** a file a *background* job is still writing; `~` on a host computer means the computer home
+  here and the user's home in the shell (outside the workspace, so the file tools cannot serve it; the error
+  says where it looked); the 20 unmatched failures.
+- **Conflicts:** upstream edits to `resolveBotWorkspacePath`, the `executionMode` list in `toAgentTool`, the
+  `fileTools` handlers.
+
+### 1.37 A failed command says why in the audit log (`tool.exit_code`, `nonzero_exit`, `killed`) (2026-11-28 audit, C2)
+- **Why:** 59 `shell` lines in 35 h had `tool.outcome=error`, `tool.error_class=unknown` and an empty
+  `tool.error_message`. `toolCompletionOutcome` (upstream) counts a command that ran and exited non-zero as
+  failed, but such a result has no `error`, only `{stdout, stderr, code}`; `toolErrorFields` classified the empty text.
+- **Now (log only, `runs/turn/command-exit-audit.ts`):** `agent.tool.completed` carries `tool.exit_code` for every
+  completion whose result has an exit code (0 included). For a non-zero exit with no tool error:
+  `tool.error_class` = `timeout` (exit 124 or the provider's "command timed out after N ms"), `killed` (exit above
+  128, or "command aborted" / "command terminated by SIG…"), else `nonzero_exit`; `tool.error_message` = the LAST
+  200 characters of stderr (stdout when stderr is empty), redacted by `redactErrorTail` (`error-redaction.ts`: the
+  same patterns as `redactErrorText`, run before the cut; a word cut at either edge is dropped).
+  `run.audit_summary` `audit.errors_by_class` gets the new classes.
+- **Outcome stays `error` (decision):** it is upstream's rule and the chat's failed-step mark uses the same
+  function; what the model gets and the stored thread event are unchanged. A reader that wants "the tool itself
+  failed" should leave out `nonzero_exit` (a `grep` with no match is one).
+- **Env:** none (log fields only). **Stack-side:** `AUDIT-LOG-EVENTS.md` wording and the audit store's reader for
+  `tool.exit_code` are in the stack repo.
+- **Seams:** `runs/turn/tool-completion-audit.ts` (two hooks), `tool-error-class.ts` (two names), `error-redaction.ts`.
+- **Tests:** `runs/turn/command-exit-audit.test.ts` (9: plain and wrapped result, stdout fallback, time limit, kill,
+  success, running, tool error first, secrets, word cuts, payload unchanged).
+- **Live check:** `docker logs --since 1h rakazo-api-1 rakazo-worker-1 2>&1 | grep '"tool":"shell"' | grep '"tool.outcome":"error"'`
+  → every line has `tool.exit_code` and a class other than `unknown`.
+- **Conflicts:** upstream edits to `toolErrorFields` / `appendToolCompletionAudit`.
+
+### 1.38 An image a provider would refuse never reaches a model request (`MODEL_IMAGE_GUARD`) (2026-11-28 audit, C3)
+- **Why:** run `cmwydsgm9000c07ssj6ipthde` failed with Anthropic 400 `image_dimensions_too_large`
+  ("At least one of the image dimensions exceed max allowed size: 8000 pixels", path
+  `messages.0.content.0.content.1`: an image inside a tool result). The run's 12 tool calls were all connector
+  (MCP) calls; the last returned a picture taller than 8000 px. `liftMcpResultImages` (`mcp/mcp-result-images.ts`)
+  passes an MCP picture on as the server sent it when it is a still PNG or JPEG: no limit on its sides. Every
+  other picture a tool makes is scaled to 1568 px (`encodeForModel`). One such block fails the request, and it
+  stays in the conversation, so every later step fails too.
+- **Two layers:**
+  1. **Where it enters (`fitMcpResultImages`):** an MCP picture with a side over 2000 px or over 5 MiB of base64 is
+     scaled down like every other tool picture (`scaleImageForModel`), so the model still sees it.
+  2. **Before every provider call (`media/model-image-guard.ts`, hooked in `observedPiStream`,
+     `runtime/pi/usage/pi-usage.ts`: the one function every Pi model call goes through, any provider, main
+     model, backups, helpers):** each image block of the request (user messages, tool results, replayed history)
+     is checked by header and length; a block that is empty, not base64, not a PNG/JPEG/GIF/WebP, a PNG cut off
+     before its end, over 5 MiB, or over 8000 px a side (2000 px when the request holds more than 20 images) is
+     replaced by a text note (`model-image-guard.prompt.ts`: "[image left out: it was 1200x9000 pixels, over the
+     8000 pixel limit per side. To look at it, make a smaller or valid copy and read that.]"). The stored
+     conversation is not changed. The ACP runtime (pictures handed to another agent one by one) uses the same
+     check (`unusableImageNote` in `acp-turn.ts`, `acp-runtime.ts`).
+- **Log:** `model_image.left_out` (warn; `images.left_out`, `images.new`, `images.total`, `images.reasons`
+  {reason: count}, run id, provider, model; never the image). Once per picture, not once per step.
+- **Env (default on, all three compose files):** `MODEL_IMAGE_GUARD=0` sends requests as they are and stops the
+  MCP scaling.
+- **Tests run with it off by default:** upstream fixtures use one to three placeholder bytes as "images"
+  (10 tests in `pi-runtime-fallback`, `pi-runtime-yield`, `acp-runtime` fail otherwise), so
+  `packages/testkit/src/pin-test-env.ts` sets `MODEL_IMAGE_GUARD ??= "0"`; the fork's tests turn it on.
+- **Seams:** `runtime/pi/usage/pi-usage.ts` (one call), `runtime/pi/tools/pi-runtime-tools.ts` (one await),
+  `mcp/mcp-result-images.ts`, `media/tool-result-image.ts` (`scaleImageForModel`), `runtime/acp/{acp-turn,acp-runtime}.ts`,
+  `testkit/src/pin-test-env.ts`.
+- **Tests:** `media/model-image-guard.test.ts` (8: each reason with real PNGs, user message + tool result,
+  logged once, many-image limit, kill switch, MCP scaling), `runtime/pi/usage/pi-usage-image-guard.fork.test.ts`
+  (the request body the real Anthropic, OpenAI-completions and OpenAI-responses adapters send: empty, corrupt
+  and 900x8600 images gone, the good one kept; with the switch off the tall one is sent).
+- **Live check:** an agent with an MCP browser/design server: ask for a full-page screenshot of a long page →
+  the run goes on; `docker logs rakazo-api-1 rakazo-worker-1 2>&1 | grep -c model_image.left_out` (0 when the
+  scaling handled it); no `run.failed` with `image_dimensions_too_large`.
+- **Not covered:** a JPEG/GIF/WebP whose body is damaged behind a good header (no pixel decode per step);
+  other model calls that do not go through `observedPiStream` (memory ledger, curator, voice: text only).
+- **Conflicts:** upstream edits to `observedPiStream`'s `prepareContext` line, `liftMcpResultImages` call site.
+
+### 1.39 A delegated request that was stopped still answers the agent that asked (`BOT_MESSAGE_STOP_NOTICE`) (2026-11-28 audit, C4)
+- **What happened:** run `cmwz4o2u602zm07ss052aqwmh` (trigger `bot_message`) did not finish: its row is
+  `status=cancelled`, `error` empty, started 27 Nov 15:20:02 UTC, ended 28 Nov 00:30:55 UTC. It made 4 tool calls
+  in 16 s, the last an `ask_user` (outcome `paused`), and waited 9 h 10 min on that question. At 00:30:55 the
+  owner typed a message in that agent's chat (run `cmwzocin702q207ppqtz38pg1`, trigger `user`, starts 50 ms
+  later). The message was not the answer to the question (other messages had come after it), so
+  `retireWaitingQuestionInTransaction` (`packages/db/src/threads/thread-ask.ts`) marked the question answered and
+  cancelled the waiting run. The asking agent had been told "Paused until the user responds in my chat" and
+  never heard again.
+- **Cause:** an outcome goes back for a delegated run that completed, failed, or was cancelled as stuck work
+  (`runs/wakeups/job-reconciler.ts`: `status cancelled AND error IN stuckWorkStatusMessages()`); any other cancel
+  returned nothing. Same for a plain Stop by the owner. Of 102 delegated runs since 20 Nov, 101 completed and
+  were returned; this is the 1 cancelled, not returned.
+- **Now (`messaging/bot-message-stopped.ts`, called once per reconciler pass):** a delegated run cancelled
+  without an outcome, ended in the last 24 h, returns a status to the asker through the same
+  `returnBotMessageOutcome` (delivery key `auto-outcome:<runId>`, so never twice): "Your request <id8> was
+  stopped before it finished… Treat it as closed. Do not send it again unless the user asks for it; carry on
+  without the result, or tell the user it was not done." A failed delivery moves the run to the back of the queue
+  and is tried again next pass. Silent as before: a request its sender replaced (`bot-supersede.ts` marks it
+  returned), an asker that is gone, a run that already sent a result itself, a run that ended more than a day ago.
+- **Decision:** the text tells the asker not to re-send by itself: the owner stopped the work or took it over,
+  and an automatic repeat would undo that.
+- **Env (default on, all three compose files):** `BOT_MESSAGE_STOP_NOTICE=0` restores upstream (no notice).
+- **Log:** `bot_message.stopped_notice` (run, bot, thread ids).
+- **Seams:** `runs/wakeups/job-reconciler.ts` (import + one call; upstream's own query and its test are untouched).
+- **Tests:** `messaging/bot-message-stopped.postgres.test.ts` (the live case through the real
+  `messageBot` and `retireWaitingQuestionInTransaction`: notice once; switch off = nothing; failed delivery kept
+  and retried; 25 h old run silent; replaced run silent; plain stop told; second notice to the same asker is its
+  own message), `runs/wakeups/job-reconciler-stopped.fork.test.ts` (called each pass; a failure does not stop the pass).
+- **Live check:** agent A asks agent B; B asks the owner a question; type an unrelated message in B's chat (or
+  press Stop) → within a reconciler pass A's chat shows the stopped status;
+  `select status,"botOutcomeReturnedAt" from runs where trigger='bot_message' and status='cancelled' order by "createdAt" desc limit 5`
+  → filled in.
+- **Not changed (open question for the owner's rules):** upstream retires a waiting question, however old, when
+  the person types anything else in that chat. The delegated work is then dropped; this change makes that
+  visible to the asker, it does not keep the work alive.
+- **Conflicts:** upstream extending its own outcome query to plain cancels (then drop this file).
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

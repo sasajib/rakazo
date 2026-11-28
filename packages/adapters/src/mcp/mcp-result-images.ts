@@ -2,6 +2,12 @@ import type { AgentToolResultContent } from "@rakazo/adapter-kit";
 import { AttachmentValidationError, decodeAttachmentBase64 } from "@rakazo/core";
 import { imageHeaderDimensions } from "../media/image-dimensions.js";
 import { detectImageMimeType } from "../media/image-mime-type.js";
+import {
+  MODEL_IMAGE_SCALE_ABOVE_SIDE,
+  modelImageGuardEnabled,
+  modelImageSize,
+} from "../media/model-image-guard.js";
+import { MODEL_IMAGE_MAX_BASE64_BYTES, scaleImageForModel } from "../media/tool-result-image.js";
 import { MCP_IMAGE_ATTACHED, MCP_IMAGE_NOT_ATTACHED } from "./mcp-result-images.prompt.js";
 
 type ToolResultImage = Extract<AgentToolResultContent, { type: "image" }>;
@@ -62,4 +68,25 @@ function isStillImage(base64: string, mimeType: string): boolean {
   if (!dimensions) return false;
   const [width, height, frames] = dimensions;
   return frames === 1 && Number.isSafeInteger(width * height);
+}
+
+/**
+ * Fork (1.38): an MCP server's picture goes to the model as the server sent it, and a provider
+ * refuses a request for one image over its limits (8000 pixels a side; a full-page export is
+ * taller). A picture over the limits is scaled down here, where it enters, so the model still
+ * sees it; one that cannot be scaled is left for the request guard, which replaces it by a note.
+ */
+export async function fitMcpResultImages(images: ToolResultImage[]): Promise<ToolResultImage[]> {
+  if (!modelImageGuardEnabled()) return images;
+  return Promise.all(
+    images.map(async (image) => {
+      const size = modelImageSize(image.data);
+      const tooLarge =
+        image.data.length > MODEL_IMAGE_MAX_BASE64_BYTES ||
+        (size !== undefined && Math.max(size.width, size.height) > MODEL_IMAGE_SCALE_ABOVE_SIDE);
+      if (!tooLarge) return image;
+      const scaled = await scaleImageForModel(Buffer.from(image.data, "base64"));
+      return scaled ? { type: "image" as const, ...scaled } : image;
+    }),
+  );
 }

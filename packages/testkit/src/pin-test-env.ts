@@ -73,6 +73,11 @@ if (!process.env.VERIFY_LOGGING) {
   process.env.LOG_LEVEL = "off";
 }
 
+// Fork (1.38): upstream fixtures stand in for pictures with one to three placeholder bytes, which
+// the model-request image guard would replace by a note. It is off for them; the fork's own
+// tests (model-image-guard, pi-usage-image-guard) turn it on.
+process.env.MODEL_IMAGE_GUARD ??= "0";
+
 // Tests must never export product analytics to a configured collector.
 process.env.ANALYTICS_PROVIDER = "none";
 
