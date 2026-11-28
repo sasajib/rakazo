@@ -168,6 +168,8 @@ async function runTurn(
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),
+      // No other task of the agent works beside this run in the chat (FORK.md 1.42 reply tags).
+      findFirst: vi.fn(async () => null),
       updateMany: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         Object.assign(run, data);
         return { count: 1 };

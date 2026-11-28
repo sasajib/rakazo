@@ -11,6 +11,7 @@ import { countUnreadInboxChats } from "@rakazo/db";
 import { createLogger, createTestSink, installLogger } from "@rakazo/logging";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "../../computers/computer-lifecycle.js";
+import { repeatNotices } from "../../notifications/repeat-notice.js";
 import { createRunExecutor } from "./executor.js";
 
 vi.mock("../../computers/computer-lifecycle.js", async (importOriginal) => ({
@@ -76,6 +77,9 @@ async function failRun(scenario: Scenario) {
     clientNonce: scenario.clientNonce ?? null,
     lateSince: scenario.lateSince ?? null,
     leaseFence: 0,
+    // The provider outage outlasted the run-level transient retries (FORK.md 1.42; 10 is the most
+    // RUN_TRANSIENT_RETRY_MAX allows), so a failing model call reaches the run's final failure path.
+    transientRetries: 10,
     startedAt: scenario.startedAt ?? null,
     ...(scenario.pinnedTo
       ? {
@@ -321,6 +325,9 @@ const overloaded = () =>
   new TransientModelError("Our servers are currently overloaded. Please try again later.");
 
 beforeEach(() => {
+  // Every case fails the same run in the same chat; the repeat guard (fork 1.41) remembers the
+  // last notice per process, so each case starts with none sent before it.
+  repeatNotices.clear();
   vi.mocked(countUnreadInboxChats).mockReset().mockResolvedValue(0);
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
@@ -848,6 +855,8 @@ describe("running a routine retry", () => {
           botId: "bot-1",
           threadId: "thread-1",
           sender: expect.objectContaining({ botId: "bot-1", name: "Assistant" }),
+          // Fork 1.41: the notice names the run's trigger for the repeat guard.
+          trigger: "routine",
         },
         expect.objectContaining({ userId: "user-1" }),
       );

@@ -83,6 +83,9 @@ function fixture(runId = "run-1") {
     status: "queued",
     trigger: "user",
     leaseFence: 0,
+    // The provider outage outlasted the run-level transient retries (FORK.md 1.42; 10 is the most
+    // RUN_TRANSIENT_RETRY_MAX allows), so a failing model call reaches the run's final failure path.
+    transientRetries: 10,
   };
   const memoryCommit = vi.fn(async (_request: MemoryCommitRequest) => ({ revision: "rev-1" }));
   const memoryDocuments: MemorySnapshot["documents"] = [];
