@@ -41,11 +41,14 @@ internal object SenderPush {
     hasSession: () -> Boolean,
     openThread: () -> Boolean,
     foreground: () -> Boolean,
+    firstTime: () -> Boolean = { true },
   ): PushDisposition {
     if (data.optString("notificationTitle").isBlank()) return PushDisposition.EXPO
     if (data.optString("botId").isBlank()) return PushDisposition.EXPO
     if (data.optString("threadId").isBlank()) return PushDisposition.EXPO
     if (!hasSession()) return PushDisposition.DROP
+    // Fork (1.41): the same notice delivered twice (an Expo/FCM retry, a redelivery) shows once.
+    if (!firstTime()) return PushDisposition.DROP
     if (openThread()) return PushDisposition.DROP
     // Matches the app's foreground handler: finished work is already on screen.
     if (data.optString("kind") == "completion" && foreground()) return PushDisposition.DROP
@@ -54,14 +57,25 @@ internal object SenderPush {
 
   fun present(context: Context, data: JSONObject): Boolean {
     val foreground by lazy { inForeground() }
-    return when (
-      disposition(
-        data,
-        { NotificationStorage(context).token.isNotBlank() },
-        { RakazoNotificationService.isOpenThread(data.optString("botId"), data.optString("threadId")) },
-        { foreground },
-      )
-    ) {
+    val key = PushRepeats.key(data.optString("noticeKey"), data.optString("deliveryId"))
+    var repeat = false
+    val decision = disposition(
+      data,
+      { NotificationStorage(context).token.isNotBlank() },
+      { RakazoNotificationService.isOpenThread(data.optString("botId"), data.optString("threadId")) },
+      { foreground },
+      { firstTime(context, key).also { repeat = !it } },
+    )
+    val runId = data.optString("runId")
+    // Whatever happens to it here, this run's reply has been announced: the poller must not post it.
+    if (runId.isNotBlank() && data.optString("kind") == "completion") {
+      runCatching { RakazoNotificationService.recordPushedRun(context, runId) }
+    }
+    RakazoNotificationService.logEvent(
+      "push kind=${data.optString("kind")} run=${runId.ifBlank { "-" }} key=${key.ifBlank { "-" }} " +
+        "decision=${if (repeat) "drop_repeat" else decision.name.lowercase()}",
+    )
+    return when (decision) {
       PushDisposition.EXPO -> false
       PushDisposition.DROP -> true
       PushDisposition.POST ->
@@ -72,6 +86,19 @@ internal object SenderPush {
           .isSuccess
     }
   }
+
+  /** Records [key]; false when this device already took a push with it. */
+  private fun firstTime(context: Context, key: String): Boolean = synchronized(this) {
+    if (key.isBlank()) return true
+    val prefs = context.getSharedPreferences(RECENT_PUSHES, Context.MODE_PRIVATE)
+    val recent = decodeIds(prefs.getString(RECENT_PUSH_KEYS, null))
+    val first = PushRepeats(recent).firstTime(key)
+    if (first) prefs.edit().putString(RECENT_PUSH_KEYS, encodeIds(recent)).apply()
+    first
+  }
+
+  private const val RECENT_PUSHES = "com.rakazo.notification_pushes"
+  private const val RECENT_PUSH_KEYS = "recent_keys"
 
   internal fun shouldPlaySound(data: JSONObject, foreground: Boolean): Boolean =
     !foreground && data.optBoolean("notificationSound")
