@@ -636,7 +636,13 @@ describe("computer terminal and file transfer", () => {
       const { sandbox, call } = setup(controlled);
       await expect(call(procedure, { path: "../x" })).resolves.toMatchObject({
         status: 400,
-        body: { json: { code: "BAD_REQUEST", message: "Path escapes the computer workspace" } },
+        // Fork (1.36): the message goes on to name the path tried and where relative paths start.
+        body: {
+          json: {
+            code: "BAD_REQUEST",
+            message: expect.stringMatching(/^Path escapes the computer workspace: "\.\.\/x" /),
+          },
+        },
       });
       expect(sandbox.readFile).not.toHaveBeenCalled();
     },

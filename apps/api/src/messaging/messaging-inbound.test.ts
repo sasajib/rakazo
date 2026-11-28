@@ -2667,6 +2667,9 @@ describe("createMessagingInboundHandler owner commands", () => {
     Object.assign(deps.txMock.run, { updateManyAndReturn: cancelRuns });
     Object.assign(deps.txMock, {
       steeringMessage: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      // Fork (1.33): Stop also cancels helpers waiting for a slot and stands open work down.
+      queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
     });
     deps.sendUserMessage.mockResolvedValue({ messageId: "msg-1", runId: null, seq: 3 });
     const handle = createMessagingInboundHandler(deps);
@@ -2710,6 +2713,9 @@ describe("createMessagingInboundHandler owner commands", () => {
     Object.assign(deps.txMock.run, { updateManyAndReturn: vi.fn(() => cancelling.promise) });
     Object.assign(deps.txMock, {
       steeringMessage: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      // Fork (1.33): Stop also cancels helpers waiting for a slot and stands open work down.
+      queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
     });
     deps.sendUserMessage.mockResolvedValue({ messageId: "msg-1", runId: "run-1", seq: 3 });
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -2739,6 +2745,9 @@ describe("createMessagingInboundHandler owner commands", () => {
     Object.assign(deps.txMock.run, { updateManyAndReturn: cancelRuns });
     Object.assign(deps.txMock, {
       steeringMessage: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      // Fork (1.33): Stop also cancels helpers waiting for a slot and stands open work down.
+      queuedHelper: { findMany: vi.fn(async () => []) },
+      scratchpadItem: { count: vi.fn(async () => 0) },
     });
     const handle = createMessagingInboundHandler(deps);
     const stop = { ...dmEvent, content: "stop" };

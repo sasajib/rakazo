@@ -89,6 +89,10 @@ describe("paused turn context", () => {
     }
   });
   it("includes a finished sibling but excludes a late sibling at persistence", async () => {
+    // Fork (1.36): a step with write_file runs in order by default, so no sibling runs beside it.
+    // This case is about siblings that run at once, which is still the path with the switch off
+    // (and for a step of reads only); "keeps a sequential tail unstarted" below covers the default.
+    vi.stubEnv("COMPUTER_WRITES_IN_ORDER", "0");
     const controller = new AbortController();
     const late = deferred();
     const captures = new Map<string, () => string>();
