@@ -1688,6 +1688,13 @@ Tell him: stale web tabs keep the old bundle until reloaded.
   three compose anchors (23 new keys), `pi-runtime-tools.ts`. The Prisma client must be regenerated after the merge.
 - **Added on top (1.33):** a continuation run no longer sends `<agent> finished` for every part; one notification at
   the end of the chain, or the stalled notice.
+- **Broken on the branches, found by the full vitest run, fixed here (tests only):** `apps/api/src/messaging/
+  messaging-inbound.test.ts` (3: the Stop mocks lacked `queuedHelper` / `scratchpadItem`, 1.33),
+  `apps/api/src/computers/router-computers.test.ts` (3: exact match on the path-escape message that 1.36 made
+  longer; the person's file browser gets the longer text too), `packages/testkit/src/runtime/
+  pi-runtime-checkpoint.test.ts` (1: a step with `write_file` runs in order since 1.36, so the case about siblings
+  running at once sets `COMPUTER_WRITES_IN_ORDER=0`). A worker's vitest paths must include `apps/api/src` and
+  `packages/testkit/src/runtime` whole.
 - **Prompt surface:** only 1.32 changed it (`bot_skills` `pin` / `unpin` / `list_pinned`, +142 bytes per surface; the
   loaded-skills sample in `prompts.md`); `-u` after the merge changes nothing. Pinned-tool cap re-measured 49_962,
   cap stays `50_020`.
