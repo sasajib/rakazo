@@ -36,6 +36,7 @@ import {
   helperResultText,
   MAX_PARALLEL_SUBAGENTS,
 } from "../runtime/pi/tools/pi-runtime-subagent.js";
+import { warmTaskVector } from "../skill-autoload/autoload.js";
 import {
   backgroundHelperLimitNote,
   helperBudgetNote,
@@ -393,6 +394,9 @@ export async function startBackgroundHelper(
     return queued;
   }
   if (!committed) return started;
+  // Fork (live test 1128d): the brief's embedding starts now, ahead of the helper's assembly, so
+  // helpers started together share one request that has had a head start (single-flight per text).
+  warmTaskVector({ trigger: BACKGROUND_HELPER_TRIGGER, task: helperPrompt(input) });
   await deps.events.notify(thread.id, committed.eventSeq);
   await wakeRun(deps.jobs, committed.helperRunId);
   return started;

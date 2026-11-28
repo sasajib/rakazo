@@ -452,6 +452,32 @@ describe("skill auto-load: embeddings (optional)", () => {
       expect(calls).toHaveLength(2);
     });
 
+    it("four helpers with one brief, assembled together, share one request (live test 1128d)", async () => {
+      const calls: string[] = [];
+      const deps = { config: config(env), embedder: embedder(120, calls) };
+      await warmSkills({ ...deps, embedder: embedder(0) });
+      const brief = helperPrompt({
+        name: "writer",
+        task: long("File the supplier invoices of the quarter in the ledger."),
+        instructions: "",
+      });
+      // Started when the helpers are created, then again by each helper's assembly.
+      warmTaskVector({ trigger: "helper", task: brief }, deps);
+      const results = await Promise.all(
+        [0, 1, 2, 3].map(async (index) => {
+          await new Promise((resolve) => setTimeout(resolve, index * 10));
+          warmTaskVector({ trigger: "helper", task: brief }, deps);
+          return autoloadSkills({ trigger: "helper", task: brief, skills: CATALOG }, deps);
+        }),
+      );
+      expect(calls).toHaveLength(1);
+      for (const result of results) {
+        expect(result.log.method).toBe("lexical+embeddings");
+        expect(result.log.embed?.source).toBe("early");
+        expect(result.log.embed!.waitMs).toBeLessThan(130);
+      }
+    });
+
     it("keeps the vector of a request that outlived the wait, for the next attempt", async () => {
       const calls: string[] = [];
       const slow = {
