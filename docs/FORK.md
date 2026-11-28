@@ -1518,6 +1518,9 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   (`feat/agent-skill-assign-tool`, 1.17a) merged into `integrate/1126` on fork `main` `6ae098ad1`; see §4 (2026-11-26).
 - `938172ba2` (`fix/journeys-1126`, 1.3 + gate 4b), `9691dd126` (`fix/reload-askfirst-1126`, 1.27, 1.28) merged into
   `integrate/1126c` on fork `main` `051c16885`; 1.29 committed on top; see §4 (2026-11-26 c).
+- `0b1bafb9b` (`fix/tools-reliability-1128`, 1.36-1.39), `e4a85162c` (`fix/skills-rules-autoload-1128`, 1.32),
+  `0b2dba677` (`fix/long-task-continuity-1128`, 1.33) merged into `integrate/1128` on fork `main` `6573e5f6a`; the
+  one-finished-notification rule (1.33) committed on top; see §4 (2026-11-28).
 
 ---
 
@@ -1672,6 +1675,29 @@ Tell him: stale web tabs keep the old bundle until reloaded.
 ---
 
 ## 4. Sync log
+
+### 2026-11-28 — three fix branches of the 2026-11-28 audit (no upstream change) → `integrate/1128`, image `main-1128a`
+- **Base:** fork `main` `6573e5f6a` (image `main-1126d`, live). Merged, in this order, with real merge commits:
+  `fix/tools-reliability-1128` (`9de9a9cef`, 1.36-1.39) = `0b1bafb9b`; `fix/skills-rules-autoload-1128` (`f0d769c07`,
+  1.32) = `e4a85162c`; `fix/long-task-continuity-1128` (`b3fecbdfd`, 1.33) = `0b2dba677`. Tag `pre-sync-1128` marks the
+  integrated commit.
+- **Conflicts:** `docs/FORK.md` twice (ledger sections added at the same place: all kept, in number order) and
+  `ops/post-sync-check.py` once (both sides appended to `MARKERS`: both kept). Everything else merged by itself and
+  was checked by hand: `run-instructions.prompt.ts` (1.33 `openWorkClause` + `delegationContinuityClause` beside 1.32
+  `standingOrders` + `pinnedSkills`), `row-security.ts` (`QueuedHelper`, `OpenWorkState`, `space_pinned_skills`), the
+  three compose anchors (23 new keys), `pi-runtime-tools.ts`. The Prisma client must be regenerated after the merge.
+- **Added on top (1.33):** a continuation run no longer sends `<agent> finished` for every part; one notification at
+  the end of the chain, or the stalled notice.
+- **Prompt surface:** only 1.32 changed it (`bot_skills` `pin` / `unpin` / `list_pinned`, +142 bytes per surface; the
+  loaded-skills sample in `prompts.md`); `-u` after the merge changes nothing. Pinned-tool cap re-measured 49_962,
+  cap stays `50_020`.
+- **Migrations:** `20270129090000_helper_queue`, `20270129100000_space_pinned_skills`, `20270130090000_open_work`; on a
+  copy of the live schema + `_prisma_migrations` (353 rows) `migrate deploy` applied exactly these three (356 after),
+  a second run had nothing pending.
+- **Host-computer bundle:** differs from the deployed one by one line (1.36: `workspace: computer.providerRef`);
+  rebuild + restart the unit at deploy.
+- **Deploy needs:** the 23 new keys in the stack's `x-app-environment` anchor only to pass a value (all default on).
+- **Gates, numbers, env key list, image id:** stack `INTEGRATE-1128.md`. Rollback = image `main-1126d`.
 
 ### 2026-11-26 (c) — two fix branches + organization MCP server patch (no upstream change) → `integrate/1126c`, image `main-1126c`
 - **Base:** fork `main` `051c16885` (image `main-1126b`, live). Merged `fix/journeys-1126` (`938172ba2`) and
