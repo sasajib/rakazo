@@ -139,6 +139,8 @@ export interface VisibleSkill {
   content: string;
   source: string;
   learned: boolean;
+  /** A skill the agent cannot change, e.g. one its organization shares (upstream #6855). */
+  readOnly?: boolean;
 }
 
 export type Plan =
@@ -211,7 +213,8 @@ export function planProposal(proposal: CuratorProposal | undefined, ctx: PlanCon
 
   const skill = ctx.skills.find((entry) => entry.id === proposal.skillId);
   if (!skill) return { kind: "skip", why: "unknown_skill" };
-  if (skill.source !== "user" || skill.id.startsWith("builtin:"))
+  // An organization's shared skill (upstream #6855) reads as source "user" but is its admins'.
+  if (skill.source !== "user" || skill.readOnly || skill.id.startsWith("builtin:"))
     return { kind: "skip", why: "read_only" };
   const prior = parseSkillMd(skill.content);
   if ("error" in prior) return { kind: "skip", why: "unparsable" };
@@ -385,6 +388,7 @@ async function visibleSkills(
     content: record.content,
     source: record.source,
     learned: learned.has(record.id),
+    readOnly: record.readOnly === true,
   }));
 }
 
@@ -394,8 +398,10 @@ export function skillRefs(
   input: { read: readonly string[]; task?: string },
 ): CuratorSkillRef[] {
   const read = new Set(input.read.map((name) => name.toLowerCase()));
+  // An organization's shared skill is its admins' to change: named, never offered for a patch.
   const withBody = (skill: VisibleSkill) =>
     skill.source === "user" &&
+    !skill.readOnly &&
     (read.has(skill.name.toLowerCase()) ||
       read.has(skill.id.toLowerCase()) ||
       (input.task !== undefined &&

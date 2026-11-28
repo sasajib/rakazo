@@ -165,6 +165,14 @@ describe("planProposal", () => {
         skills: [skill({ source: "builtin" })],
       }),
     ).toEqual({ kind: "skip", why: "read_only" });
+    // An organization's shared skill reads as the owner's kind but is not his to change.
+    expect(
+      planProposal(patch, {
+        reason: "correction",
+        messages,
+        skills: [skill({ readOnly: true })],
+      }),
+    ).toEqual({ kind: "skip", why: "read_only" });
     expect(
       planProposal(
         { ...patch, skillId: "other" },
