@@ -790,8 +790,17 @@ export async function sendThreadMessage(
         // is held as steering of the most recent task while the judge decides, after the commit.
         // A waiting question is never retired by a message that does not answer it.
         const routing = routingConfig();
+        // A takeover wait keeps its own path: a typed message there releases the screen and
+        // resumes the run at once (the person is answering the takeover card).
         const routableRuns =
-          routing.routing && !stopping && !callId && !input.leaveCards && !routineRuns.length
+          routing.routing &&
+          !stopping &&
+          !callId &&
+          !input.leaveCards &&
+          !routineRuns.length &&
+          !activeRuns.some(
+            (run) => run.status === "waiting_takeover" && run.userId === actor.userId,
+          )
             ? activeRuns.filter(
                 (run) => isRoutableTask(run, actor) && !messageBypassesTakeoverWait(run, true),
               )
@@ -811,15 +820,14 @@ export async function sendThreadMessage(
             })
           : null;
         if (route?.kind === "held") {
-          const steerable = isConversationalRun(route.run.trigger);
-          if (steerable)
-            await tx.message.update({ where: { id: message.id }, data: { runId: route.run.id } });
+          // Linked to the task it waits on, for display, as a steering message always was.
+          await tx.message.update({ where: { id: message.id }, data: { runId: route.run.id } });
           const event = await appendEventInTransaction(tx, {
             spaceId: actor.spaceId,
             threadId: target.threadId,
             botId: target.botId,
             type: "thread.message.created",
-            runId: steerable ? route.run.id : undefined,
+            runId: route.run.id,
             payload: {
               messageId: message.id,
               seq: message.seq,

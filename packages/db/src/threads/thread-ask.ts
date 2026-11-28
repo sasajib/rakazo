@@ -915,12 +915,16 @@ export async function pendingQuestionOf(
     where: { id: found.messageId },
     select: { id: true, blocks: true },
   });
-  const options = card
-    ? readMessageBlocks(card).blocks.flatMap((block) =>
-        block.kind === "choice" && block.answerId === undefined
-          ? block.options.map((option) => option.label)
-          : [],
-      )
-    : [];
+  // The ask's own buttons, and a picker on the same card.
+  const options = [
+    ...(found.pendingAsk.actions ?? []).map((action) => action.label),
+    ...(card
+      ? readMessageBlocks(card).blocks.flatMap((block) =>
+          block.kind === "choice" && block.answerId === undefined
+            ? block.options.map((option) => option.label)
+            : [],
+        )
+      : []),
+  ];
   return { messageId: found.messageId, text: found.pendingAsk.text, kind, options };
 }

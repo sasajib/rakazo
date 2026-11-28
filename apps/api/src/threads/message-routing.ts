@@ -195,7 +195,12 @@ export async function holdMessageForRouting(
     typeof tx.steeringMessage?.create !== "function"
   )
     return null;
-  const tasks = await loadRouteTasks(tx, { threadId: input.threadId, runs: input.runs });
+  // A run waiting on an approval, a secret or a login card is never a task a chat message reaches
+  // (the card is answered on the card); with one of those only, the send keeps its old path,
+  // where the message starts a run of its own and the card stays.
+  const tasks = (await loadRouteTasks(tx, { threadId: input.threadId, runs: input.runs })).filter(
+    (task) => task.state !== "waiting_approval",
+  );
   if (!tasks.length) return null;
   const certain = certainRoute({
     text: input.text,
@@ -604,8 +609,12 @@ async function applyRoute(
             });
           }
         }
+        // A busy task, or one waiting on its question, answers the person beside it at once.
         const talk =
-          targetRun && hooks?.talkBeside && targetLive && target?.state === "working"
+          targetRun &&
+          hooks?.talkBeside &&
+          targetLive &&
+          (target?.state === "working" || target?.state === "waiting_question")
             ? await hooks.talkBeside(tx, targetRun)
             : null;
         return {

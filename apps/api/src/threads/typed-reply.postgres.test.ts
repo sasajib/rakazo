@@ -95,6 +95,7 @@ describe.skipIf(!enabled)("typed replies to waiting cards (PostgreSQL)", () => {
     };
   });
   afterEach(async () => {
+    delete process.env.MESSAGE_ROUTING;
     if (!actor) return;
     await system.messagingIdentity.deleteMany({ where: { userId: actor.userId } });
     await system.organization.deleteMany({ where: { id: actor.spaceId } });
@@ -269,6 +270,9 @@ describe.skipIf(!enabled)("typed replies to waiting cards (PostgreSQL)", () => {
   it.each(["bot", "group"] as const)(
     "retires questions that are no longer latest in a %s send and starts one normal run",
     async (kind) => {
+      // Fork (FORK.md 1.42): retiring a question for an unrelated message is the old path, kept behind
+      // MESSAGE_ROUTING=0; journey 14d covers the new rule.
+      process.env.MESSAGE_ROUTING = "0";
       const target = kind === "bot" ? privateTarget() : groupTarget;
       const old = await waitingCard(question, target.threadId);
       // An unrelated newer message used to prevent composer answers from finding the old ask.
@@ -344,6 +348,9 @@ describe.skipIf(!enabled)("typed replies to waiting cards (PostgreSQL)", () => {
   it.each(["bot", "group"] as const)(
     "resumes the latest question in a %s send while retiring an older stranded question",
     async (kind) => {
+      // Fork (FORK.md 1.42): retiring a question for an unrelated message is the old path, kept behind
+      // MESSAGE_ROUTING=0; journey 14d covers the new rule.
+      process.env.MESSAGE_ROUTING = "0";
       const target = kind === "bot" ? privateTarget() : groupTarget;
       const old = await waitingCard(question, target.threadId);
       const peer = await waitingCard(question, target.threadId, peerBotId);
@@ -729,6 +736,9 @@ describe.skipIf(!enabled)("typed replies to waiting cards (PostgreSQL)", () => {
   );
 
   it("retires a question while steering live work for the same bot", async () => {
+    // Fork (FORK.md 1.42): retiring a question for an unrelated message is the old path, kept behind
+    // MESSAGE_ROUTING=0; journey 14d covers the new rule.
+    process.env.MESSAGE_ROUTING = "0";
     const fixture = await waitingCard();
     await createThreadMessage(system, {
       threadId,
@@ -992,6 +1002,9 @@ describe.skipIf(!enabled)("typed replies to waiting cards (PostgreSQL)", () => {
   });
 
   it("rolls back retirement if accepting the new run fails", async () => {
+    // Fork (FORK.md 1.42): retiring a question for an unrelated message is the old path, kept behind
+    // MESSAGE_ROUTING=0; journey 14d covers the new rule.
+    process.env.MESSAGE_ROUTING = "0";
     const fixture = await waitingCard();
     await createThreadMessage(system, {
       threadId,
