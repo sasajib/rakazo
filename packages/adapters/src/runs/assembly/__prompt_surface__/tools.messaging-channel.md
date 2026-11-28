@@ -1,5 +1,5 @@
 # Tool surface: messaging-channel
-50 tools, 59558 bytes of definitions
+50 tools, 60198 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -151,7 +151,7 @@ schema 18d240c5c13d (550 bytes)
 
 ## save_page
 Save a page the user opens from the chat: a dashboard, report, tracker or comparison. Pass the page as JSX source written against the Rakazo page kit; call with {"help": true} first for the kit guide. Problems come back with line numbers and nothing is saved. To change a page, pass its pageId with edits (applied together, or not at all) or full source; pass only pageId to read its current source. A result with sharedByLink is a page the user shared: anyone with its link sees each save at once. A read also returns readerState: what the user set on the page controls that save.
-schema 2d93f3db79d7 (868 bytes)
+schema 5df59e09be4a (1508 bytes)
 
 ## search_history
 Search literal keywords in earlier messages in this chat and their file names; every word of a query must match the same message. Returns at most five matches, newest first, grouped by chat; matchedQueryIndexes are zero-based indexes into queries. Then read_history around the best hits using their threadId. When nextSearch is present, call search_history with those arguments to continue. Coverage applies only to the requested literal query and range; an empty narrower query does not exhaust an unfinished broader query. Use read_history to check surrounding messages and corrections. Read a listed attachment at its path and name it in your answer.

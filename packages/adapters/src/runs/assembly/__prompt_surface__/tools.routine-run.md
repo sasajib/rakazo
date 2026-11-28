@@ -1,5 +1,5 @@
 # Tool surface: routine-run
-63 tools, 82061 bytes of definitions
+63 tools, 82701 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -147,7 +147,7 @@ schema 18d240c5c13d (550 bytes)
 
 ## save_page
 Save a page the user opens from the chat: a dashboard, report, tracker or comparison. Pass the page as JSX source written against the Rakazo page kit; call with {"help": true} first for the kit guide. Problems come back with line numbers and nothing is saved. To change a page, pass its pageId with edits (applied together, or not at all) or full source; pass only pageId to read its current source. A result with sharedByLink is a page the user shared: anyone with its link sees each save at once. A read also returns readerState: what the user set on the page controls that save.
-schema 2d93f3db79d7 (868 bytes)
+schema 5df59e09be4a (1508 bytes)
 
 ## schedule_cancel
 Cancel a schedule by routineId or exact name; another bot's by bot_id or exact bot_name.

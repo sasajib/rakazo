@@ -102,8 +102,9 @@ describe("built-in tool bridge", () => {
     // this owner chat (its own test caps it at 1_400 bytes). Upstream sync 1126b: remember's longer
     // description and shared flag, ask_user and schedule wording (measured 49_820). Fork 1.32:
     // bot_skills takes pin, unpin and list_pinned for the Space's pinned skills (+142, measured
-    // 49_962).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(50_020);
+    // 49_962). Upstream sync 1128b: find_tool's wording for apps and paid services (+21, measured
+    // 49_983).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(50_040);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );
