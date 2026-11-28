@@ -7,8 +7,12 @@ import type { RunContext } from "../runs/assembly/run-context.js";
 import type { ToolCall } from "../runs/tools/run-tool-gate.js";
 import { messagingTools } from "../runs/tools/run-tools-messaging.js";
 import { fleetTools } from "../tools/builtin-fleet.tool-definition.js";
-import { returnHelperOutcome, startBackgroundHelper } from "./background-helpers.js";
-import { startedNote } from "./background-helpers.prompt.js";
+import {
+  backgroundHelpersAllowed,
+  returnHelperOutcome,
+  startBackgroundHelper,
+} from "./background-helpers.js";
+import { QUEUED_HELPER_PROGRESS, resultPrompt, startedNote } from "./background-helpers.prompt.js";
 
 vi.mock("@rakazo/db", async (original) => ({
   ...(await original<typeof Db>()),
@@ -36,8 +40,26 @@ function providerIds(provider: unknown): string[] | null {
   return null;
 }
 
+/** A row loadRunOrigin reads while it walks to the conversation that authorized a helper. */
+function origin(row: { id: string; trigger: string; from: string | null }) {
+  return {
+    id: row.id,
+    trigger: row.trigger,
+    status: "completed",
+    threadId: "chat",
+    delegatedFromRunId: row.from,
+    thread: { groupId: null, group: null },
+    sourceMessage: { id: "source", blocks: [] },
+  };
+}
+
 function harness(
-  overrides: { trigger?: string; threadBotId?: string | null; providers?: string[] } = {},
+  overrides: {
+    trigger?: string;
+    threadBotId?: string | null;
+    providers?: string[];
+    delegatedFromRunId?: string;
+  } = {},
 ) {
   const createRun = vi.fn(async (_args: unknown) => ({ id: "helper-run" }));
   const credentials = (overrides.providers ?? []).map((provider) => ({
@@ -65,11 +87,18 @@ function harness(
     task: { create: vi.fn(async () => ({ id: "helper-task" })) },
     run: {
       findFirst: vi.fn(async () => null),
-      count: vi.fn(async () => 0),
+      count: vi.fn(async (_args?: unknown) => 0),
       create: createRun,
+    },
+    // Fork (1.33): helpers waiting for a slot.
+    queuedHelper: {
+      findFirst: vi.fn(async (_args?: unknown): Promise<{ status: string } | null> => null),
+      count: vi.fn(async (_args?: unknown) => 0),
+      create: vi.fn(async (_args: unknown) => ({ id: "queued-1" })),
     },
   };
   const prisma = {
+    run: { findFirst: vi.fn(async (_args?: unknown): Promise<unknown> => null) },
     $transaction: vi.fn(async (work: (client: typeof tx) => Promise<unknown>) => work(tx)),
     userModelCredential: {
       findMany: vi.fn(async (args?: { where?: { provider?: unknown } }) => {
@@ -103,7 +132,13 @@ function harness(
       secretStore: { load: vi.fn(async () => "fake-api-key") },
       billingEnabled: false,
     },
-    run: { id: "run-1", spaceId: "space", userId: "user", trigger: overrides.trigger ?? "user" },
+    run: {
+      id: "run-1",
+      spaceId: "space",
+      userId: "user",
+      trigger: overrides.trigger ?? "user",
+      delegatedFromRunId: overrides.delegatedFromRunId ?? null,
+    },
     runId: "run-1",
     bot: { id: "bot" },
     secrets: [],
@@ -201,16 +236,171 @@ describe("starting a background helper", () => {
     },
   );
 
+  // Fork (1.33, A1): the agent's own runs delegate; only a helper, a talk run, the creation intro
+  // and a background run do not.
   it.each([
     ["a routine", { trigger: "routine" }],
     ["another bot's request", { trigger: "bot_message" }],
-    ["a helper's result coming back", { trigger: "helper_result" }],
+    ["a webhook", { trigger: "webhook" }],
+    ["a result of a background job", { trigger: "job_result" }],
+  ])("starts one from %s", async (_label, overrides) => {
+    const h = harness(overrides);
+    await expect(startBackgroundHelper(h.ctx, START)).resolves.toMatchObject({ ok: true });
+    expect(h.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ delegatedFromRunId: "run-1" }) }),
+    );
+  });
+
+  it.each([
+    ["a helper (depth stays one)", { trigger: "helper" }],
+    ["a talk run", { trigger: "talk" }],
+    ["the creation intro", { trigger: "created" }],
+    ["a background run", { trigger: "tickets" }],
   ])("refuses to start one from %s", async (_label, overrides) => {
     const h = harness(overrides);
     await expect(startBackgroundHelper(h.ctx, START)).resolves.toEqual({
       error: expect.stringContaining("cannot delegate further"),
     });
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("starts the next wave from a helper's result, tied to the conversation that began the job", async () => {
+    const h = harness({ trigger: "helper_result", delegatedFromRunId: "helper-0" });
+    h.prisma.run.findFirst
+      // result -> the helper that reported -> the conversation
+      .mockResolvedValueOnce(origin({ id: "helper-0", trigger: "helper", from: "user-run" }))
+      .mockResolvedValueOnce(origin({ id: "user-run", trigger: "user", from: null }));
+    await expect(startBackgroundHelper(h.ctx, START)).resolves.toMatchObject({ ok: true });
+    expect(h.createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ trigger: "helper", delegatedFromRunId: "user-run" }),
+      }),
+    );
+  });
+
+  it("starts nothing from a result whose conversation is gone", async () => {
+    const h = harness({ trigger: "helper_result", delegatedFromRunId: "helper-0" });
+    h.prisma.run.findFirst.mockResolvedValueOnce(null);
+    await expect(startBackgroundHelper(h.ctx, START)).resolves.toEqual({
+      error: expect.stringContaining("conversation this work was started for is gone"),
+    });
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("HELPER_DELEGATION_ANY_RUN=0 restores the conversational-only rule", async () => {
+    vi.stubEnv("HELPER_DELEGATION_ANY_RUN", "0");
+    try {
+      for (const trigger of ["helper_result", "routine", "bot_message"]) {
+        const h = harness({ trigger });
+        await expect(startBackgroundHelper(h.ctx, START)).resolves.toEqual({
+          error: expect.stringContaining("cannot delegate further"),
+        });
+      }
+      expect(backgroundHelpersAllowed({ trigger: "user" })).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("refuses one more once the chat used its start budget, whatever run asks", async () => {
+    vi.stubEnv("HELPER_STARTS_PER_THREAD", "3");
+    try {
+      const h = harness({ trigger: "helper_result", delegatedFromRunId: "helper-0" });
+      h.prisma.run.findFirst
+        .mockResolvedValueOnce(origin({ id: "helper-0", trigger: "helper", from: "user-run" }))
+        .mockResolvedValueOnce(origin({ id: "user-run", trigger: "user", from: null }));
+      // The first count is the chat's starts inside the window.
+      h.tx.run.count.mockResolvedValueOnce(3);
+      await expect(startBackgroundHelper(h.ctx, START)).resolves.toEqual({
+        error: expect.stringContaining("already started 3 subagents"),
+      });
+      expect(h.createRun).not.toHaveBeenCalled();
+      expect(h.tx.run.count.mock.calls[0]?.[0]).toMatchObject({
+        where: { trigger: "helper", sourceMessage: { threadId: "chat" } },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // Fork (1.33, A2): the call beyond the cap is accepted and remembered.
+  it("queues the helper beyond the cap instead of refusing it", async () => {
+    const h = harness();
+    // Budget count first, then the helpers at work.
+    h.tx.run.count.mockResolvedValueOnce(4).mockResolvedValueOnce(4);
+    const answer = await startBackgroundHelper(h.ctx, START);
+    expect(answer).toEqual({
+      ok: true,
+      name: "scout",
+      queued: true,
+      note: expect.stringContaining("starts by itself"),
+    });
+    expect(h.createRun).not.toHaveBeenCalled();
+    expect(h.enqueue).not.toHaveBeenCalled();
+    expect(h.tx.queuedHelper.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        botId: "bot",
+        threadId: "chat",
+        originRunId: "run-1",
+        cardMessageId: "card",
+        clientNonce: "background-helper:effect-1",
+        helperThreadId: "helper-thread",
+        taskId: "helper-task",
+      }),
+    });
+    expect(createThreadMessageInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        blocks: [expect.objectContaining({ status: "running", progress: QUEUED_HELPER_PROGRESS })],
+      }),
+    );
+  });
+
+  it("answers a replayed call for a queued helper without queueing it again", async () => {
+    const h = harness();
+    h.tx.queuedHelper.findFirst.mockResolvedValueOnce({ status: "queued" });
+    await expect(startBackgroundHelper(h.ctx, START)).resolves.toMatchObject({ queued: true });
+    expect(h.tx.queuedHelper.create).not.toHaveBeenCalled();
+  });
+
+  it("HELPER_QUEUE=0 refuses the helper beyond the cap, as before", async () => {
+    vi.stubEnv("HELPER_QUEUE", "0");
+    try {
+      const h = harness();
+      h.tx.run.count.mockResolvedValueOnce(4).mockResolvedValueOnce(4);
+      await expect(startBackgroundHelper(h.ctx, START)).resolves.toEqual({
+        error: expect.stringContaining("4 subagents are already working"),
+      });
+      expect(h.tx.queuedHelper.create).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("refuses when the queue is full too, and says nothing was started", async () => {
+    vi.stubEnv("HELPER_QUEUE_MAX", "2");
+    try {
+      const h = harness();
+      h.tx.run.count.mockResolvedValueOnce(4).mockResolvedValueOnce(4);
+      // Budget count of queued rows first, then the agent's waiting helpers.
+      h.tx.queuedHelper.count.mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+      await expect(startBackgroundHelper(h.ctx, START)).resolves.toEqual({
+        error: expect.stringContaining("Nothing was started"),
+      });
+      expect(h.tx.queuedHelper.create).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("tells the result run it can start the next wave", () => {
+    expect(resultPrompt("scout", "completed", "ok", { delegates: true })).toContain(
+      "start them now with run_subagent",
+    );
+    expect(resultPrompt("scout", "completed", "ok")).not.toContain("run_subagent");
+    expect(resultPrompt("scout", "failed", "no", { delegates: true })).not.toContain(
+      "run_subagent",
+    );
   });
 
   it("inherits a model explicitly pinned on the parent run", async () => {

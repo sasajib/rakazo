@@ -322,6 +322,7 @@ export * from "./storage/storage-migration.js";
 export { workspaceSaveLimits } from "./storage/workspace-save-policy.js";
 export * from "./tasks/api-key-access.js";
 export { returnHelperOutcome, startBackgroundHelper } from "./tasks/background-helpers.js";
+export { cancelQueuedHelpersInTransaction, startQueuedHelpers } from "./tasks/helper-queue.js";
 export * from "./tasks/public-task.js";
 export * from "./tasks/scratchpad-tools.js";
 export * from "./tasks/task-callbacks.js";

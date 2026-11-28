@@ -5,8 +5,10 @@ import {
   BACKGROUND_HELPER_TRIGGER,
   HELPER_RESULT_TRIGGER,
   isApprovalAskBlock,
+  isBackgroundRunTrigger,
   isConversationalRun,
   STOPPED_HELPER_RESULT,
+  TALK_RUN_TRIGGER,
 } from "@rakazo/core";
 import {
   appendEventInTransaction,
@@ -16,6 +18,7 @@ import {
   storedMessageBlocks,
   THREAD_LOCK_TRANSACTION_OPTIONS,
 } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import { resolveModelChoice } from "../models/model-choice.js";
 import {
   PINNED_PROVIDER_NOT_CONNECTED,
@@ -24,6 +27,7 @@ import {
 import type { RunContext } from "../runs/assembly/run-context.js";
 import { runLeaseFor } from "../runs/assembly/run-messages.js";
 import type { ExecutorDeps } from "../runs/executor/executor-deps.js";
+import { delegationOriginId } from "../runs/lifecycle/run-origin.js";
 import { fleetPrepareDeps } from "../runs/turn/run-model.js";
 import { wakeRun } from "../runs/wakeups/wake-run.js";
 import { listPiCatalog } from "../runtime/pi/models/pi-models.js";
@@ -33,11 +37,18 @@ import {
 } from "../runtime/pi/tools/pi-runtime-subagent.js";
 import {
   backgroundHelperLimitNote,
+  helperBudgetNote,
   helperPrompt,
+  helperQueueFullNote,
+  queuedNote,
   resultPrompt,
   SUBAGENT_DELEGATION_UNAVAILABLE,
+  SUBAGENT_ORIGIN_GONE,
   startedNote,
 } from "./background-helpers.prompt.js";
+import type { ContinuityConfig } from "./continuity-config.js";
+import { continuityConfig } from "./continuity-config.js";
+import { queueHelperInTransaction, startQueuedHelpers } from "./helper-queue.js";
 
 const RESULT_LIMIT = 12_000;
 
@@ -48,9 +59,34 @@ type HelperDeps = Pick<ExecutorDeps, "prisma"> & {
 };
 type HelperBlock = Extract<MessageBlock, { kind: "subagent" }>;
 
-/** Delegation has one behavior in every conversation, without recursive result chains. */
-export function backgroundHelpersAllowed(turn: { trigger: string }): boolean {
-  return turn.trigger !== HELPER_RESULT_TRIGGER && isConversationalRun(turn.trigger);
+/**
+ * Fork (1.33, A1). Every run of the agent itself may delegate: the run that receives a helper's
+ * result is the one that starts the next wave, and a request from another agent, a routine or a
+ * webhook is the agent's own work too. Depth stays one: a helper never delegates. A talk run and
+ * the creation intro have no tools, and a background run writes nothing into the chat. What stops
+ * a runaway chain is the start budget of the chat (helperStartBudget), not the trigger.
+ * `HELPER_DELEGATION_ANY_RUN=0` restores upstream: a person's conversational run only.
+ */
+export function backgroundHelpersAllowed(
+  turn: { trigger: string },
+  config: Pick<ContinuityConfig, "delegateFromAnyRun"> = continuityConfig(),
+): boolean {
+  if (!config.delegateFromAnyRun)
+    return turn.trigger !== HELPER_RESULT_TRIGGER && isConversationalRun(turn.trigger);
+  return (
+    turn.trigger !== BACKGROUND_HELPER_TRIGGER &&
+    turn.trigger !== TALK_RUN_TRIGGER &&
+    turn.trigger !== "created" &&
+    !isBackgroundRunTrigger(turn.trigger)
+  );
+}
+
+/** Whether a chat that started `started` helpers inside the window may start one more. */
+export function helperStartBudget(
+  started: number,
+  config: Pick<ContinuityConfig, "helperStartsPerThread">,
+): boolean {
+  return started < config.helperStartsPerThread;
 }
 
 /** A catalog provider id, including the stored Azure alias. Display labels are not ids. */
@@ -103,7 +139,8 @@ export async function startBackgroundHelper(
   },
 ) {
   const { deps, run, runId, bot, thread } = ctx;
-  if (!backgroundHelpersAllowed(run)) {
+  const config = continuityConfig();
+  if (!backgroundHelpersAllowed(run, config)) {
     return {
       error: SUBAGENT_DELEGATION_UNAVAILABLE,
     };
@@ -120,6 +157,17 @@ export async function startBackgroundHelper(
     modelProvider = resolved.provider;
     modelId = resolved.model;
   }
+  // The conversation that authorizes this helper: the same one for every wave of a job.
+  const originRunId = await delegationOriginId(deps.prisma, {
+    id: runId,
+    botId: bot.id,
+    spaceId: run.spaceId,
+    userId: run.userId,
+    trigger: run.trigger,
+    delegatedFromRunId: run.delegatedFromRunId ?? null,
+    sourceMessageId: run.sourceMessageId ?? null,
+  });
+  if (!originRunId) return { error: SUBAGENT_ORIGIN_GONE };
   const clientNonce = `background-helper:${input.effectKey}`;
   const started = { ok: true as const, name: input.name, note: startedNote(input.name) };
   const card: HelperBlock = {
@@ -141,6 +189,38 @@ export async function startBackgroundHelper(
       await tx.run.findFirst({ where: { spaceId: run.spaceId, clientNonce }, select: { id: true } })
     )
       return null;
+    // A replayed call whose helper is still queued (fork 1.33): nothing is queued twice.
+    if (config.queueHelpers) {
+      const queuedBefore = await tx.queuedHelper.findFirst({
+        where: { spaceId: run.spaceId, clientNonce },
+        select: { status: true },
+      });
+      if (queuedBefore)
+        return queuedBefore.status === "queued" ? ("replayed_queued" as const) : null;
+    }
+    // The budget of this chat: every helper it started inside the window, whatever run asked,
+    // and those still waiting for a slot.
+    const windowStart = new Date(Date.now() - config.helperStartsWindowMs);
+    const started =
+      (await tx.run.count({
+        where: {
+          botId: bot.id,
+          trigger: BACKGROUND_HELPER_TRIGGER,
+          sourceMessage: { threadId: thread.id },
+          createdAt: { gte: windowStart },
+        },
+      })) +
+      (config.queueHelpers
+        ? await tx.queuedHelper.count({
+            where: {
+              botId: bot.id,
+              threadId: thread.id,
+              status: "queued",
+              createdAt: { gte: windowStart },
+            },
+          })
+        : 0);
+    if (!helperStartBudget(started, config)) return "budget" as const;
     const running = await tx.run.count({
       where: {
         botId: bot.id,
@@ -148,7 +228,40 @@ export async function startBackgroundHelper(
         status: { in: [...ACTIVE_RUN_STATUSES] },
       },
     });
-    if (running >= MAX_PARALLEL_SUBAGENTS) return "full" as const;
+    if (running >= MAX_PARALLEL_SUBAGENTS) {
+      if (!config.queueHelpers) return "full" as const;
+      // Fork (1.33, A2): accepted and queued; the platform starts it when a slot frees.
+      await assertRunCanWriteHistory(tx, runId, { lease: runLeaseFor(deps, runId) });
+      const sources = await tx.message.findMany({
+        where: {
+          threadId: thread.id,
+          role: "user",
+          OR: [
+            { id: run.sourceMessageId ?? "" },
+            { steeringMessages: { some: { runId, claimedAt: { not: null } } } },
+          ],
+        },
+        select: { id: true },
+        orderBy: { seq: "asc" },
+      });
+      return queueHelperInTransaction(
+        tx,
+        {
+          spaceId: run.spaceId,
+          botId: bot.id,
+          threadId: thread.id,
+          userId: run.userId,
+          originRunId,
+          clientNonce,
+          card,
+          prompt: helperPrompt(input),
+          modelProvider: modelProvider ?? "",
+          modelId: modelId ?? "",
+          sourceMessageIds: sources.map((source) => source.id),
+        },
+        config,
+      );
+    }
     // Only this turn's live worker may start one, but the card is not part of the turn: a turn
     // ending settles its own helper cards as stopped, while this helper keeps working.
     await assertRunCanWriteHistory(tx, runId, { lease: runLeaseFor(deps, runId) });
@@ -192,7 +305,7 @@ export async function startBackgroundHelper(
         status: "queued",
         trigger: BACKGROUND_HELPER_TRIGGER,
         sourceMessageId: message.id,
-        delegatedFromRunId: runId,
+        delegatedFromRunId: originRunId,
         clientNonce,
         ...(modelProvider && modelId ? { modelProvider, modelId, modelPinned: true } : {}),
       },
@@ -238,10 +351,45 @@ export async function startBackgroundHelper(
     }
     return { eventSeq: event.seq, helperRunId: helperRun.id };
   }, THREAD_LOCK_TRANSACTION_OPTIONS);
+  if (committed === "budget") {
+    getLogger().warn("helper.budget_refused", {
+      "run.id": runId,
+      "run.trigger": run.trigger,
+      "bot.id": bot.id,
+      "thread.id": thread.id,
+      "helper.budget": config.helperStartsPerThread,
+    });
+    return {
+      error: helperBudgetNote(
+        config.helperStartsPerThread,
+        Math.round(config.helperStartsWindowMs / 60_000),
+      ),
+    };
+  }
   if (committed === "full") {
     return {
       error: backgroundHelperLimitNote(MAX_PARALLEL_SUBAGENTS),
     };
+  }
+  if (committed === "queue_full") {
+    return { error: helperQueueFullNote(MAX_PARALLEL_SUBAGENTS, config.helperQueueMax) };
+  }
+  const queued = {
+    ok: true as const,
+    name: input.name,
+    queued: true as const,
+    note: queuedNote(input.name, MAX_PARALLEL_SUBAGENTS),
+  };
+  if (committed === "replayed_queued") return queued;
+  if (committed && "queued" in committed) {
+    getLogger().info("helper.queued", {
+      "run.id": runId,
+      "run.trigger": run.trigger,
+      "bot.id": bot.id,
+      "thread.id": thread.id,
+    });
+    await deps.events.notify(thread.id, committed.eventSeq);
+    return queued;
   }
   if (!committed) return started;
   await deps.events.notify(thread.id, committed.eventSeq);
@@ -378,7 +526,9 @@ export async function returnHelperOutcome(
         botId: run.botId,
         threadId: card.threadId,
         userId: run.userId,
-        prompt: resultPrompt(helper.name, outcome.status, result),
+        prompt: resultPrompt(helper.name, outcome.status, result, {
+          delegates: continuityConfig().delegateFromAnyRun,
+        }),
         status: "queued",
       },
     });
@@ -426,6 +576,12 @@ export async function returnHelperOutcome(
     }
     return { threadId: card.threadId, eventSeq, wakeRunId: wake.id };
   }, THREAD_LOCK_TRANSACTION_OPTIONS);
+  // Fork (1.33, A2): this helper's slot is free, whatever became of its card. Start the next
+  // queued helper of the agent now; a failure here is caught up by the reconciler's tick.
+  if (continuityConfig().queueHelpers)
+    await startQueuedHelpers(deps, run.botId).catch((error) =>
+      getLogger().error("queued helper start", error),
+    );
   if (!committed) return;
   await deps.events.notify(committed.threadId, committed.eventSeq);
   if (committed.wakeRunId && deps.jobs) await wakeRun(deps.jobs, committed.wakeRunId);

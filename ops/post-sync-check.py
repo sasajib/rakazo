@@ -108,7 +108,13 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # a removed bot is not read again (1.30, upstream bug, local patch): trusted batch on web, the roster drops the bot's cached reads, a read for a missing bot is not a warning
            ("omittedIsGone", 2), ("dropBotQueries(", 1), ("BotNotFoundError", 3), ("markExpectedClientMiss(", 2),
            # a rollback reloads open tabs too (1.27): older build seen stable twice, own loop guard
-           ("attemptRollback", 3), ("claimRollbackReload(", 2), ("FORK_STABLE_MS", 1)]
+           ("attemptRollback", 3), ("claimRollbackReload(", 2), ("FORK_STABLE_MS", 1),
+           # long-task continuity (1.33): any run of the agent delegates under a budget, with every helper
+           # tied to the first conversation; helpers beyond the cap queue and start by themselves; Stop
+           # cancels the queue
+           ("delegationOriginId(", 2), ("helperStartBudget(", 2), ("HELPER_DELEGATION_ANY_RUN", 1),
+           ("queueHelperInTransaction(", 2), ("startQueuedHelpers(", 3), ("startAllQueuedHelpers(", 2),
+           ("cancelQueuedHelpersInTransaction(", 3), ("delegationContinuityClause(", 2), ('"QueuedHelper",', 1)]
 results = []
 
 
@@ -160,6 +166,8 @@ def migrations():
     check("runs.lane column exists", psql("select 1 from information_schema.columns where table_name='runs' and column_name='lane'") == "1")
     check("memory ledger migration on disk", os.path.isdir(mdir + "/20261231235500_memory_ledger"))
     check("memory ledger idempotency migration on disk", os.path.isdir(mdir + "/20270128090000_memory_ledger_idempotency"))
+    check("helper queue migration on disk", os.path.isdir(mdir + "/20270129090000_helper_queue"))
+    check("queued_helpers table exists with row security", psql("select count(*) from pg_class where relname='queued_helpers' and relrowsecurity") == "1")
     check("memory ledger idempotency columns exist", psql("select count(*) from information_schema.columns where (table_name='memory_facts' and column_name='textKey') or (table_name='memory_ledger_jobs' and column_name='wroteAt')") == "2")
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")

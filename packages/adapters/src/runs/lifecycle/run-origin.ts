@@ -72,3 +72,22 @@ export async function loadRunOrigin(prisma: PrismaClient, run: RunOrigin) {
   }
   return null;
 }
+
+/**
+ * Fork (1.33). The run a helper started by `run` answers to. Every seam that asks who authorized
+ * delegated work walks at most two links (result -> helper -> conversation), so a helper started
+ * from a result run, or from a platform continuation, is tied straight to the conversation that
+ * authorized the first one: the chain stays two links long however many waves a job takes. Null
+ * when that conversation no longer authorizes the work.
+ */
+export async function delegationOriginId(
+  prisma: PrismaClient,
+  run: RunOrigin & { sourceMessageId?: string | null },
+): Promise<string | null> {
+  if (isDelegatedRun(run.trigger)) return (await loadRunOrigin(prisma, run))?.id ?? null;
+  // A continuation the platform started carries no message of its own; it names the run it
+  // continues for (see continueOpenWork).
+  if (run.trigger === "follow_up" && !run.sourceMessageId && run.delegatedFromRunId)
+    return (await loadRunOrigin(prisma, { ...run, trigger: HELPER_RESULT_TRIGGER }))?.id ?? null;
+  return run.id;
+}

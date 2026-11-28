@@ -1090,6 +1090,65 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Not covered:** the roster of one bot (a single read keeps the per-bot endpoint: one info line); other per-bot
   reads a client may make for a bot removed while its chat is open (`threads/get`): same info line, no client change.
 
+### 1.33 Long-task continuity: a job in several waves finishes without the owner nudging (2026-11-28 audit, A1 to A4)
+- **Purpose:** an agent given a long job (many parts, several waves of helpers) used to stop after the first wave
+  and say it was working. Four platform rules, each general (any agent, any task, any tool), each with its own
+  switch, on unless set to `0`.
+- **A1, any run of the agent itself may delegate** (`HELPER_DELEGATION_ANY_RUN`). `backgroundHelpersAllowed`
+  (`packages/adapters/src/tasks/background-helpers.ts`) no longer refuses `helper_result`, `bot_message`, `routine`,
+  `webhook`, `job_result` runs: the run that receives a helper's result is the one that starts the next wave. Still
+  refused: a helper (depth stays 1), a talk run, the creation intro, a background (`tickets`) run. A runaway chain is
+  stopped by a budget, not by the trigger: `helperStartBudget`, helpers one chat started (running, queued, finished)
+  inside a window, `HELPER_STARTS_PER_THREAD` (60) per `HELPER_STARTS_WINDOW_MINUTES` (60); over it the call is
+  answered "do this part yourself" (log `helper.budget_refused`).
+  **Origin seam:** every "who authorized this delegated run" lookup walks two links (`loadRunOrigin`,
+  `thread-steering.ts`, `messaging-delivery.ts`), so a helper started from a result run would have been refused at
+  assembly (`RunOriginUnauthorizedError`). `delegationOriginId` (`runs/lifecycle/run-origin.ts`) ties every helper
+  straight to the conversation that authorized the first one: `delegatedFromRunId` of a helper is that run for every
+  wave, and a platform continuation (A3) names it too.
+- **A2, a helper beyond the cap is queued, not refused** (`HELPER_QUEUE`, `HELPER_QUEUE_MAX` 16 per agent). Table
+  `queued_helpers` (fork file `tasks/helper-queue.ts`): the call is accepted, its card is posted (`status: running`,
+  `progress: "Queued: starts by itself when a helper slot is free."`, no contract change), the helper's own thread
+  and task are made at once (the brief is the task's prompt, stored like every task's), and the tool result says it
+  is queued and starts by itself. `startQueuedHelpers(botId)` starts the oldest queued helper under the same locks as
+  a direct start (group, chat, agent) whenever a slot frees: at the end of `returnHelperOutcome` (every path: completed,
+  failed, stopped) and from the job reconciler's tick (`startAllQueuedHelpers`, the safety net). No model turn is
+  needed. Stop (`cancelThreadRuns`, `apps/api/src/threads/thread-stop.ts`) cancels the chat's queued helpers (or
+  the one behind the card) and settles their cards as stopped; clearing the chat deletes the card and its row with it.
+  Queue full: the call is refused with "nothing was started". Logs: `helper.queued`, `helper.queue_started`.
+- **Prompt text (truth):** `resultPrompt` tells a result run it can start the next wave (`NEXT_WAVE_NOTE`);
+  `queuedNote` / `helperQueueFullNote` / `helperBudgetNote` (`background-helpers.prompt.ts`);
+  `delegationContinuityClause` (`tasks/continuity.prompt.ts`) is appended to the `run_subagent` guidance in
+  `run-instructions.prompt.ts`.
+- **Seams in upstream files:** `tasks/background-helpers.ts` (the rule, the budget count, the queue branch where
+  upstream returned `"full"`, the start after an outcome), `tasks/background-helpers.prompt.ts`,
+  `runs/lifecycle/run-origin.ts` (one new function), `runs/wakeups/job-reconciler.ts` (one call),
+  `runs/assembly/run-instructions.prompt.ts` (one clause), `apps/api/src/threads/thread-stop.ts` (one call),
+  `packages/adapters/src/index.ts`, `packages/db/src/database/row-security.ts`, `schema.prisma`.
+  Fork files: `tasks/continuity-config.ts`, `tasks/continuity.prompt.ts`, `tasks/helper-queue.ts`.
+- **Env:** `HELPER_DELEGATION_ANY_RUN`, `HELPER_STARTS_PER_THREAD`, `HELPER_STARTS_WINDOW_MINUTES`, `HELPER_QUEUE`,
+  `HELPER_QUEUE_MAX` (all three compose files; `tasks/continuity-config.ts`).
+- **Migration:** `20270129090000_helper_queue` (additive; table `queued_helpers`, RLS, in `ROW_SECURITY_MODELS`).
+- **Tests:** `tasks/background-helpers.test.ts` ("starts one from %s", "refuses to start one from %s", "starts the next
+  wave from a helper's result…", "HELPER_DELEGATION_ANY_RUN=0…", "refuses one more once the chat used its start
+  budget…", "queues the helper beyond the cap…", "HELPER_QUEUE=0…", "refuses when the queue is full too…"),
+  `tasks/helper-queue.postgres.test.ts` (7: six helpers asked, four start, two queue and start as slots free; replay;
+  three waves authorized by the first conversation via the real `loadRunOrigin`; stop; reconciler pass; limits; RLS),
+  `apps/api/src/threads/queued-helper-stop.postgres.test.ts` (2, the real `cancelThreadRuns`),
+  `apps/api/src/threads/thread-target.test.ts` (4 upstream stop tests: their hand-built transaction got a
+  `queuedHelper.findMany`), `runs/executor/executor.test.ts` (the `run_subagent` line).
+- **Live check:** a throwaway agent asked to "start 6 subagents, each `sleep 20` then answer its number; when all
+  six answered, start 2 more and then report": expect 4 helper runs + 2 `queued_helpers` rows (`status` queued →
+  started with no message from the person), log `helper.queued` ×2 and `helper.queue_started` ×2, then `run_subagent`
+  calls with `run.trigger: helper_result` in `agent.tool.completed` and no "cannot delegate" text in the chat.
+  `select trigger, status, "delegatedFromRunId" from runs where "botId"=… order by "createdAt"`: every `helper` row
+  names the same (first) run.
+- **Conflicts:** `background-helpers.ts` (upstream edits the start transaction often: keep the budget count before
+  and the queue branch at `running >= MAX_PARALLEL_SUBAGENTS`), the `Record<trigger, …>` style tests upstream writes
+  for `backgroundHelpersAllowed` ("refuses to start one from a routine" is now "starts one from"), `thread-stop.ts`.
+  `helper-queue.ts` `startQueuedHelpers` repeats the run-creation and attachment lines of `startBackgroundHelper`:
+  when upstream changes what a helper run is created with, change both.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

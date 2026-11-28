@@ -10,6 +10,8 @@ import { reconcileCallRequests } from "../../calls/call-request.js";
 import { scheduleComputerControlExpiry } from "../../computers/screens/computer-control.js";
 import { returnBotMessageOutcome } from "../../messaging/bot-messages.js";
 import { returnHelperOutcome } from "../../tasks/background-helpers.js";
+import { continuityConfig } from "../../tasks/continuity-config.js";
+import { startAllQueuedHelpers } from "../../tasks/helper-queue.js";
 import { messageBlocksText } from "../assembly/run-replies.prompt.js";
 import { findRunRecoveryBlockers } from "../lifecycle/run-recovery.js";
 import { reconcileStuckWork } from "../lifecycle/stuck-work.js";
@@ -374,6 +376,14 @@ export function createJobReconciler(
             });
           });
         }
+      }
+
+      // Fork (FORK.md 1.33, A2): a helper waiting for a slot is normally started the moment
+      // another helper's result goes back. This is the safety net for a start that was lost.
+      if (events && continuityConfig().queueHelpers) {
+        await startAllQueuedHelpers({ prisma: deps.prisma, jobs: deps.jobs, events }).catch(
+          (error) => report("queued helper start", error),
+        );
       }
 
       // A queued run already has a job while it waits out failure backoff.

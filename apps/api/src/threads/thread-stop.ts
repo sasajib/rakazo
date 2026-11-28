@@ -1,6 +1,7 @@
 import type { SandboxProvider } from "@rakazo/adapter-kit";
 import {
   cancelComputerRunWork,
+  cancelQueuedHelpersInTransaction,
   returnHelperOutcome,
   screenLeaseIdForRun,
   stopThreadShellJobs,
@@ -193,6 +194,13 @@ export function cancelThreadRuns(
         },
       });
     }
+    // Fork (FORK.md 1.33): helpers still waiting for a slot never started. Stop cancels them with
+    // the chat (or the one behind the card) and settles their cards, so none starts afterwards.
+    const queuedHelpers = await cancelQueuedHelpersInTransaction(tx, {
+      threadId: target.threadId,
+      cardMessageId: helperMessageId,
+    });
+    if (queuedHelpers.eventSeq !== null) eventSeq = queuedHelpers.eventSeq;
     return {
       runIds: ids,
       computers,
