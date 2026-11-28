@@ -18,6 +18,7 @@ import { isTerminatingReplyResult, terminatingReplyText } from "../../approvals/
 import { cliEnv, privateFolder } from "../../cli-models/cli-process.js";
 import type { PersonalCliAccessCheck } from "../../cli-models/personal-access.js";
 import { deliverFinishedShells } from "../../computers/sandbox/shell-command-stream.js";
+import { unusableImageNote } from "../../media/model-image-guard.js";
 import { agentCliModelSeesImages } from "../../models/model-vision.js";
 import { sanitizeSensitiveText } from "../pi/pi-runtime-errors.js";
 import { modelStreamIdleTimeoutMs } from "../pi/pi-runtime-limits.js";
@@ -844,7 +845,10 @@ function toolResult(result: AgentToolResult<unknown>, finishedShells?: string): 
   for (const part of result?.content ?? []) {
     if (part.type === "text") content.push({ type: "text", text: part.text });
     else if (part.type === "image") {
-      content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+      // Fork (1.38): a picture the agent's provider would refuse the request for becomes a note.
+      const note = unusableImageNote(part, "acp_tool_result");
+      if (note) content.push({ type: "text", text: note });
+      else content.push({ type: "image", data: part.data, mimeType: part.mimeType });
     }
   }
   if (finishedShells) content.push({ type: "text", text: finishedShells });

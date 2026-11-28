@@ -20,7 +20,7 @@ import {
   isToolPauseResult,
 } from "../../../approvals/approval-effect.js";
 import type { FinishedShellCommand } from "../../../computers/sandbox/shell-command-stream.js";
-import { liftMcpResultImages } from "../../../mcp/mcp-result-images.js";
+import { fitMcpResultImages, liftMcpResultImages } from "../../../mcp/mcp-result-images.js";
 import { isVerbatimMcpResult } from "../../../mcp/verbatim-mcp-result.js";
 import { NO_RESPONSE } from "../../../runs/assembly/silent-reply.js";
 import { providerToolCallId } from "../../../runs/turn/tool-call-ids.js";
@@ -702,6 +702,8 @@ function toAgentTool(
                     : boundAgentToolResult(result);
                 }
                 const lifted = liftMcpResultImages(result);
+                // Fork (1.38): a picture over a provider's limits is scaled before it is kept.
+                const images = await fitMcpResultImages(lifted.images);
                 return {
                   content: [
                     {
@@ -714,7 +716,7 @@ function toAgentTool(
                         host.request.verbatimMcpServers,
                       ),
                     },
-                    ...lifted.images,
+                    ...images,
                   ],
                   details: lifted.result,
                 };

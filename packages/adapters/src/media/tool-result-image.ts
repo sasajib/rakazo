@@ -90,6 +90,19 @@ export async function prepareImageForModel(
   return { data: encoded.data, mimeType: encoded.mimeType };
 }
 
+/**
+ * Fork (1.38): a picture from outside (an MCP server) that is too large to send as it is, scaled
+ * to the size every other tool picture has. Undefined when it cannot be decoded.
+ */
+export async function scaleImageForModel(
+  bytes: Uint8Array,
+): Promise<{ data: string; mimeType: ToolResultImage["mimeType"] } | undefined> {
+  const format = detectImageMimeType(bytes);
+  if (!format) return undefined;
+  const encoded = await encodeForModel(bytes, format);
+  return encoded && { data: encoded.data.toString("base64"), mimeType: encoded.mimeType };
+}
+
 async function encodeForModel(
   bytes: Uint8Array,
   format: string,

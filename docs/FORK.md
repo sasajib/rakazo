@@ -1171,6 +1171,47 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   → every line has `tool.exit_code` and a class other than `unknown`.
 - **Conflicts:** upstream edits to `toolErrorFields` / `appendToolCompletionAudit`.
 
+### 1.38 An image a provider would refuse never reaches a model request (`MODEL_IMAGE_GUARD`) (2026-11-28 audit, C3)
+- **Why:** run `cmwydsgm9000c07ssj6ipthde` failed with Anthropic 400 `image_dimensions_too_large`
+  ("At least one of the image dimensions exceed max allowed size: 8000 pixels", path
+  `messages.0.content.0.content.1`: an image inside a tool result). The run's 12 tool calls were all connector
+  (MCP) calls; the last returned a picture taller than 8000 px. `liftMcpResultImages` (`mcp/mcp-result-images.ts`)
+  passes an MCP picture on as the server sent it when it is a still PNG or JPEG: no limit on its sides. Every
+  other picture a tool makes is scaled to 1568 px (`encodeForModel`). One such block fails the request, and it
+  stays in the conversation, so every later step fails too.
+- **Two layers:**
+  1. **Where it enters (`fitMcpResultImages`):** an MCP picture with a side over 2000 px or over 5 MiB of base64 is
+     scaled down like every other tool picture (`scaleImageForModel`), so the model still sees it.
+  2. **Before every provider call (`media/model-image-guard.ts`, hooked in `observedPiStream`,
+     `runtime/pi/usage/pi-usage.ts`: the one function every Pi model call goes through, any provider, main
+     model, backups, helpers):** each image block of the request (user messages, tool results, replayed history)
+     is checked by header and length; a block that is empty, not base64, not a PNG/JPEG/GIF/WebP, a PNG cut off
+     before its end, over 5 MiB, or over 8000 px a side (2000 px when the request holds more than 20 images) is
+     replaced by a text note (`model-image-guard.prompt.ts`: "[image left out: it was 1200x9000 pixels, over the
+     8000 pixel limit per side. To look at it, make a smaller or valid copy and read that.]"). The stored
+     conversation is not changed. The ACP runtime (pictures handed to another agent one by one) uses the same
+     check (`unusableImageNote` in `acp-turn.ts`, `acp-runtime.ts`).
+- **Log:** `model_image.left_out` (warn; `images.left_out`, `images.new`, `images.total`, `images.reasons`
+  {reason: count}, run id, provider, model; never the image). Once per picture, not once per step.
+- **Env (default on, all three compose files):** `MODEL_IMAGE_GUARD=0` sends requests as they are and stops the
+  MCP scaling.
+- **Tests run with it off by default:** upstream fixtures use one to three placeholder bytes as "images"
+  (10 tests in `pi-runtime-fallback`, `pi-runtime-yield`, `acp-runtime` fail otherwise), so
+  `packages/testkit/src/pin-test-env.ts` sets `MODEL_IMAGE_GUARD ??= "0"`; the fork's tests turn it on.
+- **Seams:** `runtime/pi/usage/pi-usage.ts` (one call), `runtime/pi/tools/pi-runtime-tools.ts` (one await),
+  `mcp/mcp-result-images.ts`, `media/tool-result-image.ts` (`scaleImageForModel`), `runtime/acp/{acp-turn,acp-runtime}.ts`,
+  `testkit/src/pin-test-env.ts`.
+- **Tests:** `media/model-image-guard.test.ts` (8: each reason with real PNGs, user message + tool result,
+  logged once, many-image limit, kill switch, MCP scaling), `runtime/pi/usage/pi-usage-image-guard.fork.test.ts`
+  (the request body the real Anthropic, OpenAI-completions and OpenAI-responses adapters send: empty, corrupt
+  and 900x8600 images gone, the good one kept; with the switch off the tall one is sent).
+- **Live check:** an agent with an MCP browser/design server: ask for a full-page screenshot of a long page →
+  the run goes on; `docker logs rakazo-api-1 rakazo-worker-1 2>&1 | grep -c model_image.left_out` (0 when the
+  scaling handled it); no `run.failed` with `image_dimensions_too_large`.
+- **Not covered:** a JPEG/GIF/WebP whose body is damaged behind a good header (no pixel decode per step);
+  other model calls that do not go through `observedPiStream` (memory ledger, curator, voice: text only).
+- **Conflicts:** upstream edits to `observedPiStream`'s `prepareContext` line, `liftMcpResultImages` call site.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

@@ -17,6 +17,7 @@ import type {
   UsageOperationKind,
 } from "@rakazo/adapter-kit";
 import { getLogger } from "@rakazo/logging";
+import { guardModelImages } from "../../../media/model-image-guard.js";
 import { withDataRetentionPayload } from "../../../models/endpoints/data-retention.js";
 import { withGoogleToolHistory } from "../../../models/endpoints/google-tool-history.js";
 import { openRouterInferenceFetch } from "../../../models/endpoints/openrouter-usage.js";
@@ -442,7 +443,12 @@ export function observedPiStream(
         options?.signal?.throwIfAborted();
         // Reject an unsupported declared control before reserving or making any request.
         const cacheRetention = resolvePiCacheRetention(model, options?.cacheRetention);
-        const preparedContext = hooks?.prepareContext?.(context, model) ?? context;
+        // Fork (1.38): every provider call passes here; an image the provider would refuse the
+        // whole request for is replaced by a note first.
+        const preparedContext = guardModelImages(
+          hooks?.prepareContext?.(context, model) ?? context,
+          { "run.id": attribution.runId, "model.provider": model.provider, "model.id": model.id },
+        );
         recordPiTelemetryContent(span, "pi.ai.prompt", preparedContext);
         inputTokensEstimate = observer
           ? estimateModelContextTokens(preparedContext, hooks?.imageTokens)

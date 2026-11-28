@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentInputImage, AgentRunRequest } from "@rakazo/adapter-kit";
+import { unusableImageNote } from "../../media/model-image-guard.js";
 import type { AgentSession } from "./acp-sessions.js";
 import {
   conversationClose,
@@ -150,12 +151,15 @@ export function turnText(
       return;
     }
     for (const image of images) {
+      const data = Buffer.from(image.data).toString("base64");
+      // Fork (1.38): a picture the agent's provider would refuse the request for becomes a note.
+      const note = unusableImageNote({ data }, "acp_turn");
+      if (note) {
+        text(note);
+        continue;
+      }
       sources.push(imageSource(line));
-      blocks.push({
-        type: "image",
-        mimeType: image.mimeType,
-        data: Buffer.from(image.data).toString("base64"),
-      });
+      blocks.push({ type: "image", mimeType: image.mimeType, data });
     }
   };
   if (kept.length) {
