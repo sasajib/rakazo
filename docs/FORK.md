@@ -1203,6 +1203,134 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** `buildTurnPrompt` and the prompt array in `run-assembly-context.ts`, `logTurnPromptAudit` /
   `modelTurnRequest` in `run-model-turn.ts` (upstream conflict list), the tail of `userTurnInstructions`,
   `skill-tools.ts` (upstream conflict list: two `loadBotSkillAccess` call sites), `bot_skills` definition + byte cap.
+
+### 1.33 Long-task continuity: a job in several waves finishes without the owner nudging (2026-11-28 audit, A1 to A4)
+- **Purpose:** an agent given a long job (many parts, several waves of helpers) used to stop after the first wave
+  and say it was working. Four platform rules, each general (any agent, any task, any tool), each with its own
+  switch, on unless set to `0`.
+- **A1, any run of the agent itself may delegate** (`HELPER_DELEGATION_ANY_RUN`). `backgroundHelpersAllowed`
+  (`packages/adapters/src/tasks/background-helpers.ts`) no longer refuses `helper_result`, `bot_message`, `routine`,
+  `webhook`, `job_result` runs: the run that receives a helper's result is the one that starts the next wave. Still
+  refused: a helper (depth stays 1), a talk run, the creation intro, a background (`tickets`) run. A runaway chain is
+  stopped by a budget, not by the trigger: `helperStartBudget`, helpers one chat started (running, queued, finished)
+  inside a window, `HELPER_STARTS_PER_THREAD` (60) per `HELPER_STARTS_WINDOW_MINUTES` (60); over it the call is
+  answered "do this part yourself" (log `helper.budget_refused`).
+  **Origin seam:** every "who authorized this delegated run" lookup walks two links (`loadRunOrigin`,
+  `thread-steering.ts`, `messaging-delivery.ts`), so a helper started from a result run would have been refused at
+  assembly (`RunOriginUnauthorizedError`). `delegationOriginId` (`runs/lifecycle/run-origin.ts`) ties every helper
+  straight to the conversation that authorized the first one: `delegatedFromRunId` of a helper is that run for every
+  wave, and a platform continuation (A3) names it too.
+- **A2, a helper beyond the cap is queued, not refused** (`HELPER_QUEUE`, `HELPER_QUEUE_MAX` 16 per agent). Table
+  `queued_helpers` (fork file `tasks/helper-queue.ts`): the call is accepted, its card is posted (`status: running`,
+  `progress: "Queued: starts by itself when a helper slot is free."`, no contract change), the helper's own thread
+  and task are made at once (the brief is the task's prompt, stored like every task's), and the tool result says it
+  is queued and starts by itself. `startQueuedHelpers(botId)` starts the oldest queued helper under the same locks as
+  a direct start (group, chat, agent) whenever a slot frees: at the end of `returnHelperOutcome` (every path: completed,
+  failed, stopped) and from the job reconciler's tick (`startAllQueuedHelpers`, the safety net). No model turn is
+  needed. Stop (`cancelThreadRuns`, `apps/api/src/threads/thread-stop.ts`) cancels the chat's queued helpers (or
+  the one behind the card) and settles their cards as stopped; clearing the chat deletes the card and its row with it.
+  Queue full: the call is refused with "nothing was started". Logs: `helper.queued`, `helper.queue_started`.
+- **Prompt text (truth):** `resultPrompt` tells a result run it can start the next wave (`NEXT_WAVE_NOTE`);
+  `queuedNote` / `helperQueueFullNote` / `helperBudgetNote` (`background-helpers.prompt.ts`);
+  `delegationContinuityClause` (`tasks/continuity.prompt.ts`) is appended to the `run_subagent` guidance in
+  `run-instructions.prompt.ts`.
+- **A3, a run that ends with its own work open is continued** (`OPEN_WORK_CONTINUATION`,
+  `OPEN_WORK_MAX_CONTINUATIONS` 25). The rule is a pure function, `decideOpenWork`
+  (`packages/core/src/runs/open-work.ts`); the facts are gathered and acted on in the fork file
+  `packages/adapters/src/runs/turn/run-open-work.ts` (`followOpenWork`), called from `run-model-turn.ts` right after
+  the old "announced work, used no tool" rule (1.3), for a completed run of ANY trigger except `helper`, `talk`,
+  `created`, `call_end`, `messaging`, `reaction` and background (`tickets`) runs.
+  **Work is open** when (a, the deterministic record) the agent keeps an item with status `open` for this chat:
+  `scratchpad_items.threadId` (new column) is set by `scratchpad_add` from the run's thread, and by
+  `scratchpad_update` / `scratchpad_complete` on an item that had none; items made before the migration or in the
+  app have no chat and never count; `parked` items start nothing. Or (b, the fallback, only when no item is kept)
+  the reply's closing lines promise more work in the first person (`declaresFurtherWork`: "I'm continuing with…",
+  "Next I'll…", "I'll report when it is done"); an offer or a question ("if you want, I'll…", "shall I…?") is not a
+  promise. Wording these patterns cannot decide (future tense without a clear verb, or a closing in a non-Latin
+  script) goes to the memory ledger's small model (`judgeOpenWorkPromise`, `OPEN_WORK_JUDGE`,
+  `OPEN_WORK_JUDGE_TIMEOUT_MS` 12000); no endpoint, a failure or the timeout answers "no".
+  **Nothing else will wake the agent** (`loadOpenWorkWakers`), all seven must be zero: helpers of this chat working
+  or with a result not handed back; helpers queued (A2); another queued/working/waiting run of the agent in the
+  chat; a background shell job of the chat running or not handed back; a one-time schedule the agent set; a card of
+  the agent in this chat that waits on the person (cards since the person's last message); a request sent to
+  another agent whose outcome is not back. A status report while helpers work therefore starts nothing.
+  **Then** a `follow_up` run is created in the same chat (`clientNonce` `open-work:<ended run id>`, one per ended
+  run, `delegatedFromRunId` = the conversation that authorized the work, so its helpers are authorized too) with a
+  brief that lists the open items (or quotes the promise) and forbids ending on another promise.
+  **Bounds:** at most `OPEN_WORK_MAX_CONTINUATIONS` continuation runs since the person's last own message in the
+  chat (generous on purpose: a job done one part per run needs one each); and the no-progress rule, which is what
+  stops a loop: a continuation that moved no item (with items kept) or called no tool (on a promise) ends the chain. Logs: `run.open_work_continued`, `run.open_work_left` (why nothing was started), `run.open_work_stalled`.
+- **A4, the owner is told when work stops moving** (`OPEN_WORK_STALLED_NOTICE`). When the chain ends with work open
+  (`limit`, `no_progress`) or a continuation parks its work instead of doing it (`blocked`), one system line is
+  posted in the chat ("Stalled: 2 items open: …. Nothing is running for this task now, because …. A message here
+  starts it again.") and the normal completion notification goes out (`<agent> stalled` / `<agent> is blocked`).
+  Table `open_work_states` (one row per agent and chat) holds `stalledAt`: the same untouched items start nothing
+  and say nothing again until the agent adds, changes or closes one of them. **Stop means stop:** `cancelThreadRuns`
+  (`thread-stop.ts`) sets the same mark (`stalledReason: stopped`, `disarmOpenWorkInTransaction`), so pressing Stop is
+  not undone by a continuation.
+- **Prompt text (A3):** `openWorkClause` (after the scratchpad and follow-up guidance in `run-instructions.prompt.ts`):
+  one open item per part still to do, parked for what waits on someone, and "never end a run by saying you are
+  continuing… unless that work is really going on". The scratchpad block's line "it does not wake you" is now
+  "no clock wakes you up" (`scratchpadWakeLine`; same byte length, so the block's budget tests hold).
+- **Seams in upstream files (A3/A4):** `runs/turn/run-model-turn.ts` (one call), `runs/turn/run-unfinished-task.ts`
+  (the old rule's follow-up run names its origin too), `tasks/scratchpad-tools.ts` + `runs/tools/run-tools-tasks.ts`
+  (`threadId`), `runtime/context/scratchpad-context.prompt.ts`, `core/src/index.ts`, `thread-stop.ts`.
+- **Seams in upstream files (A1/A2):** `tasks/background-helpers.ts` (the rule, the budget count, the queue branch where
+  upstream returned `"full"`, the start after an outcome), `tasks/background-helpers.prompt.ts`,
+  `runs/lifecycle/run-origin.ts` (one new function), `runs/wakeups/job-reconciler.ts` (one call),
+  `runs/assembly/run-instructions.prompt.ts` (one clause), `apps/api/src/threads/thread-stop.ts` (one call),
+  `packages/adapters/src/index.ts`, `packages/db/src/database/row-security.ts`, `schema.prisma`.
+  Fork files: `tasks/continuity-config.ts`, `tasks/continuity.prompt.ts`, `tasks/helper-queue.ts`.
+- **Env:** `HELPER_DELEGATION_ANY_RUN`, `HELPER_STARTS_PER_THREAD`, `HELPER_STARTS_WINDOW_MINUTES`, `HELPER_QUEUE`,
+  `HELPER_QUEUE_MAX`, `OPEN_WORK_CONTINUATION`, `OPEN_WORK_MAX_CONTINUATIONS`, `OPEN_WORK_JUDGE`,
+  `OPEN_WORK_JUDGE_TIMEOUT_MS`, `OPEN_WORK_STALLED_NOTICE` (all three compose files; `tasks/continuity-config.ts`).
+  The judge uses `MEMORY_LEDGER_MODEL_URL` / `_MODEL` / `_API_KEY` (1.10) and is silent without them.
+- **Migrations:** `20270129090000_helper_queue` (table `queued_helpers`), `20270130090000_open_work`
+  (`scratchpad_items.threadId`, table `open_work_states`); both additive, idempotent, RLS, in `ROW_SECURITY_MODELS`.
+- **Tests:** `tasks/background-helpers.test.ts` ("starts one from %s", "refuses to start one from %s", "starts the next
+  wave from a helper's result…", "HELPER_DELEGATION_ANY_RUN=0…", "refuses one more once the chat used its start
+  budget…", "queues the helper beyond the cap…", "HELPER_QUEUE=0…", "refuses when the queue is full too…"),
+  `tasks/helper-queue.postgres.test.ts` (7: six helpers asked, four start, two queue and start as slots free; replay;
+  three waves authorized by the first conversation via the real `loadRunOrigin`; stop; reconciler pass; limits; RLS),
+  `apps/api/src/threads/queued-helper-stop.postgres.test.ts` (2, the real `cancelThreadRuns`),
+  `apps/api/src/threads/thread-target.test.ts` (4 upstream stop tests: their hand-built transaction got a
+  `queuedHelper.findMany`), `runs/executor/executor.test.ts` (the `run_subagent` line).
+- **Tests (A3/A4):** `core/src/runs/open-work.test.ts` (67: the promise patterns, offers and questions, the decision
+  for every waker, the no-progress rule, the limit, blocked, the brief, the notice),
+  `runs/turn/run-open-work.postgres.test.ts` (17: continuation from items and from a promise, each of six wakers
+  with real rows, the judge asked only when unclear, a chain that stalls and is told once and stays quiet until the
+  list moves, the limit and its reset on a person's message, blocked, switches, Stop, a continuation's helper
+  authorized by the real `loadRunOrigin`, `threadId` on items), `runs/turn/run-open-work.test.ts` (the judge's safe
+  default), `runs/tools/run-tools-tasks.open-work.test.ts` (the tool handlers pass the run's chat), journeys `13g-2` (the whole path through the executor) and `13g` (the fifth helper queues, Stop cancels
+  it), `queued-helper-stop.postgres.test.ts` (Stop stands the open items down), `scratchpad-context.test.ts` (the
+  preamble snapshot), `executor.test.ts` (the tool line carries `openWorkClause`).
+- **Live check (A3/A4):** (1) a throwaway agent told "This job has 3 parts: write files part1.txt, part2.txt,
+  part3.txt, one per run. Keep one scratchpad item per part. Write part 1 now and end your run." → without any
+  message: log `run.open_work_continued` (basis items), runs with `"clientNonce" like 'open-work:%'` and trigger
+  `follow_up`, all three files exist, `scratchpad_items` of the chat all `done`, no notice. (2) told "Add a
+  scratchpad item 'wait for the moon' with status open and end your run" → one continuation, then
+  `run.open_work_stalled` (`blocked` when it parks the item, `no_progress` otherwise), exactly one system line
+  "Blocked:" / "Stalled:" in the chat, one notification, `open_work_states.stalledAt` set, and a later "hi" starts
+  no continuation. (3) "Reply only with: I'm continuing with the next part." → one continuation
+  (`open_work.basis: promise`). (4) while 2 helpers run, a status question → `run.open_work_left` with
+  `will_wake:helpers`, no continuation.
+- **Live check (A1/A2):** a throwaway agent asked to "start 6 subagents, each `sleep 20` then answer its number; when all
+  six answered, start 2 more and then report": expect 4 helper runs + 2 `queued_helpers` rows (`status` queued →
+  started with no message from the person), log `helper.queued` ×2 and `helper.queue_started` ×2, then `run_subagent`
+  calls with `run.trigger: helper_result` in `agent.tool.completed` and no "cannot delegate" text in the chat.
+  `select trigger, status, "delegatedFromRunId" from runs where "botId"=… order by "createdAt"`: every `helper` row
+  names the same (first) run.
+- **Not covered:** a `messaging` (connected chat) run is not followed (its reply goes to a channel a continuation
+  cannot reach). A `bot_message` run that is continued hands its FIRST reply back to the asking agent; what the
+  continuation produces stays in the agent's own chat. The promise patterns are English; other languages depend
+  on the judge model. The judge reads only the closing lines (at most 700 characters).
+- **Conflicts:** `run-model-turn.ts` (the call sits right after `continueUnfinishedTask`), `scratchpad-tools.ts`,
+  `background-helpers.ts` (upstream edits the start transaction often: keep the budget count before
+  and the queue branch at `running >= MAX_PARALLEL_SUBAGENTS`), the `Record<trigger, …>` style tests upstream writes
+  for `backgroundHelpersAllowed` ("refuses to start one from a routine" is now "starts one from"), `thread-stop.ts`.
+  `helper-queue.ts` `startQueuedHelpers` repeats the run-creation and attachment lines of `startBackgroundHelper`:
+  when upstream changes what a helper run is created with, change both.
+
 ### 1.36 File tools take the paths the shell takes, and run after the command beside them (2026-11-28 audit, C1)
 - **Why:** 26 Nov 15:00 to 28 Nov 02:00 UTC: `attach_file` failed 9 of 15 calls, `read_file` 49, `list_files` 4,
   `write_file` 1, while `shell` read the same files. Two causes, both measured from the audit store (argument

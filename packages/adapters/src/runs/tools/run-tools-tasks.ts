@@ -105,6 +105,8 @@ export const taskTools: ToolHandlers = {
       title: String(args.title ?? ""),
       status: args.status ? String(args.status) : undefined,
       notes: args.notes !== undefined ? String(args.notes) : undefined,
+      // Fork (1.33): an open item belongs to the chat it was added in.
+      threadId: run.threadId,
     });
     return call.finish(created);
   },
@@ -119,6 +121,7 @@ export const taskTools: ToolHandlers = {
       title: args.title !== undefined ? String(args.title) : undefined,
       status: args.status !== undefined ? String(args.status) : undefined,
       notes: args.notes !== undefined ? String(args.notes) : undefined,
+      threadId: run.threadId,
     });
     return call.finish(updated);
   },
@@ -130,6 +133,7 @@ export const taskTools: ToolHandlers = {
       botId: bot.id,
       userId: run.userId,
       itemId: String(args.itemId ?? ""),
+      threadId: run.threadId,
     });
     return call.finish(completed);
   },

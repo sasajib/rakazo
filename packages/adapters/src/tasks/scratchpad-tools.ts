@@ -76,6 +76,8 @@ export async function addScratchpadItemFromTool(
     title: string;
     status?: string;
     notes?: string;
+    /** Fork (1.33): the chat the item is added in; its open items are that chat's open work. */
+    threadId?: string | undefined;
   },
 ) {
   const title = input.title.trim();
@@ -102,6 +104,7 @@ export async function addScratchpadItemFromTool(
       title,
       status,
       notes,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
     },
   });
   return { item: mapScratchpadItem(row) };
@@ -122,6 +125,8 @@ export async function updateScratchpadItemFromTool(
     title?: string;
     status?: string;
     notes?: string;
+    /** Fork (1.33): an item with no chat yet becomes the work of the chat that changes it. */
+    threadId?: string | undefined;
   },
 ) {
   const itemId = input.itemId.trim();
@@ -132,7 +137,7 @@ export async function updateScratchpadItemFromTool(
   });
   if (!existing) return { error: "Scratchpad item not found." };
 
-  const data: { title?: string; status?: string; notes?: string } = {};
+  const data: { title?: string; status?: string; notes?: string; threadId?: string } = {};
   if (input.title !== undefined) {
     const title = input.title.trim();
     if (!title) return { error: "title cannot be empty." };
@@ -155,6 +160,7 @@ export async function updateScratchpadItemFromTool(
   if (Object.keys(data).length === 0) {
     return { error: "Provide title, status, and/or notes to update." };
   }
+  if (input.threadId && !existing.threadId) data.threadId = input.threadId;
 
   // The scope is part of the write, so the item cannot change hands between the read and it.
   const [row] = await deps.prisma.scratchpadItem.updateManyAndReturn({
@@ -172,6 +178,7 @@ export async function completeScratchpadItemFromTool(
     botId: string;
     userId: string;
     itemId: string;
+    threadId?: string | undefined;
   },
 ) {
   return updateScratchpadItemFromTool(deps, {

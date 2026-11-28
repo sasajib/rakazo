@@ -127,7 +127,18 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("MODEL_IMAGE_GUARD", 3), ("model_image.left_out", 2),
            # a delegated request that was stopped still answers the agent that asked (1.39)
            ("returnStoppedBotMessageOutcomes(", 3), ("botMessageStoppedText(", 3),
-           ("BOT_MESSAGE_STOP_NOTICE", 2)]
+           ("BOT_MESSAGE_STOP_NOTICE", 2),
+           # long-task continuity (1.33): any run of the agent delegates under a budget, with every helper
+           # tied to the first conversation; helpers beyond the cap queue and start by themselves; Stop
+           # cancels the queue
+           ("delegationOriginId(", 2), ("helperStartBudget(", 1), ("HELPER_DELEGATION_ANY_RUN", 1),
+           ("queueHelperInTransaction(", 2), ("startQueuedHelpers(", 3), ("startAllQueuedHelpers(", 2),
+           ("cancelQueuedHelpersInTransaction(", 3), ("delegationContinuityClause(", 2), ('"QueuedHelper",', 1),
+           # open work (1.33 A3/A4): the rule, its seam after a run completes, the wakers, the item's chat,
+           # the stalled notice's state, Stop standing the items down, the prompt clause
+           ("decideOpenWork(", 2), ("continueOpenWork(ctx)", 1), ("loadOpenWorkWakers(", 1),
+           ("followOpenWork(", 2), ("disarmOpenWorkInTransaction(", 3), ("openWorkClause(", 2),
+           ("OPEN_WORK_NONCE_PREFIX", 2), ("threadId: run.threadId,", 1), ('"OpenWorkState",', 1)]
 results = []
 
 
@@ -179,6 +190,11 @@ def migrations():
     check("runs.lane column exists", psql("select 1 from information_schema.columns where table_name='runs' and column_name='lane'") == "1")
     check("memory ledger migration on disk", os.path.isdir(mdir + "/20261231235500_memory_ledger"))
     check("memory ledger idempotency migration on disk", os.path.isdir(mdir + "/20270128090000_memory_ledger_idempotency"))
+    check("helper queue migration on disk", os.path.isdir(mdir + "/20270129090000_helper_queue"))
+    check("queued_helpers table exists with row security", psql("select count(*) from pg_class where relname='queued_helpers' and relrowsecurity") == "1")
+    check("open work migration on disk", os.path.isdir(mdir + "/20270130090000_open_work"))
+    check("open_work_states table exists with row security", psql("select count(*) from pg_class where relname='open_work_states' and relrowsecurity") == "1")
+    check("scratchpad_items.threadId column exists", psql("select 1 from information_schema.columns where table_name='scratchpad_items' and column_name='threadId'") == "1")
     check("memory ledger idempotency columns exist", psql("select count(*) from information_schema.columns where (table_name='memory_facts' and column_name='textKey') or (table_name='memory_ledger_jobs' and column_name='wroteAt')") == "2")
     check("memory ledger tables exist", psql("select count(*) from information_schema.tables where table_name in ('memory_facts','memory_fact_links','memory_ledger_jobs')") == "3")
     check("per-agent skill tables exist with row security", psql("select count(*) from pg_class where relname in ('bot_skill_selections','bot_skills') and relrowsecurity") == "2")

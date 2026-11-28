@@ -1,6 +1,7 @@
 import { FLEET_WRITE_TOOL_NAMES } from "@rakazo/contracts";
 import { runReadsThreadHistory, toolRequiresExplicitApproval } from "@rakazo/core";
 import { MODEL_CANNOT_SEE_MESSAGE } from "../../models/model-vision.prompt.js";
+import { delegationContinuityClause, openWorkClause } from "../../tasks/continuity.prompt.js";
 import { SCHEDULE_TOOL_NAMES } from "../../tools/schedule-tools.js";
 import type { UserComputerState } from "../tools/run-tools-user-computer.js";
 import { DESKTOP_HELD_FOR_TAKEOVER_MESSAGE } from "../turn/takeover-resume.prompt.js";
@@ -375,6 +376,12 @@ function toolUsageLine(parts: {
       : undefined,
     scratchpadClause(disabled),
     parts.followUpsOffered ? FOLLOW_UP_INSTRUCTION : undefined,
+    // Fork (1.33, A3): open work is continued by the platform; "I'm continuing" must be true.
+    openWorkClause(
+      ["scratchpad_add", "scratchpad_update", "scratchpad_complete"].every((name) =>
+        builtinOffered(disabled, name),
+      ),
+    ),
     builtinOffered(disabled, "request_takeover")
       ? "When the user only needs to see something on the computer screen, such as a QR code, call computer_observe with share=true to post the screenshot in the chat (if the screen is still loading or blank, wait and observe again first). Use request_takeover when the user must provide protected input or human judgment, or operate the screen."
       : undefined,
@@ -475,7 +482,7 @@ export function userTurnInstructions(parts: {
   followUpsOffered?: boolean;
   /** Fork: the run was offered vault_fill (it reaches an MCP browser saved logins are typed through). */
   vaultFillOffered?: boolean;
-  /** Whether this turn may start a background helper (only in the bot's own app chat). */
+  /** Whether this turn may start a background helper (fork 1.33: every run of the agent itself). */
   backgroundHelpersAllowed?: boolean;
   userComputer?: UserComputerState;
 }): (string | undefined)[] {
@@ -507,7 +514,7 @@ export function userTurnInstructions(parts: {
       parts.disabledBuiltinTools,
       "run_subagent",
       parts.backgroundHelpersAllowed
-        ? "run_subagent delegates work independently and returns immediately. Use it for work another agent can complete. Its result comes back later; end your turn when nothing else needs doing, and remain available for new user messages. Wait for the needed results before giving a final answer, combine related results, and honor newer instructions or cancellation. Subagents can act under the applicable permissions and request approval in this chat."
+        ? `run_subagent delegates work independently and returns immediately. Use it for work another agent can complete. Its result comes back later; end your turn when nothing else needs doing, and remain available for new user messages. Wait for the needed results before giving a final answer, combine related results, and honor newer instructions or cancellation. Subagents can act under the applicable permissions and request approval in this chat.${delegationContinuityClause()}`
         : "Subagent delegation is unavailable in this conversation. Complete the work yourself; do not claim to have delegated it.",
     ),
     parts.botDirectory,

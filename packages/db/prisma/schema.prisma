@@ -783,6 +783,8 @@ model Space {
   mcpServerSpaces             McpServerSpace[]
   capabilityInstallSpaces     CapabilityInstallSpace[]
   shellJobs                   ShellJob[]
+  queuedHelpers               QueuedHelper[]
+  openWorkStates              OpenWorkState[]
   botSkillSelections          BotSkillSelection[]
 
   @@unique([id, organizationId])
@@ -1123,6 +1125,8 @@ model Bot {
   emailAddress      BotEmailAddress?
   emailMessages     BotEmailMessage[]
   shellJobs        ShellJob[]
+  queuedHelpers    QueuedHelper[]
+  openWorkStates   OpenWorkState[]
   skillSelection   BotSkillSelection?
 
   @@unique([spaceId, spawnKey])
@@ -1230,6 +1234,8 @@ model Thread {
   runs                        Run[]
   routines                    Routine[]
   shellJobs        ShellJob[]
+  queuedHelpers    QueuedHelper[]
+  openWorkStates   OpenWorkState[]
 
   @@index([spaceId])
   @@index([spaceId, userId])
@@ -1281,6 +1287,7 @@ model Message {
   /// the blocks. Only the bot's runs read it: message reads leave it out unless they select it.
   toolHistory      String?
   sourceRuns            Run[]             @relation("RunSourceMessage")
+  queuedHelper          QueuedHelper?
   externalTranscriptFor  ExternalMessage?
   steeringMessages SteeringMessage[]
   createdAt        DateTime  @default(now())
@@ -1767,13 +1774,46 @@ model ScratchpadItem {
   title     String
   status    String   @default("open")
   notes     String   @default("")
+  /// Fork (FORK.md 1.33): the chat the agent added the item in. An open item of a chat is that
+  /// chat's open work (run-open-work.ts). Null for items made before, or outside a run.
+  threadId  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([spaceId, botId, status])
   @@index([spaceId, botId, updatedAt])
   @@index([botId, status, updatedAt, id])
+  @@index([threadId, botId, status])
   @@map("scratchpad_items")
+}
+
+/// Fork (FORK.md 1.33): what the open-work rule last did for one agent in one chat. `stalledAt` is
+/// when the owner was told the work stopped moving (or pressed Stop): the same untouched items
+/// start nothing again until the agent moves one of them.
+model OpenWorkState {
+  id                    String    @id @default(cuid())
+  spaceId               String
+  space                 Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  botId                 String
+  bot                   Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  threadId              String
+  thread                Thread    @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  /// Continuation runs the platform started in this chat, ever.
+  continuations         Int       @default(0)
+  lastContinuationRunId String?
+  stalledAt             DateTime?
+  /// limit | no_progress | blocked | stopped
+  stalledReason         String?
+  /// The run whose end was reported: one notice per run.
+  stalledRunId          String?
+  openCount             Int       @default(0)
+  noticeMessageId       String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([threadId, botId])
+  @@index([spaceId, botId])
+  @@map("open_work_states")
 }
 
 model TaughtSkill {
@@ -3254,6 +3294,45 @@ model StandingEmbedding {
 
   @@unique([spaceId, key])
   @@map("standing_embeddings")
+}
+
+/// Fork (FORK.md 1.33): a helper an agent asked for while every helper slot of that agent was busy.
+/// Its card is already in the chat; the platform starts it when a slot frees, with no model turn
+/// (helper-queue.ts). The row goes with its card when the chat is cleared.
+model QueuedHelper {
+  id               String   @id @default(cuid())
+  spaceId          String
+  space            Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  botId            String
+  bot              Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  /// The chat that asked, where the card is and the result returns.
+  threadId         String
+  thread           Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId           String
+  /// The run whose conversation authorizes the helper (delegationOriginId).
+  originRunId      String
+  cardMessageId    String   @unique
+  cardMessage      Message  @relation(fields: [cardMessageId], references: [id], onDelete: Cascade)
+  /// The same key a started helper's run carries, so a replayed call queues nothing twice.
+  clientNonce      String
+  /// The helper's own thread and task, made when it was queued: the brief is the task's prompt,
+  /// stored like every other task's.
+  helperThreadId   String
+  taskId           String
+  modelProvider    String?
+  modelId          String?
+  /// The person's messages whose files the helper receives.
+  sourceMessageIds String[]
+  /// queued | started | cancelled
+  status           String   @default("queued")
+  helperRunId      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([spaceId, clientNonce])
+  @@index([botId, status, createdAt])
+  @@index([threadId, status])
+  @@map("queued_helpers")
 }
 
 /// A detached shell command on a bot's computer (fork: background shell jobs). The command and its
