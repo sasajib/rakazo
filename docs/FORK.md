@@ -1212,6 +1212,44 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   other model calls that do not go through `observedPiStream` (memory ledger, curator, voice: text only).
 - **Conflicts:** upstream edits to `observedPiStream`'s `prepareContext` line, `liftMcpResultImages` call site.
 
+### 1.39 A delegated request that was stopped still answers the agent that asked (`BOT_MESSAGE_STOP_NOTICE`) (2026-11-28 audit, C4)
+- **What happened:** run `cmwz4o2u602zm07ss052aqwmh` (trigger `bot_message`) did not finish: its row is
+  `status=cancelled`, `error` empty, started 27 Nov 15:20:02 UTC, ended 28 Nov 00:30:55 UTC. It made 4 tool calls
+  in 16 s, the last an `ask_user` (outcome `paused`), and waited 9 h 10 min on that question. At 00:30:55 the
+  owner typed a message in that agent's chat (run `cmwzocin702q207ppqtz38pg1`, trigger `user`, starts 50 ms
+  later). The message was not the answer to the question (other messages had come after it), so
+  `retireWaitingQuestionInTransaction` (`packages/db/src/threads/thread-ask.ts`) marked the question answered and
+  cancelled the waiting run. The asking agent had been told "Paused until the user responds in my chat" and
+  never heard again.
+- **Cause:** an outcome goes back for a delegated run that completed, failed, or was cancelled as stuck work
+  (`runs/wakeups/job-reconciler.ts`: `status cancelled AND error IN stuckWorkStatusMessages()`); any other cancel
+  returned nothing. Same for a plain Stop by the owner. Of 102 delegated runs since 20 Nov, 101 completed and
+  were returned; this is the 1 cancelled, not returned.
+- **Now (`messaging/bot-message-stopped.ts`, called once per reconciler pass):** a delegated run cancelled
+  without an outcome, ended in the last 24 h, returns a status to the asker through the same
+  `returnBotMessageOutcome` (delivery key `auto-outcome:<runId>`, so never twice): "Your request <id8> was
+  stopped before it finished… Treat it as closed. Do not send it again unless the user asks for it; carry on
+  without the result, or tell the user it was not done." A failed delivery moves the run to the back of the queue
+  and is tried again next pass. Silent as before: a request its sender replaced (`bot-supersede.ts` marks it
+  returned), an asker that is gone, a run that already sent a result itself, a run that ended more than a day ago.
+- **Decision:** the text tells the asker not to re-send by itself: the owner stopped the work or took it over,
+  and an automatic repeat would undo that.
+- **Env (default on, all three compose files):** `BOT_MESSAGE_STOP_NOTICE=0` restores upstream (no notice).
+- **Log:** `bot_message.stopped_notice` (run, bot, thread ids).
+- **Seams:** `runs/wakeups/job-reconciler.ts` (import + one call; upstream's own query and its test are untouched).
+- **Tests:** `messaging/bot-message-stopped.postgres.test.ts` (the live case through the real
+  `messageBot` and `retireWaitingQuestionInTransaction`: notice once; switch off = nothing; failed delivery kept
+  and retried; 25 h old run silent; replaced run silent; plain stop told; second notice to the same asker is its
+  own message), `runs/wakeups/job-reconciler-stopped.fork.test.ts` (called each pass; a failure does not stop the pass).
+- **Live check:** agent A asks agent B; B asks the owner a question; type an unrelated message in B's chat (or
+  press Stop) → within a reconciler pass A's chat shows the stopped status;
+  `select status,"botOutcomeReturnedAt" from runs where trigger='bot_message' and status='cancelled' order by "createdAt" desc limit 5`
+  → filled in.
+- **Not changed (open question for the owner's rules):** upstream retires a waiting question, however old, when
+  the person types anything else in that chat. The delegated work is then dropped; this change makes that
+  visible to the asker, it does not keep the work alive.
+- **Conflicts:** upstream extending its own outcome query to plain cancels (then drop this file).
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.

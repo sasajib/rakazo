@@ -117,7 +117,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            ("commandExitErrorFields(", 2), ("redactErrorTail(", 2), ('"tool.exit_code"', 2),
            # an image a provider would refuse never reaches a model request (1.38)
            ("guardModelImages(", 2), ("fitMcpResultImages(", 3), ("unusableImageNote(", 3),
-           ("MODEL_IMAGE_GUARD", 3), ("model_image.left_out", 2)]
+           ("MODEL_IMAGE_GUARD", 3), ("model_image.left_out", 2),
+           # a delegated request that was stopped still answers the agent that asked (1.39)
+           ("returnStoppedBotMessageOutcomes(", 3), ("botMessageStoppedText(", 3),
+           ("BOT_MESSAGE_STOP_NOTICE", 2)]
 results = []
 
 
