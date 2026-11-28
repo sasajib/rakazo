@@ -94,6 +94,22 @@ export function requestsWork(text: string | null | undefined): boolean {
   return workVerbs(said).length > 0;
 }
 
+/**
+ * Fork (1.3, L5): a request whose work is the reply itself: "reply with the single word ready",
+ * "reply yes or no". Whatever the run then says, it has replied; running it again only produces
+ * a second reply. "Reply to <someone else>" is sending something and is not this.
+ */
+const REPLIES_ELSEWHERE =
+  /\brepl(?:y|ies|ying)\s+to\s+(?!me\b|this\b|that\b|my\s+(?:message|question)\b)/i;
+
+export function replyIsTheWork(request: string | null | undefined): boolean {
+  const said = request ?? "";
+  const verbs = workVerbs(said);
+  return (
+    verbs.length > 0 && verbs.every((verb) => verb === "reply") && !REPLIES_ELSEWHERE.test(said)
+  );
+}
+
 /** Runs that answer a person, and can therefore leave work undone. */
 const SUPERVISED_TRIGGERS = new Set(["user", "follow_up"]);
 
@@ -127,6 +143,11 @@ export function needsContinuation(input: {
    * call, and whether or not the resumed attempt still has the steps of the paused one.
    */
   pausedForPerson?: boolean;
+  /**
+   * Fork (L5): false restores the first rule, which never asked whether the reply was the work.
+   * By default a reply that completes the request ends it (see {@link replyIsTheWork}).
+   */
+  replyCompletes?: boolean;
 }): boolean {
   if (input.status && input.status !== "completed") return false;
   if (!SUPERVISED_TRIGGERS.has(input.trigger)) return false;
@@ -136,6 +157,8 @@ export function needsContinuation(input: {
   if (input.pausedForPerson) return false;
   const reply = input.replyText.trim();
   if (reply.length > CONTINUATION_TEXT_MAX) return false;
+  // Asked only to reply, and it replied.
+  if (input.replyCompletes !== false && reply && replyIsTheWork(input.request)) return false;
   // Text-only work answered with complete sentences is done.
   const verbs = workVerbs(input.request);
   if (verbs.length && verbs.every((verb) => TEXT_WORK.has(verb)) && /[.!?"')\]]$/.test(reply))

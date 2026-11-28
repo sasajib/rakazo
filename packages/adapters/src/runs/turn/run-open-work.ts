@@ -10,19 +10,23 @@ import type { OpenWorkDecision, OpenWorkItem, OpenWorkWakers } from "@rakazo/cor
 import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_HELPER_TRIGGER,
+  continuationPrompt,
   decideOpenWork,
   declaresFurtherWork,
   displayName,
   escapePromptData,
   isNeedsPersonBlock,
   isOpenNeedsPersonBlock,
+  needsContinuation,
   ONCE_ROUTINE_CRON,
   OPEN_WORK_JUDGE_INSTRUCTIONS,
   OPEN_WORK_NONCE_PREFIX,
   openWorkContinuationPrompt,
+  PAUSED_FOR_PERSON_EVENT_TYPES,
   pendingWakers,
   promisedWork,
   replyClosing,
+  replyIsTheWork,
   runIsFollowedForOpenWork,
   stalledNotice,
 } from "@rakazo/core";
@@ -275,6 +279,11 @@ export async function followOpenWork(
     botName: string;
     replyText: string;
     toolCallCount: number;
+    /**
+     * Fork (L5): what the run was asked, in the person's own words (the run's task prompt). With
+     * it the older "announced work and used no tool" rule is decided here, with the rest.
+     */
+    request?: string;
     config?: ContinuityConfig;
     judge?: (reply: string) => Promise<"promise" | "none">;
     decide?: typeof decideOpenWork;
@@ -303,11 +312,33 @@ export async function followOpenWork(
   let promise: "promise" | "none" = "none";
   if (pendingWakers(wakers).length === 0 && items.open.length === 0) {
     const read = declaresFurtherWork(input.replyText);
+    // Asked only to reply, and it replied: wording that might be a promise is not put to the
+    // model ("I'll answer with that and nothing more"). A clear promise still counts.
+    const replied =
+      config.onePath && Boolean(input.replyText.trim()) && replyIsTheWork(input.request);
     promise =
       read === "unclear"
-        ? await (input.judge ?? ((reply) => judgeOpenWorkPromise(reply, config)))(input.replyText)
+        ? replied
+          ? "none"
+          : await (input.judge ?? ((reply) => judgeOpenWorkPromise(reply, config)))(input.replyText)
         : read;
   }
+  // Fork (L5): the older rule's fact. Read only when it could decide: nothing will wake the
+  // agent, and neither an item nor a promise already says work is open.
+  const announced =
+    config.onePath &&
+    input.request !== undefined &&
+    pendingWakers(wakers).length === 0 &&
+    items.open.length === 0 &&
+    promise === "none" &&
+    !isContinuation &&
+    (await announcedWorkOnly(deps.prisma, {
+      runId: run.id,
+      trigger: run.trigger,
+      request: input.request,
+      toolCallCount: input.toolCallCount,
+      replyText: input.replyText,
+    }));
   const decision = (input.decide ?? decideOpenWork)({
     enabled: true,
     status: "completed",
@@ -318,6 +349,7 @@ export async function followOpenWork(
     itemsTouchedInRun: items.touchedInRun,
     parkedInRun: items.parkedInRun,
     promise,
+    announced,
     isContinuation,
     continuationsSoFar: soFar,
     maxContinuations: config.maxContinuations,
@@ -339,11 +371,18 @@ export async function followOpenWork(
       basis: decision.basis,
       items: items.open,
       promised,
+      request: input.request ?? "",
       attempt: soFar + 1,
       maxContinuations: config.maxContinuations,
     });
     if (!continuationRunId) return none("already_continued");
     noteAutoContinuation(run.id);
+    // The older rule's own line, kept for whoever counts it.
+    if (decision.basis === "announced")
+      getLogger().warn(ANNOUNCED_WORK_LOG, {
+        "run.id": run.id,
+        "run.continuation": continuationRunId,
+      });
     getLogger().info("run.open_work_continued", {
       ...log,
       "open_work.basis": decision.basis,
@@ -372,14 +411,62 @@ export async function followOpenWork(
   return { decision };
 }
 
+/** The older rule's log line (FORK.md 1.3). */
+export const ANNOUNCED_WORK_LOG = "run continued: it announced work and used no tool";
+
+/**
+ * Fork (1.3, L5): the older rule's fact: a person's run was asked for work, called no tool, did
+ * not stop for the person, and its short reply does not complete the request. The events are read
+ * only when the rest already says yes (a pause that was not a tool call counts as acting).
+ */
+export async function announcedWorkOnly(
+  prisma: PrismaClient,
+  input: {
+    runId: string;
+    trigger: string;
+    request: string;
+    toolCallCount: number;
+    replyText: string;
+    /** The prompt of a run that is already a continuation. */
+    taskPrompt?: string | null;
+    replyCompletes?: boolean;
+  },
+): Promise<boolean> {
+  const facts = {
+    trigger: input.trigger,
+    request: input.request,
+    toolCallCount: input.toolCallCount,
+    replyText: input.replyText,
+    taskPrompt: input.taskPrompt ?? input.request,
+    status: "completed",
+    replyCompletes: input.replyCompletes,
+  };
+  if (!needsContinuation(facts)) return false;
+  const pausedForPerson =
+    (await prisma.event.count({
+      where: { runId: input.runId, type: { in: [...PAUSED_FOR_PERSON_EVENT_TYPES] } },
+    })) > 0;
+  return needsContinuation({ ...facts, pausedForPerson });
+}
+
+/**
+ * Whether the older rule still decides by itself, before this one: only when one of the two is
+ * switched off. Otherwise there is one decision, `decideOpenWork`.
+ */
+export function olderRuleDecidesAlone(config: ContinuityConfig = continuityConfig()): boolean {
+  return !config.onePath || !config.continueOpenWork;
+}
+
 /** One continuation per finished run: the nonce makes a second attempt a no-op. */
 async function startContinuation(
   deps: Deps,
   run: EndedRun,
   brief: {
-    basis: "items" | "promise";
+    basis: "items" | "promise" | "announced";
     items: readonly OpenWorkItem[];
     promised: string;
+    /** What the person asked, for a run that only announced its work. */
+    request: string;
     attempt: number;
     maxContinuations: number;
   },
@@ -417,7 +504,15 @@ async function startContinuation(
         botId: run.botId,
         threadId: run.threadId,
         userId: run.userId,
-        prompt: openWorkContinuationPrompt({ ...brief, escape: escapePromptData }),
+        prompt:
+          brief.basis === "announced"
+            ? // The older rule's brief, unchanged: the person's own request, to be done now.
+              continuationPrompt(brief.request)
+            : openWorkContinuationPrompt({
+                ...brief,
+                basis: brief.basis,
+                escape: escapePromptData,
+              }),
         status: "queued",
       },
     });
@@ -597,6 +692,7 @@ export async function continueOpenWork(
       botName: ctx.bot.name,
       replyText: reply.assembled || reply.assistantTurnText || "",
       toolCallCount: reply.toolCalls.length,
+      request: ctx.task.prompt ?? "",
     });
   } finally {
     // Also after a failed check: the notification is then sent, never lost.

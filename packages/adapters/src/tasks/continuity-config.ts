@@ -31,6 +31,13 @@ export interface ContinuityConfig {
   judgeTimeoutMs: number;
   /** `OPEN_WORK_STALLED_NOTICE=0`: no chat line or notification when the chain ends with work open. */
   stalledNotice: boolean;
+  /**
+   * `CONTINUATION_ONE_PATH=0`: the older rule ("announced work and used no tool", FORK.md 1.3)
+   * decides by itself before the open-work rule, and continues any short reply without a tool,
+   * as it did. On: it is one of the facts the open-work rule decides with, and a reply that
+   * completes the request ends it.
+   */
+  onePath: boolean;
 }
 
 // Values are read by literal name at the call site so the compose-env test can see each key.
@@ -61,5 +68,6 @@ export function continuityConfig(
     judge: on(env.OPEN_WORK_JUDGE),
     judgeTimeoutMs: intEnv(env.OPEN_WORK_JUDGE_TIMEOUT_MS, 12_000, 500, 60_000),
     stalledNotice: on(env.OPEN_WORK_STALLED_NOTICE),
+    onePath: on(env.CONTINUATION_ONE_PATH),
   };
 }

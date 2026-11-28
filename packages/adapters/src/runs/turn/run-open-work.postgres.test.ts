@@ -15,11 +15,13 @@ import type { RunContext } from "../assembly/run-context.js";
 import { loadRunOrigin } from "../lifecycle/run-origin.js";
 import type { EndedRun } from "./run-open-work.js";
 import {
+  continueOpenWork,
   disarmOpenWorkInTransaction,
   followOpenWork,
   holdsFinishNotice,
   settleFinishNotice,
 } from "./run-open-work.js";
+import { continueUnfinishedTask } from "./run-unfinished-task.js";
 
 const describePostgres =
   process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
@@ -673,6 +675,169 @@ describePostgres("open work continuation (PostgreSQL)", () => {
       updateScratchpadItemFromTool({ prisma }, { ...scope(w), itemId, notes: "asked again" }),
     );
     expect((await follow(w, working)).decision.action).toBe("continue");
+  });
+
+  // Fork (L5): the older rule ("announced work and used no tool", FORK.md 1.3) and this one are
+  // one decision. What the turn does after a run completed, in its order (run-model-turn.ts).
+  describe("one decision for a run that only announced its work", () => {
+    const WORK = "create a voice agent for testing";
+    const announcedReply = { replyText: "Got it. First I", toolCallCount: 0 };
+    const afterRun = async (
+      w: World,
+      run: EndedRun,
+      turn: { request: string; replyText: string; toolCallCount: number },
+    ) => {
+      const ctx = {
+        deps: deps(),
+        run,
+        runId: run.id,
+        bot: { id: w.botId, name: "Writer" },
+        task: { prompt: turn.request },
+        state: {
+          reply: {
+            assembled: turn.replyText,
+            assistantTurnText: turn.replyText,
+            toolCalls: Array.from({ length: turn.toolCallCount }, () => ({})),
+          },
+        },
+      } as unknown as RunContext;
+      await runAsSystem("after run", async () => {
+        await continueUnfinishedTask(ctx);
+        await continueOpenWork(ctx);
+      });
+    };
+    const followUps = (w: World) =>
+      runAsSystem("read", () =>
+        prisma.run.findMany({
+          where: { threadId: w.threadId, trigger: "follow_up" },
+          include: { task: true },
+          orderBy: { createdAt: "asc" },
+        }),
+      );
+
+    it("continues it once, through this rule, with the older rule's brief", async () => {
+      const w = await world();
+      const ended = await userRun(w);
+      await afterRun(w, ended, { request: WORK, ...announcedReply });
+      const started = await followUps(w);
+      expect(started).toHaveLength(1);
+      expect(started[0]).toMatchObject({
+        status: "queued",
+        clientNonce: `${OPEN_WORK_NONCE_PREFIX}${ended.id}`,
+        delegatedFromRunId: ended.id,
+      });
+      expect(started[0]!.task.prompt).toBe(
+        `[continuation] Continue the task you were given and do it now: ${WORK}`,
+      );
+      expect(await state(w)).toMatchObject({ continuations: 1 });
+      // The continuation announces again and does nothing: it is not continued, and nothing is
+      // known to be open, so the owner gets no stalled line.
+      await runAsSystem("done", () =>
+        prisma.run.update({ where: { id: started[0]!.id }, data: { status: "completed" } }),
+      );
+      await afterRun(w, started[0] as unknown as EndedRun, {
+        request: started[0]!.task.prompt,
+        replyText: "On it.",
+        toolCallCount: 0,
+      });
+      expect(await followUps(w)).toHaveLength(1);
+      expect(await notices(w)).toHaveLength(0);
+    });
+
+    it("starts nothing for a run asked only to reply, and does not ask the judge", async () => {
+      const w = await world();
+      const judge = vi.fn(async () => "promise" as const);
+      for (const replyText of [
+        "ready",
+        "I'll answer with that and nothing more: ready",
+        "I'll answer with that and nothing more…",
+      ]) {
+        const ended = await userRun(w);
+        const outcome = await follow(w, ended, {
+          request: "Reply with the single word ready",
+          replyText,
+          toolCallCount: 0,
+          judge,
+        });
+        expect(outcome.decision, replyText).toEqual({ action: "none", reason: "no_open_work" });
+        await afterRun(w, ended, {
+          request: "Reply with the single word ready",
+          replyText,
+          toolCallCount: 0,
+        });
+      }
+      expect(judge).not.toHaveBeenCalled();
+      expect(await followUps(w)).toHaveLength(0);
+    });
+
+    it("starts one run, for the open item, when both rules would have something to say", async () => {
+      const w = await world();
+      const ended = await userRun(w);
+      await addItem(w, "Write part three");
+      await ageItems(w);
+      await afterRun(w, ended, { request: WORK, ...announcedReply });
+      const started = await followUps(w);
+      expect(started).toHaveLength(1);
+      // The run knows what is open: before, the older rule started first with its bare brief
+      // and this rule stood back because a run was already waiting.
+      expect(started[0]!.task.prompt).toContain("Write part three");
+      expect(started[0]!.clientNonce).toBe(`${OPEN_WORK_NONCE_PREFIX}${ended.id}`);
+    });
+
+    it("starts nothing when a card, a helper or another run will bring the agent back", async () => {
+      const w = await world();
+      const ended = await userRun(w);
+      await endedRun(w, { status: "queued", trigger: "helper_result" });
+      await afterRun(w, ended, { request: WORK, ...announcedReply });
+      expect(await followUps(w)).toHaveLength(0);
+    });
+
+    it("starts nothing when the short reply asks the person", async () => {
+      const w = await world();
+      const ended = await userRun(w);
+      await afterRun(w, ended, {
+        request: WORK,
+        replyText: "Which voice should it use?",
+        toolCallCount: 0,
+      });
+      expect(await followUps(w)).toHaveLength(0);
+    });
+
+    it("OPEN_WORK_CONTINUATION=0: the older rule decides alone, and a reply still completes a reply", async () => {
+      vi.stubEnv("OPEN_WORK_CONTINUATION", "0");
+      const w = await world();
+      await afterRun(w, await userRun(w), {
+        request: "Reply with the single word ready",
+        replyText: "ready",
+        toolCallCount: 0,
+      });
+      expect(await followUps(w)).toHaveLength(0);
+      const ended = await userRun(w);
+      await afterRun(w, ended, { request: WORK, ...announcedReply });
+      const started = await followUps(w);
+      expect(started).toHaveLength(1);
+      expect(started[0]!.clientNonce).toBeNull();
+      expect(started[0]!.task.prompt).toContain(WORK);
+    });
+
+    it("CONTINUATION_ONE_PATH=0: both rules as they were", async () => {
+      vi.stubEnv("CONTINUATION_ONE_PATH", "0");
+      const w = await world();
+      const ended = await userRun(w);
+      await addItem(w, "Write part three");
+      await ageItems(w);
+      await afterRun(w, ended, {
+        request: "Reply with the single word ready",
+        replyText: "ready",
+        toolCallCount: 0,
+      });
+      const started = await followUps(w);
+      // The older rule fires on a reply-only request, with its bare brief, and this rule
+      // stands back.
+      expect(started).toHaveLength(1);
+      expect(started[0]!.clientNonce).toBeNull();
+      expect(started[0]!.task.prompt).not.toContain("Write part three");
+    });
   });
 
   it("a continuation can start helpers: they answer to the conversation that began the job", async () => {

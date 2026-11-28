@@ -107,6 +107,36 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   update"): `requestsWork` counts a work word only where it opens a clause or follows a word that takes a verb
   (`BEFORE_A_VERB`; "I/we need|want …" still counts a noun). Tests: `run-supervision.test.ts`, journeys 4 (asserts one
   run), 4b, 4d, 13c.
+- **One decision path with the open-work rule (live test 1128a, L5; `CONTINUATION_ONE_PATH`).** Asked only "Reply
+  with the single word ready", three of six agents were started a second time (`run continued: it announced work
+  and used no tool`). Cause: `needsContinuation` counts "reply" as work (it is, in "reply to the supplier's email")
+  and read every reply under 240 characters without a tool as an announcement; and the rule decided by itself in
+  `run-unfinished-task.ts`, before and apart from the open-work rule (1.33 A3), which only stood back because the
+  run it had just queued counted as "another run will wake the agent". Now:
+  (1) **a reply that completes the request ends it:** `replyIsTheWork` (core `run-supervision.ts`): when "reply" is
+  the request's only work verb and it is not "reply to <someone else>", any reply the run gave is the work (an empty
+  one is still continued). For such a run the open-work rule also does not put wording such as "I'll answer with
+  that and nothing more" to the judge model; a clear promise still counts.
+  (2) **one decision:** the older rule is a fact, `announced` (`announcedWorkOnly`, `run-open-work.ts`), of
+  `decideOpenWork`, read only when no item, promise or waker already decides. Basis `announced` starts the one
+  continuation of the finished run like every other basis (`clientNonce` `open-work:<run id>`, counted, its
+  "finished" notification held until the rule has decided for it), with the older rule's brief unchanged
+  (`[continuation] Continue the task you were given and do it now: …`) and its warn line kept beside
+  `run.open_work_continued` (`open_work.basis: announced`). New, from the shared path: nothing is started while
+  a helper, job, card, schedule, request or another run will bring the agent back, nor when the short reply ends
+  with a question or an offer to the person. A continuation is never continued for having only announced (one
+  such run per task, no stalled line: nothing is known to be open); an item or a promise it leaves is judged as
+  for any run. With an open item or a promise beside the announcement there is one run, and it names the item.
+  (3) `continueUnfinishedTask` still exists and decides alone only when one of the two is off
+  (`olderRuleDecidesAlone`): `OPEN_WORK_CONTINUATION=0` (the older rule with the new reply judgement) or
+  `CONTINUATION_ONE_PATH=0` (both rules exactly as before). Env key in the three compose files.
+  Tests: `run-supervision.test.ts` ("a reply that completes the request", 15), `open-work.test.ts` ("a run that
+  only announced its work", 13), `run-open-work.postgres.test.ts` ("one decision for a run that only announced its
+  work", 7: once through the rule, reply-only, both rules on one run, wakers, a question, each switch), journey
+  `13g-4` (real executor; fails with `CONTINUATION_ONE_PATH=0`).
+  Live check: a throwaway agent told "Reply with the single word ready": one run, no warn line. Told to do work
+  that needs a tool, with a model that only answers "On it": one `follow_up` run with `clientNonce` `open-work:…`,
+  `open_work.basis: announced`.
 - **Conflicts:** `thread-target.ts` and `run-model-turn.ts` change upstream almost every release; a `Record<RunTrigger, …>`
   in upstream tests needs `talk: false`.
 
@@ -1305,7 +1335,8 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `OPEN_WORK_MAX_CONTINUATIONS` 25). The rule is a pure function, `decideOpenWork`
   (`packages/core/src/runs/open-work.ts`); the facts are gathered and acted on in the fork file
   `packages/adapters/src/runs/turn/run-open-work.ts` (`followOpenWork`), called from `run-model-turn.ts` right after
-  the old "announced work, used no tool" rule (1.3), for a completed run of ANY trigger except `helper`, `talk`,
+  the old "announced work, used no tool" rule (1.3; since L5 that rule is a fact of this decision, basis
+  `announced`, and starts nothing by itself while both are on), for a completed run of ANY trigger except `helper`, `talk`,
   `created`, `call_end`, `messaging`, `reaction` and background (`tickets`) runs.
   **Work is open** when (a, the deterministic record) the agent keeps an item with status `open` for this chat:
   `scratchpad_items.threadId` (new column) is set by `scratchpad_add` from the run's thread, and by

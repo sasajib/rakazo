@@ -90,6 +90,8 @@ export async function runModelTurn(
     // Fork (1.33): a continuation run's "finished" notification waits for the open-work check.
     const completion = await completeRun(ctx, { holdFinishNotice: holdsFinishNotice(ctx.run) });
     // The work is only done if it was done: a run that only announced it is continued once.
+    // Fork (L5): with the open-work rule on, that is decided there, as one of its facts; this
+    // call starts something only when one of the two rules is switched off.
     await continueUnfinishedTask(ctx).catch((error) => {
       getLogger().error("continuation check", error);
     });

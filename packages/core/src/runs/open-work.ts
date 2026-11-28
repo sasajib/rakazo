@@ -188,6 +188,13 @@ export interface OpenWorkFacts {
   parkedInRun: ReadonlyArray<OpenWorkItem & { notes: string }>;
   /** `declaresFurtherWork`, after a model settled an unclear one. */
   promise: "promise" | "none";
+  /**
+   * Fork (1.3 + 1.33, L5): the older rule's fact, decided here with everything else. The person
+   * asked for work, the run called no tool, and its short reply does not complete the request
+   * (`needsContinuation`). One decision path: it starts at most the one continuation this
+   * function allows, and never beside or after a continuation for open items or a promise.
+   */
+  announced?: boolean;
   /** This run is itself a continuation the rule started. */
   isContinuation: boolean;
   /** Continuations already started for this task (since the person's last own message). */
@@ -198,7 +205,7 @@ export interface OpenWorkFacts {
 
 export type OpenWorkDecision =
   | { action: "none"; reason: string }
-  | { action: "continue"; basis: "items" | "promise" }
+  | { action: "continue"; basis: "items" | "promise" | "announced" }
   | {
       action: "stalled";
       reason: "limit" | "no_progress" | "blocked";
@@ -219,7 +226,10 @@ export function decideOpenWork(facts: OpenWorkFacts): OpenWorkDecision {
   // comes back by itself, and continuing now would only repeat the report.
   if (waking.length > 0) return { action: "none", reason: `will_wake:${waking.join(",")}` };
   const hasItems = facts.openItems.length > 0;
-  if (!hasItems && facts.promise !== "promise") {
+  // A continuation is never continued for having only announced: one such run per task, as the
+  // older rule had it. What it leaves open (items, a promise) is judged like any run's.
+  const announced = facts.announced === true && !facts.isContinuation;
+  if (!hasItems && facts.promise !== "promise" && !announced) {
     // Nothing left to do. A continuation that parked its work instead of doing it is blocked.
     if (facts.isContinuation && facts.parkedInRun.length > 0)
       return { action: "stalled", reason: "blocked", openCount: facts.parkedInRun.length };
@@ -234,9 +244,13 @@ export function decideOpenWork(facts: OpenWorkFacts): OpenWorkDecision {
     const progressed = hasItems ? facts.itemsTouchedInRun > 0 : facts.toolCallCount > 0;
     if (!progressed) return { action: "stalled", reason: "no_progress", openCount };
   }
+  const basis = hasItems ? "items" : facts.promise === "promise" ? "promise" : "announced";
   if (facts.continuationsSoFar >= facts.maxContinuations)
-    return { action: "stalled", reason: "limit", openCount };
-  return { action: "continue", basis: hasItems ? "items" : "promise" };
+    // Nothing is known to be open after a bare announcement, so there is nothing to tell.
+    return basis === "announced"
+      ? { action: "none", reason: "limit" }
+      : { action: "stalled", reason: "limit", openCount };
+  return { action: "continue", basis };
 }
 
 const clean = (text: string) => text.replace(/\s+/g, " ").trim();

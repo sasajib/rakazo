@@ -2698,6 +2698,22 @@ describeJourneys("required product journeys", () => {
     expect(slots.map(({ slot }) => slot)).toEqual([COMMAND_SLOT_BASE, COMMAND_SLOT_BASE + 1]);
   });
 
+  // Fork (FORK.md 1.3, L5): through the real executor. Live, three of six agents asked only to
+  // reply "ready" were started a second time by the older "announced work, used no tool" rule.
+  it("13g-4: a bot asked only to reply is not started again for it", async () => {
+    const { cookie, bot, chat } = await newChief("Reply Only");
+    for (const text of ["Reply with the single word ready", "please reply yes or no"]) {
+      const { run } = await sendAndWait(app, cookie, bot.id, text);
+      // The run did reply, and used no tool: the case the older rule read as work not done.
+      expect(await prisma.message.count({ where: { runId: run.id, role: "bot" } })).toBeGreaterThan(
+        0,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(await prisma.run.count({ where: { threadId: chat.id, trigger: "follow_up" } })).toBe(0);
+    expect(await prisma.run.count({ where: { threadId: chat.id, trigger: "user" } })).toBe(2);
+  });
+
   // Fork (FORK.md 1.33, A3/A4): the whole path through the executor. The scripted runtime keeps no
   // item itself, so the item is the fixture; everything after it is the platform.
   it("13g-2: a run that ends with an open item is continued by the platform; a continuation that does nothing tells the owner once", async () => {

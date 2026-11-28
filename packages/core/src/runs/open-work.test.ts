@@ -178,6 +178,87 @@ describe("deciding what happens when a run ends", () => {
     });
   });
 
+  // Fork (L5): the older rule ("announced work and used no tool") is one of this rule's facts,
+  // so one function decides and at most one run is started for a finished run.
+  describe("a run that only announced its work", () => {
+    const announcedRun = {
+      trigger: "user",
+      announced: true,
+      toolCallCount: 0,
+      replyText: "Got it. First I",
+    };
+
+    it("is continued, on that basis, when nothing else says work is open", () => {
+      expect(decideOpenWork(facts(announcedRun))).toEqual({
+        action: "continue",
+        basis: "announced",
+      });
+    });
+
+    it("gives one decision when an item or a promise says so too", () => {
+      expect(decideOpenWork(facts({ ...announcedRun, openItems: ITEMS }))).toEqual({
+        action: "continue",
+        basis: "items",
+      });
+      expect(decideOpenWork(facts({ ...announcedRun, promise: "promise" }))).toEqual({
+        action: "continue",
+        basis: "promise",
+      });
+    });
+
+    it.each(Object.keys(NO_WAKERS) as Array<keyof typeof NO_WAKERS>)(
+      "starts nothing while something else will wake the agent: %s",
+      (waker) => {
+        expect(
+          decideOpenWork(facts({ ...announcedRun, wakers: { ...NO_WAKERS, [waker]: 1 } })),
+        ).toEqual({ action: "none", reason: `will_wake:${waker}` });
+      },
+    );
+
+    it("starts nothing when the short reply is a question or an offer to the person", () => {
+      for (const replyText of ["Which folder should I use?", "I can do that if you want."])
+        expect(decideOpenWork(facts({ ...announcedRun, replyText }))).toEqual({
+          action: "none",
+          reason: "asked_person",
+        });
+    });
+
+    it("is never the reason to continue a continuation: one such run per task, and no notice", () => {
+      const continuation = { ...announcedRun, isContinuation: true, continuationsSoFar: 1 };
+      expect(decideOpenWork(facts(continuation))).toEqual({
+        action: "none",
+        reason: "no_open_work",
+      });
+      // What a continuation leaves open is judged like any run's.
+      expect(decideOpenWork(facts({ ...continuation, promise: "promise" }))).toEqual({
+        action: "stalled",
+        reason: "no_progress",
+        openCount: 1,
+      });
+    });
+
+    it("stops at the limit without a notice: nothing is known to be open", () => {
+      expect(
+        decideOpenWork(facts({ ...announcedRun, continuationsSoFar: 8, maxContinuations: 8 })),
+      ).toEqual({ action: "none", reason: "limit" });
+    });
+
+    it("does nothing when the fact is absent or false, or the rule is off", () => {
+      expect(decideOpenWork(facts({ ...announcedRun, announced: false }))).toEqual({
+        action: "none",
+        reason: "no_open_work",
+      });
+      expect(decideOpenWork(facts({ ...announcedRun, announced: undefined }))).toEqual({
+        action: "none",
+        reason: "no_open_work",
+      });
+      expect(decideOpenWork(facts({ ...announcedRun, enabled: false }))).toEqual({
+        action: "none",
+        reason: "disabled",
+      });
+    });
+  });
+
   describe("a continuation must make progress", () => {
     const continuation = { isContinuation: true, continuationsSoFar: 1, openItems: ITEMS };
 

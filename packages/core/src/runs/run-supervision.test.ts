@@ -4,6 +4,7 @@ import {
   continuationPrompt,
   MAX_CONTINUATIONS,
   needsContinuation,
+  replyIsTheWork,
   requestsWork,
 } from "./run-supervision.js";
 
@@ -115,6 +116,61 @@ describe("needsContinuation", () => {
     expect(needsContinuation(summary)).toBe(false);
     // Cut off mid-sentence, it is still continued.
     expect(needsContinuation({ ...summary, replyText: "Sure, first I" })).toBe(true);
+  });
+
+  // Live test 1128a: six agents asked only to reply "ready"; three got a second run.
+  describe("a reply that completes the request (fork L5)", () => {
+    const REPLY_ONLY = [
+      "Reply with the single word ready",
+      "reply ready",
+      "Please reply with just: ready.",
+      "Reply only with OK",
+      "ok, reply yes or no",
+      "Reply to me with one word",
+      "Just reply in one sentence",
+      "hi there, reply with the number 4",
+    ];
+    const REPLIES = [
+      "ready",
+      "Ready.",
+      "I'll answer with that and nothing more: ready",
+      "I'll answer with that and nothing more…",
+      "Sure",
+      "On it",
+    ];
+
+    it.each(REPLY_ONLY)('"%s": whatever it replied, it replied', (request) => {
+      expect(replyIsTheWork(request), request).toBe(true);
+      for (const replyText of REPLIES)
+        expect(needsContinuation({ ...base, request, replyText }), replyText).toBe(false);
+    });
+
+    it("still continues it when nothing was said at all", () => {
+      expect(needsContinuation({ ...base, request: REPLY_ONLY[0]!, replyText: "  " })).toBe(true);
+    });
+
+    it.each([
+      "reply to the supplier's email and attach the invoice",
+      "Reply to Karim on Slack that we ship on Friday",
+      "reply with ready, then deploy the site",
+      "create a voice agent for testing",
+      "send the report to the board",
+    ])('"%s" is work beyond a reply: an announcement is still continued', (request) => {
+      expect(replyIsTheWork(request), request).toBe(false);
+      for (const replyText of ["On it", "Sure, I'll do that now.", "ready"])
+        expect(needsContinuation({ ...base, request, replyText }), replyText).toBe(true);
+    });
+
+    it("is the first rule again when the judgement is switched off", () => {
+      expect(
+        needsContinuation({
+          ...base,
+          request: REPLY_ONLY[0]!,
+          replyText: "ready",
+          replyCompletes: false,
+        }),
+      ).toBe(true);
+    });
   });
 
   it("never continues a continuation: one retry, not a loop", () => {

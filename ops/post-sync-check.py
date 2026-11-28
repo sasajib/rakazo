@@ -155,7 +155,10 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             # a digest of the task is embedded, kept by its hash, and asked for when the task is read
             ("taskDigest(", 3), ("warmTaskVector(", 3), ("helperTaskOf(", 2), ("SKILL_AUTOLOAD_EMBED_CHARS", 2),
             # a stopped helper's card says so itself (1.33): one constant at every writer, one reader
-            ("STOPPED_HELPER_CARD", 6), ("helperWasStopped(", 3)]
+            ("STOPPED_HELPER_CARD", 6), ("helperWasStopped(", 3),
+            # one decision path for "announced work, used no tool" and open work (1.3 + 1.33)
+            ("replyIsTheWork(", 3), ("announcedWorkOnly(", 2), ("olderRuleDecidesAlone(", 2),
+            ("CONTINUATION_ONE_PATH", 2)]
 results = []
 
 
