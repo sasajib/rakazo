@@ -14,6 +14,9 @@ export const TOOL_ERROR_CLASSES = [
   "upstream_5xx",
   "mcp_error",
   "network",
+  // Fork (1.37): a command that ran and failed by its own exit code, or was ended by a signal.
+  "nonzero_exit",
+  "killed",
   "unknown",
 ] as const;
 

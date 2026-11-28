@@ -112,7 +112,9 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # 2026-11-28 audit, tools (1.36+): file tools take the shell's paths and name the path tried;
            # a command or write runs before the file read written beside it
            ("shellPathsEnabled(", 3), ("filePathFailure(", 2), ("botStoredPath(", 1),
-           ("writesComputerFiles(", 3), ("FILE_TOOL_SHELL_PATHS", 2), ("COMPUTER_WRITES_IN_ORDER", 2)]
+           ("writesComputerFiles(", 3), ("FILE_TOOL_SHELL_PATHS", 2), ("COMPUTER_WRITES_IN_ORDER", 2),
+           # a failed command says why in the audit log (1.37)
+           ("commandExitErrorFields(", 2), ("redactErrorTail(", 2), ('"tool.exit_code"', 2)]
 results = []
 
 

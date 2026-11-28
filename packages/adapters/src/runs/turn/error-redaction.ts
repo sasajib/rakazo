@@ -59,3 +59,27 @@ function withoutControlCharacters(text: string): string {
   }
   return output;
 }
+
+/** How much of a command's output is looked at for its last words. */
+const TAIL_WINDOW_CHARS = 4000;
+
+/**
+ * Fork (1.37): the END of a text made safe for a log line, for output whose last lines say why a
+ * command failed. The same redaction as `redactErrorText`, run before the cut; when only a window
+ * of a long text is looked at, its first word is dropped so a secret cut in half cannot show.
+ */
+export function redactErrorTail(
+  text: string,
+  secrets: readonly string[] = [],
+  maxChars = AUDIT_ERROR_MESSAGE_MAX_CHARS,
+): string {
+  const known = secrets.length > 0 ? redactSecrets(text, secrets) : text;
+  const windowed =
+    known.length > TAIL_WINDOW_CHARS
+      ? known.slice(-TAIL_WINDOW_CHARS).replace(/^\S*\s?/, "")
+      : known;
+  const safe = redactErrorText(windowed, [], Number.MAX_SAFE_INTEGER);
+  if (safe.length <= maxChars) return safe;
+  // Cut on a word, so a token that the patterns kept whole is not shown in part.
+  return safe.slice(-maxChars).replace(/^\S*\s/, "");
+}

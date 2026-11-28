@@ -5,6 +5,7 @@ import { RunHistoryWriteError } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { isToolPauseResult } from "../../approvals/approval-effect.js";
 import { sanitizeConnectorError } from "../../integrations/connector-safety.js";
+import { commandExit, commandExitErrorFields } from "./command-exit-audit.js";
 import { redactErrorText } from "./error-redaction.js";
 import type { ToolCallAudit } from "./run-audit.js";
 import { noteToolError, noteToolRefusal, toolCallAudit, toolCallAuditFields } from "./run-audit.js";
@@ -123,6 +124,7 @@ export async function appendToolCompletionAudit(
     "tool.outcome": payload.outcome,
     "tool.duration_ms": payload.durationMs,
     ...toolCallAuditFields(toolCallAudit(target.runId, completion.executionId)),
+    ...toolExitCodeField(completion),
     ...toolErrorFields(completion, payload, target.runId, secrets),
   });
   try {
@@ -146,6 +148,13 @@ export async function appendToolCompletionAudit(
   }
 }
 
+/** Fork (1.37): the exit code of a command, on every completion that carries one (0 included). */
+function toolExitCodeField(completion: AgentToolCompletion): Record<string, unknown> {
+  if (completion.error !== undefined) return {};
+  const exit = commandExit(completion.result);
+  return exit ? { "tool.exit_code": exit.code } : {};
+}
+
 /**
  * Why a call failed, for the log: a class from a fixed list and the first 200 characters of the
  * failure with credentials, tokens, emails and URL secrets removed. Only for a failed call.
@@ -160,6 +169,13 @@ function toolErrorFields(
   const raw =
     completion.error === undefined ? toolResultError(completion.result) : completion.error;
   const message = typeof payload.error === "string" ? payload.error : "";
+  // Fork (1.37): a command that exited non-zero has no `error`, only its code and output.
+  const exit = raw === undefined && !message ? commandExit(completion.result) : undefined;
+  if (exit && exit.code !== 0) {
+    const failed = commandExitErrorFields(exit, secrets);
+    noteToolError(runId, failed.errorClass);
+    return { "tool.error_class": failed.errorClass, "tool.error_message": failed.message };
+  }
   const errorClass = classifyToolError({ message, error: raw, tool: completion.name });
   noteToolError(runId, errorClass);
   return {

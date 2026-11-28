@@ -1148,6 +1148,29 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
 - **Conflicts:** upstream edits to `resolveBotWorkspacePath`, the `executionMode` list in `toAgentTool`, the
   `fileTools` handlers.
 
+### 1.37 A failed command says why in the audit log (`tool.exit_code`, `nonzero_exit`, `killed`) (2026-11-28 audit, C2)
+- **Why:** 59 `shell` lines in 35 h had `tool.outcome=error`, `tool.error_class=unknown` and an empty
+  `tool.error_message`. `toolCompletionOutcome` (upstream) counts a command that ran and exited non-zero as
+  failed, but such a result has no `error`, only `{stdout, stderr, code}`; `toolErrorFields` classified the empty text.
+- **Now (log only, `runs/turn/command-exit-audit.ts`):** `agent.tool.completed` carries `tool.exit_code` for every
+  completion whose result has an exit code (0 included). For a non-zero exit with no tool error:
+  `tool.error_class` = `timeout` (exit 124 or the provider's "command timed out after N ms"), `killed` (exit above
+  128, or "command aborted" / "command terminated by SIG…"), else `nonzero_exit`; `tool.error_message` = the LAST
+  200 characters of stderr (stdout when stderr is empty), redacted by `redactErrorTail` (`error-redaction.ts`: the
+  same patterns as `redactErrorText`, run before the cut; a word cut at either edge is dropped).
+  `run.audit_summary` `audit.errors_by_class` gets the new classes.
+- **Outcome stays `error` (decision):** it is upstream's rule and the chat's failed-step mark uses the same
+  function; what the model gets and the stored thread event are unchanged. A reader that wants "the tool itself
+  failed" should leave out `nonzero_exit` (a `grep` with no match is one).
+- **Env:** none (log fields only). **Stack-side:** `AUDIT-LOG-EVENTS.md` wording and the audit store's reader for
+  `tool.exit_code` are in the stack repo.
+- **Seams:** `runs/turn/tool-completion-audit.ts` (two hooks), `tool-error-class.ts` (two names), `error-redaction.ts`.
+- **Tests:** `runs/turn/command-exit-audit.test.ts` (9: plain and wrapped result, stdout fallback, time limit, kill,
+  success, running, tool error first, secrets, word cuts, payload unchanged).
+- **Live check:** `docker logs --since 1h rakazo-api-1 rakazo-worker-1 2>&1 | grep '"tool":"shell"' | grep '"tool.outcome":"error"'`
+  → every line has `tool.exit_code` and a class other than `unknown`.
+- **Conflicts:** upstream edits to `toolErrorFields` / `appendToolCompletionAudit`.
+
 ### 1.18 Merge commits
 - `c46498f22` merged upstream `7dbc01748` into `integrate/1124` (the rebuild). Nothing fork-specific in it.
 - `42d432574` merged upstream `7dbc01748..dbc0c9d46` (76 commits, v0.16.0+) into `sync/main-1125`; see §4.
