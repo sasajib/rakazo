@@ -210,6 +210,8 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "agent_plans",
   "plan_settings",
   "plan_trust",
+  // Space-pinned skills (fork 1.32): raw-SQL table, listed by table name.
+  "space_pinned_skills",
 ]);
 
 /**

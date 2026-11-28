@@ -287,10 +287,14 @@ export function describeToolActivity(
   if (toolName === "update_group")
     return `Updating group: ${detail(record.group_name ?? record.name)}`;
   if (toolName === "organize_bot") return "Organizing the sidebar";
-  if (toolName === "bot_skills")
+  if (toolName === "bot_skills") {
+    if (record.action === "pin" || record.action === "unpin")
+      return "Changing the skills every bot follows";
+    if (record.action === "list_pinned") return "Checking the skills every bot follows";
     return record.action && record.action !== "list"
       ? "Changing a bot's skills"
       : "Checking a bot's skills";
+  }
   if (toolName === "set_child_instructions") return "Rewriting a bot's instructions";
   if (toolName === "set_child_bot_model") return "Setting a bot's model";
   if (toolName === "create_child_routine") return `Scheduling routine: ${detail(record.name)}`;

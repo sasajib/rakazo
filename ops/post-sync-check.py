@@ -45,6 +45,13 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
            # lists, pi arguments, handler), the shared write behind agentSkills/setForBot, spawn_bot's skills seam
            ("botSkillsFromTool(", 2), ("resolveNewBotSkills(", 2), ("writeBotSkillSelection(", 2),
            ("setBotSkills(", 2), ('"bot_skills"', 10), ("seed: input.seed", 1),
+           # skills load themselves, Space-pinned skills, standing orders outside the turn data (1.32):
+           # the assembly seam + its log line, the pinned read in access/assembly/tool/RPC, the block in
+           # the system instructions, the standing-orders split, the tool actions, RLS table, web switch
+           ("autoloadSkills(", 2), ("logSkillAutoload(", 2), ("loadPinnedSkillRefs(", 4),
+           ("loadBotSkillAccess(", 2), ("renderPinnedSkills(", 3), ("splitStandingOrders(", 2),
+           ("standingOrders: turnMemory.standing", 1), ("changePinnedSkills(", 2),
+           ('"space_pinned_skills",', 1), ("SkillPinLine", 2), ("SKILL_AUTOLOAD", 2), ('"list_pinned"', 4),
            # skill curator (auto-learned skills, chat teaching): run-finished hook, prompt seam, RPC,
            # card block, web card + Learning section + lesson bar, desktop-host teaching gate
            ("curateAfterRun(ctx)", 1), ("skillLearningPromptState(", 2), ("skillLearningInstruction(", 2),

@@ -354,12 +354,15 @@ export const fleetTools: ConnectorTool[] = [
   {
     name: "bot_skills",
     description:
-      "See or change the skills of a bot in this space, by bot_id or exact bot_name (yourself too), instead of asking the owner to attach them. list: its skills and the space's. add, remove: the named ones. set: replace its stored skills, or all: true for every skill. Applies from its next run.",
+      "See or change the skills of a bot in this space, by bot_id or exact bot_name (yourself too), instead of asking the owner to attach them. list: its skills and the space's. add, remove: the named ones. set: replace its stored skills, or all: true for every skill. Applies from its next run. pin, unpin (skills only, no bot): a skill every bot here always follows, future bots too; list_pinned shows them.",
     inputSchema: {
       type: "object",
       properties: {
         ...fleetBotTargetProperties,
-        action: { type: "string", enum: ["list", "add", "remove", "set"] },
+        action: {
+          type: "string",
+          enum: ["list", "add", "remove", "set", "pin", "unpin", "list_pinned"],
+        },
         skills: {
           type: "array",
           items: { type: "string" },

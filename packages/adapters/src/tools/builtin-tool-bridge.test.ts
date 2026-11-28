@@ -92,8 +92,10 @@ describe("built-in tool bridge", () => {
     // (+55) and plan_propose's notify wording (-21) land beside bot_skills (measured 49_081).
     // vault_fill is pinned too but only offered with a configured MCP browser, so it is not in
     // this owner chat (its own test caps it at 1_400 bytes). Upstream sync 1126b: remember's longer
-    // description and shared flag, ask_user and schedule wording (measured 49_820).
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(49_880);
+    // description and shared flag, ask_user and schedule wording (measured 49_820). Fork 1.32:
+    // bot_skills takes pin, unpin and list_pinned for the Space's pinned skills (+142, measured
+    // 49_962).
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(50_020);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret"]),
     );

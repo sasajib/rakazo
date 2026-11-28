@@ -39,6 +39,7 @@ import {
   RunHistoryWriteError,
   runAsSystem,
 } from "@rakazo/db";
+import { createLogger, createTestSink, getLogger, installLogger } from "@rakazo/logging";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BotIntroHarness } from "../discard-bot-intro.js";
 import { discardBotIntroFromCreate } from "../discard-bot-intro.js";
@@ -4860,6 +4861,116 @@ describeJourneys("required product journeys", () => {
         expect(refused?.error).toMatch(/No skill in this space matches "venue-note"/);
         expect(refused?.error).toContain("venue-notes");
         expect(await chosen(alpha.id)).toEqual(["invoice-check"]);
+      });
+
+      // Fork (1.32): hard rules for every bot. A managing bot pins a skill; every bot of the
+      // space, one created afterwards with built-in skills only included, runs with its body in
+      // the prompt; the platform also loads the skill that fits a task without a skill_read.
+      it("a managing bot pins a skill for every bot, future bots too, with no approval card", async () => {
+        const { cookie, me, chief } = await fleetOwner("skills-pin");
+        await rpc(app, cookie, "agentSkills/create", { content: skillDoc("house-rules") });
+        await rpc(app, cookie, "agentSkills/create", {
+          content:
+            "---\nname: ledger-filing\ndescription: File supplier invoices in the quarterly ledger\n---\n\nMARK-ledger\n",
+        });
+        const alpha = await createBot(cookie, "Alpha");
+        expect(await catalogNames(alpha, me.userId)).not.toContain("house-rules");
+
+        const pinned = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "pin the skill named house-rules for every bot",
+        );
+        expect(await toolOutcomes(pinned.run.id, "bot_skills")).toEqual([
+          expect.objectContaining({ outcome: "succeeded" }),
+        ]);
+        // No card was put in front of the owner.
+        expect(
+          pinned.messages.flatMap((message) => message.blocks).map((block) => block.kind),
+        ).not.toContain("approval");
+        const shown = await rpc<{ skillIds: string[]; enabled: boolean }>(
+          app,
+          cookie,
+          "agentSkills/pinned",
+        );
+        expect(shown.skillIds).toHaveLength(1);
+        expect(shown.enabled).toBe(true);
+        // Alpha keeps its own selection (built-ins only) and still has the pinned skill.
+        expect(await chosen(alpha.id)).toEqual([]);
+        expect(await catalogNames(alpha, me.userId)).toContain("house-rules");
+        expect(await catalogNames(alpha, me.userId)).not.toContain("ledger-filing");
+
+        // A bot created after the pin.
+        const later = await createBot(cookie, "Later");
+        expect(await catalogNames(later, me.userId)).toContain("house-rules");
+
+        // The manager is given every skill of the space, so the ledger skill is one of its own.
+        await rpc(app, cookie, "agentSkills/setForBot", { botId: chief.id, all: true });
+
+        // What the runs were built from: the prompt manifest and the auto-load line of each.
+        const sink = createTestSink();
+        const previousLogger = getLogger();
+        installLogger(createLogger({ service: "test", sinks: [sink] }));
+        try {
+          const laterRun = await sendAndWait(app, cookie, later.id, "hello there");
+          const chiefRun = await sendAndWait(
+            app,
+            cookie,
+            chief.id,
+            "file the supplier invoices in the quarterly ledger",
+          );
+          const eventOf = (message: string, runId: string) =>
+            sink.events.find((event) => event.message === message && event["run.id"] === runId);
+          const section = (runId: string, name: string) =>
+            (
+              eventOf("run.prompt_manifest", runId)?.["prompt.sections"] as
+                | Array<{ name: string; bytes: number }>
+                | undefined
+            )?.find((entry) => entry.name === name)?.bytes;
+          // The new bot: pinned skill in the prompt, nothing loaded for small talk.
+          expect(section(laterRun.run.id, "pinned_skills")).toBeGreaterThan(0);
+          expect(section(laterRun.run.id, "loaded_skills")).toBe(0);
+          expect(eventOf("skill.autoload", laterRun.run.id)).toMatchObject({
+            "autoload.method": "lexical",
+            "autoload.chosen": [],
+            "pinned.names": ["house-rules"],
+          });
+          // The manager (every skill): the fitting skill was loaded by the platform.
+          expect(section(chiefRun.run.id, "loaded_skills")).toBeGreaterThan(0);
+          expect(section(chiefRun.run.id, "pinned_skills")).toBeGreaterThan(0);
+          const autoload = eventOf("skill.autoload", chiefRun.run.id);
+          expect(autoload).toMatchObject({
+            "run.trigger": "user",
+            "autoload.chosen": ["ledger-filing"],
+            "pinned.names": ["house-rules"],
+          });
+          expect(autoload?.["autoload.bytes"]).toBe(section(chiefRun.run.id, "loaded_skills"));
+          expect(await toolOutcomes(chiefRun.run.id, "skill_read")).toEqual([]);
+          // One auto-load line per run.
+          expect(
+            sink.events.filter(
+              (event) => event.message === "skill.autoload" && event["run.id"] === chiefRun.run.id,
+            ),
+          ).toHaveLength(1);
+        } finally {
+          installLogger(previousLogger);
+        }
+
+        const listed = await sendAndWait(
+          app,
+          cookie,
+          chief.id,
+          "list the skills pinned for every bot",
+        );
+        expect(await toolOutcomes(listed.run.id, "bot_skills")).toEqual([
+          expect.objectContaining({ outcome: "succeeded" }),
+        ]);
+        await sendAndWait(app, cookie, chief.id, "unpin the skill named house-rules for every bot");
+        expect(
+          (await rpc<{ skillIds: string[] }>(app, cookie, "agentSkills/pinned")).skillIds,
+        ).toEqual([]);
+        expect(await catalogNames(alpha, me.userId)).not.toContain("house-rules");
       });
 
       it("refuses a bot without bot management and a bot of another space", async () => {

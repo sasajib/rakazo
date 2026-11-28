@@ -5,12 +5,17 @@
 import { ORPCError } from "@orpc/server";
 import {
   botMaySeeSkill,
+  changePinnedSkills,
   listAgentSkillRecords,
+  loadPinnedSkillRefs,
+  pinnedSkillsEnabled,
   readBotSkills,
+  readPinnedSkills,
   setBotSkills,
+  TooManyPinnedSkillsError,
   UnknownBotSkillsError,
 } from "@rakazo/adapters";
-import type { Actor, BotSkills, SkillAgents } from "@rakazo/contracts";
+import type { Actor, BotSkills, PinnedSkills, SkillAgents } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { IsolationError } from "@rakazo/db";
 
@@ -50,7 +55,32 @@ export function createBotSkillsService(prisma: PrismaClient) {
       }
     },
 
+    // Fork (1.32): skills pinned for every agent of the caller in the Space. The set is the
+    // caller's own (skills belong to the account that added them), so no agent is named.
+    async pinned(actor: Actor): Promise<PinnedSkills> {
+      const { skillIds, bytes, budgetBytes, overBudget } = await readPinnedSkills(prisma, actor);
+      return { skillIds, bytes, budgetBytes, overBudget, enabled: pinnedSkillsEnabled() };
+    },
+
+    // The write is shared with the bot_skills tool (adapters bot-skill-assign.ts).
+    async pin(actor: Actor, input: { skillId: string; pinned: boolean }): Promise<PinnedSkills> {
+      try {
+        const { skillIds, bytes, budgetBytes, overBudget } = await changePinnedSkills(
+          prisma,
+          actor,
+          { skillIds: [input.skillId], pinned: input.pinned },
+          { botId: null, runId: null, action: input.pinned ? "pin" : "unpin" },
+        );
+        return { skillIds, bytes, budgetBytes, overBudget, enabled: pinnedSkillsEnabled() };
+      } catch (error) {
+        if (error instanceof UnknownBotSkillsError || error instanceof TooManyPinnedSkillsError)
+          throw new ORPCError("BAD_REQUEST", { message: error.message });
+        throw error;
+      }
+    },
+
     async agents(actor: Actor): Promise<SkillAgents> {
+      const pinned = new Set(await loadPinnedSkillRefs(prisma, actor));
       const [catalog, bots] = await Promise.all([
         spaceCatalog(actor),
         prisma.bot.findMany({
@@ -58,6 +88,7 @@ export function createBotSkillsService(prisma: PrismaClient) {
           select: {
             id: true,
             name: true,
+            userId: true,
             skillSelection: {
               select: { excludedBuiltins: true, skills: { select: { skillId: true } } },
             },
@@ -71,6 +102,8 @@ export function createBotSkillsService(prisma: PrismaClient) {
           ? {
               skillIds: new Set(bot.skillSelection.skills.map((skill) => skill.skillId)),
               excludedBuiltins: new Set(bot.skillSelection.excludedBuiltins ?? []),
+              // A pinned skill is open to the caller's own agents whatever was chosen for them.
+              ...(bot.userId === actor.userId ? { pinned } : {}),
             }
           : null,
       }));

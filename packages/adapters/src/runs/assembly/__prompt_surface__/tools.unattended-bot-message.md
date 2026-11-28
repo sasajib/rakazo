@@ -1,5 +1,5 @@
 # Tool surface: unattended-bot-message
-62 tools, 83719 bytes of definitions
+62 tools, 83861 bytes of definitions
 
 ## add_mcp_server
 Connect a remote MCP tool server to this Space when the user asks you to add one and provides the details (URL, optional token/headers). The server is created immediately and an approval card appears in the chat; its tools reach you once the user approves it there. Do not invent endpoints; only use details the user provided. Local (stdio) servers can only be added by an admin in Settings.
@@ -22,8 +22,8 @@ Look at a bot's work queue: what it is doing now and what waits (age, lane, who 
 schema 1b4667ec0868 (195 bytes)
 
 ## bot_skills
-See or change the skills of a bot in this space, by bot_id or exact bot_name (yourself too), instead of asking the owner to attach them. list: its skills and the space's. add, remove: the named ones. set: replace its stored skills, or all: true for every skill. Applies from its next run.
-schema 59e866480922 (508 bytes)
+See or change the skills of a bot in this space, by bot_id or exact bot_name (yourself too), instead of asking the owner to attach them. list: its skills and the space's. add, remove: the named ones. set: replace its stored skills, or all: true for every skill. Applies from its next run. pin, unpin (skills only, no bot): a skill every bot here always follows, future bots too; list_pinned shows them.
+schema e6c6a950061d (536 bytes)
 
 ## complete_reminder
 Complete one reminder in exactly one list on the owner's phone. Use list_reminders to resolve both ids.

@@ -9,6 +9,15 @@
  */
 import type { PrismaClient } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import type { PinnedSkillsState } from "../skill-autoload/pinned.js";
+import {
+  loadPinnedSkillRefs,
+  logPinnedSkillsChanged,
+  PINNED_SKILLS_MAX,
+  pinnedSkillsEnabled,
+  pinnedSkillsState,
+  writePinnedSkillRefs,
+} from "../skill-autoload/pinned.js";
 import {
   BUILTIN_SKILL_ID_PREFIX,
   botMaySeeSkill,
@@ -23,7 +32,17 @@ type SpaceOwner = { spaceId: string; userId: string };
 type CatalogSkill = { id: string; name: string; description: string };
 type SelectionWriter = Pick<PrismaClient, "botSkillSelection" | "botSkill">;
 
-export const BOT_SKILLS_ACTIONS = ["list", "add", "remove", "set"] as const;
+export const BOT_SKILLS_ACTIONS = [
+  "list",
+  "add",
+  "remove",
+  "set",
+  // Fork (1.32): skills every agent of the Space always follows (skill-autoload/pinned.ts).
+  "pin",
+  "unpin",
+  "list_pinned",
+] as const;
+const PINNED_ACTIONS = new Set<string>(["pin", "unpin", "list_pinned"]);
 type BotSkillsAction = (typeof BOT_SKILLS_ACTIONS)[number];
 
 /** Most skills one call may name; the settings screen has the same cap. */
@@ -256,6 +275,130 @@ export async function resolveNewBotSkills(
   };
 }
 
+/** Too many pinned skills: each is in every prompt of every agent. */
+export class TooManyPinnedSkillsError extends Error {
+  constructor() {
+    super(`At most ${PINNED_SKILLS_MAX} skills can be pinned for every agent.`);
+    this.name = "TooManyPinnedSkillsError";
+  }
+}
+
+/** The skills pinned for every agent of this member in the Space. */
+export async function readPinnedSkills(
+  prisma: PrismaClient,
+  owner: SpaceOwner,
+  catalog?: readonly (CatalogSkill & { content: string })[],
+): Promise<PinnedSkillsState> {
+  const [skills, refs] = await Promise.all([
+    catalog ?? listSpaceSkills(prisma, owner),
+    // The settings show what is stored even while SKILL_PINNED=0 keeps it out of prompts.
+    loadPinnedSkillRefs(prisma, owner, { ignoreSwitch: true }),
+  ]);
+  return pinnedSkillsState(skills, refs);
+}
+
+/**
+ * Pins or unpins skills for every agent of this member in the Space: one write path for the
+ * settings screen (agentSkills/pin) and the `bot_skills` tool. Ids must be skills of the Space
+ * (UnknownBotSkillsError otherwise). The caller has checked who is asking.
+ */
+export async function changePinnedSkills(
+  prisma: PrismaClient,
+  owner: SpaceOwner,
+  input: { skillIds: readonly string[]; pinned: boolean },
+  actor: { botId: string | null; runId: string | null; action: string },
+): Promise<PinnedSkillsState & { added: string[]; removed: string[] }> {
+  const catalog = await listSpaceSkills(prisma, owner);
+  const known = new Set(catalog.map((skill) => skill.id));
+  const unknown = input.skillIds.filter((id) => !known.has(id));
+  if (unknown.length > 0) throw new UnknownBotSkillsError(unknown);
+  const stored = await loadPinnedSkillRefs(prisma, owner, { ignoreSwitch: true });
+  // A pin whose skill is gone is dropped by this write.
+  const before = stored.filter((ref) => known.has(ref));
+  const change = new Set(input.skillIds);
+  const next = input.pinned
+    ? [...before, ...input.skillIds.filter((id) => !before.includes(id))]
+    : before.filter((ref) => !change.has(ref));
+  if (next.length > PINNED_SKILLS_MAX) throw new TooManyPinnedSkillsError();
+  const added = next.filter((ref) => !before.includes(ref));
+  const removed = before.filter((ref) => !next.includes(ref));
+  if (added.length + removed.length > 0 || before.length !== stored.length) {
+    await prisma.$transaction((tx) => writePinnedSkillRefs(tx, owner, next, actor.botId));
+    logPinnedSkillsChanged({
+      spaceId: owner.spaceId,
+      userId: owner.userId,
+      actorBotId: actor.botId,
+      runId: actor.runId,
+      action: actor.action,
+      added: added.length,
+      removed: removed.length,
+      total: next.length,
+    });
+  }
+  return { ...pinnedSkillsState(catalog, next), added, removed };
+}
+
+async function pinnedSkillsFromTool(
+  deps: { prisma: PrismaClient },
+  run: FleetRun,
+  action: BotSkillsAction,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const owner = { spaceId: run.spaceId, userId: run.userId };
+  const catalog = await listSpaceSkills(deps.prisma, owner);
+  const nameOf = new Map(catalog.map((skill) => [skill.id, skill.name]));
+  const names = (ids: readonly string[]) => ids.map((id) => nameOf.get(id) ?? id);
+  const report = (state: PinnedSkillsState) => ({
+    // In pinned order, which is the order they are read in the prompt.
+    pinned: state.skillIds.map((id) => ({
+      id,
+      name: nameOf.get(id) ?? id,
+      ...(isBuiltinSkillId(id) ? { builtin: true } : {}),
+    })),
+    bytes: state.bytes,
+    budgetBytes: state.budgetBytes,
+    ...(state.overBudget.length
+      ? {
+          overBudget: state.overBudget,
+          warning:
+            "These do not fit every prompt in full; agents see them cut or by name only. Shorten them or unpin one.",
+        }
+      : {}),
+    ...(pinnedSkillsEnabled()
+      ? {}
+      : { warning: "Pinned skills are switched off on this server (SKILL_PINNED=0)." }),
+  });
+  if (action === "list_pinned") return report(await readPinnedSkills(deps.prisma, owner, catalog));
+  if (args.bot_id || args.bot_name)
+    return { error: `${action} applies to every bot in this space; do not pass a bot.` };
+  const refs = refsFrom(args.skills);
+  if ("error" in refs) return refs;
+  if (refs.length === 0) return { error: "Pass skills: the names or ids to change." };
+  const resolved = resolveSkillRefs(catalog, refs);
+  if (!resolved.ok) return { error: resolved.error };
+  try {
+    const after = await changePinnedSkills(
+      deps.prisma,
+      owner,
+      { skillIds: resolved.ids, pinned: action === "pin" },
+      { botId: run.botId, runId: run.runId, action },
+    );
+    const changed = after.added.length + after.removed.length > 0;
+    return {
+      ok: true,
+      added: names(after.added),
+      removed: names(after.removed),
+      ...report(after),
+      note: !changed
+        ? "Nothing changed: the pinned skills were already exactly these."
+        : "Saved. Every bot in this space, and every bot created later, follows the pinned skills from its next run; a run already in progress keeps what it started with.",
+    };
+  } catch (error) {
+    if (error instanceof TooManyPinnedSkillsError) return { error: error.message };
+    throw error;
+  }
+}
+
 /**
  * `bot_skills`: lists or changes the skills of an agent in the caller's Space. The caller is a
  * run whose bot has bot management on (checked live before this runs, like every fleet tool);
@@ -271,6 +414,8 @@ export async function botSkillsFromTool(
     .toLowerCase() as BotSkillsAction;
   if (!BOT_SKILLS_ACTIONS.includes(action))
     return { error: `action must be one of ${BOT_SKILLS_ACTIONS.join(", ")}.` };
+  // Fork (1.32): the Space's pinned skills have no target bot; they are the run member's own.
+  if (PINNED_ACTIONS.has(action)) return pinnedSkillsFromTool(deps, run, action, args);
   const target = await resolveBot(deps.prisma, run, args);
   if ("error" in target) return { error: target.error };
   if (target.userId !== run.userId) {

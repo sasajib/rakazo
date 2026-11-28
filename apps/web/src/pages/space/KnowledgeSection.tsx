@@ -12,6 +12,7 @@ import {
   LearnedSkillLine,
   LinkedSkillOpener,
   SkillAgentsLine,
+  SkillPinLine,
   SkillTrustLine,
 } from "../../components/integrations/skill-agents-line";
 import {
@@ -509,6 +510,7 @@ export function AgentSkills() {
             </div>
           ) : null}
           {open ? <SkillAgentsLine skillId={open.id} /> : null}
+          {open ? <SkillPinLine skillId={open.id} skillName={open.name} /> : null}
           {open ? <LearnedSkillLine skillId={open.id} /> : null}
           {open ? <SkillTrustLine skillName={open.name} /> : null}
           <Textarea
