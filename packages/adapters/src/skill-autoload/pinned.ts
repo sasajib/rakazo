@@ -3,7 +3,7 @@
  * prompt of every agent of its member in the Space, existing and future, in full and marked as
  * binding, whatever the agent's own skill selection says (bot-skill-access.ts) and whatever
  * RAKAZO_NEW_BOT_SKILLS gives a new agent. Table `space_pinned_skills` (raw SQL, no Prisma model;
- * migration 20270129090000_space_pinned_skills); every query runs in the caller's tenant context.
+ * migration 20270129100000_space_pinned_skills); every query runs in the caller's tenant context.
  *
  * Skills belong to the account that added them (see db/spaces/availability.ts), so the set is
  * kept per member of the Space: it reaches every agent that member owns there.

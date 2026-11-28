@@ -1165,7 +1165,7 @@ known conflicts**. "Seams" are the upstream files the fork edits; everything els
   `SKILL_AUTOLOAD_EMBEDDINGS_MIN` (0.6), `SKILL_AUTOLOAD_TIMEOUT_MS` (700), `SKILL_PINNED` (0 = pinned skills not in
   prompts nor opened to limited agents; the stored set stays), `SKILL_PINNED_MAX_BYTES` (16384). On bee the api AND
   the worker need the embeddings URL and the `hermes_memory` network (both already have them for 1.5/1.10).
-- **Migration:** `20270129090000_space_pinned_skills` (raw SQL, no Prisma model: PK (spaceId, userId, skillRef);
+- **Migration:** `20270129100000_space_pinned_skills` (raw SQL, no Prisma model: PK (spaceId, userId, skillRef);
   `skillId` FK -> agent_skills cascade, `spaceId` FK -> spaces cascade; RLS by `spaceId` + system bypass; additive,
   idempotent). A run on an image ahead of the migration logs `skills.pinned.unavailable` and starts without pins.
 - **Logs:** `skill.autoload` once per run with the manifest: `run.trigger`, `autoload.method`
