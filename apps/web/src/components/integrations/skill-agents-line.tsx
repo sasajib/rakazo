@@ -167,3 +167,79 @@ export function SkillTrustLine({ skillName }: { skillName: string }) {
     </div>
   );
 }
+
+type PinnedSkillsData = {
+  skillIds: string[];
+  bytes: number;
+  budgetBytes: number;
+  overBudget: string[];
+  enabled: boolean;
+};
+
+/**
+ * Fork (1.32): under a skill, the switch that pins it for every agent in the space. A pinned
+ * skill is in each agent's prompt in full, as a rule it always follows, for agents created later
+ * too. Agents that manage agents set the same list with the bot_skills tool.
+ */
+export function SkillPinLine({ skillId, skillName }: { skillId: string; skillName: string }) {
+  const queries = useSpaceQueries();
+  const rpc = useSpaceRpc();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Hand-written test clients may lack this fork procedure; then the line is left out.
+  const procedure = queries.agentSkills.pinned as typeof queries.agentSkills.pinned | undefined;
+  const query = useQuery(
+    procedure
+      ? { ...procedure.queryOptions(), refetchOnMount: "always" }
+      : { queryKey: ["pinned-skills-unavailable"], queryFn: skipToken },
+  );
+  const data = query.data as PinnedSkillsData | undefined;
+  if (!data) return null;
+  const pinned = data.skillIds.includes(skillId);
+  const cut = pinned && data.overBudget.includes(skillName);
+  return (
+    <div className="mt-1 text-body-sm text-muted-foreground" data-testid="skill-pin" dir="auto">
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={pinned}
+          disabled={busy}
+          data-testid="skill-pin-toggle"
+          onChange={(event) => {
+            const next = event.target.checked;
+            setBusy(true);
+            setError(null);
+            void rpc.agentSkills
+              .pin({ skillId, pinned: next })
+              .then(() => query.refetch())
+              .catch((cause: unknown) =>
+                setError(cause instanceof Error ? cause.message : String(cause)),
+              )
+              .finally(() => setBusy(false));
+          }}
+        />
+        <span>
+          <Trans>Every agent always follows this skill (new agents too)</Trans>
+        </span>
+      </label>
+      {cut ? (
+        <div data-testid="skill-pin-cut">
+          <Trans>
+            The pinned skills are longer than every prompt has room for, so agents see this one
+            shortened. Shorten it or unpin another.
+          </Trans>
+        </div>
+      ) : null}
+      {pinned && !data.enabled ? (
+        <div data-testid="skill-pin-off">
+          <Trans>Pinned skills are switched off on this server.</Trans>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="text-destructive" data-testid="skill-pin-error">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
+}

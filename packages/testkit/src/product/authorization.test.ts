@@ -512,6 +512,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["agentSkills/forBot", { botId: "missing-bot" }],
       ["agentSkills/setForBot", { botId: "missing-bot", all: true }],
       ["agentSkills/agents"],
+      ["agentSkills/pinned"],
+      ["agentSkills/pin", { skillId: "missing-skill", pinned: true }],
       ["skillLearning/settings", {}],
       ["skillLearning/setMode", { mode: "ask" }],
       ["skillLearning/decide", { proposalId: "missing-proposal", decision: "keep" }],
@@ -966,6 +968,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["agentSkills/remove", { skillId: ownerAgentSkill.id }],
       ["agentSkills/forBot", { botId: ownerBot.id }],
       ["agentSkills/setForBot", { botId: ownerBot.id, all: false, skillIds: [] }],
+      // Fork (1.32): another member's skill cannot be pinned.
+      ["agentSkills/pin", { skillId: ownerAgentSkill.id, pinned: true }],
       ["skillLearning/settings", { botId: ownerBot.id }],
       ["skillLearning/setMode", { botId: ownerBot.id, mode: "off" }],
       ["skillLearning/teaching", { botId: ownerBot.id, threadId: ownerThread.id }],
@@ -998,6 +1002,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
       "agentSkills/agents",
     );
     expect(intruderSkillAgents.map((entry) => entry.skillId)).not.toContain(ownerAgentSkill.id);
+    // Fork (1.32): nor what the owner pinned for his own agents.
+    expect(
+      (await rpc<{ skillIds: string[] }>(app, intruder, "agentSkills/pinned")).skillIds,
+    ).toEqual([]);
     expect(intruderSkillAgents.flatMap((entry) => entry.bots.map((bot) => bot.id))).not.toContain(
       ownerBot.id,
     );

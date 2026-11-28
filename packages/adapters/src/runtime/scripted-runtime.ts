@@ -1016,6 +1016,22 @@ function fleetCall(prompt: string): { name: string; args: Record<string, unknown
       },
     };
   }
+  // Fork (1.32): Space-pinned skills journeys.
+  const skillPin = /\b(un)?pin the skills? named\s+([^\n<&]+?)\s+for every bot/i.exec(prompt);
+  if (skillPin) {
+    return {
+      name: "bot_skills",
+      args: {
+        action: skillPin[1] ? "unpin" : "pin",
+        skills: clean(skillPin[2]!)
+          .split(/\s*,\s*/)
+          .filter(Boolean),
+      },
+    };
+  }
+  if (/\blist the skills pinned for every bot/i.test(prompt)) {
+    return { name: "bot_skills", args: { action: "list_pinned" } };
+  }
   const skillList = /\blist the skills of the bot named\s+([^\n<&]+)/i.exec(prompt);
   if (skillList) {
     return { name: "bot_skills", args: { action: "list", bot_name: clean(skillList[1]!) } };

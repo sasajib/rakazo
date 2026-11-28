@@ -285,6 +285,12 @@ export function memoryRoutes(ctx: RouterContext) {
       setForBot: authed.agentSkills.setForBot.handler(async ({ context, input }) =>
         botSkills.setForBot(context.actor, input),
       ),
+      pinned: authed.agentSkills.pinned.handler(async ({ context }) =>
+        botSkills.pinned(context.actor),
+      ),
+      pin: authed.agentSkills.pin.handler(async ({ context, input }) =>
+        botSkills.pin(context.actor, input),
+      ),
       agents: authed.agentSkills.agents.handler(async ({ context }) =>
         botSkills.agents(context.actor),
       ),

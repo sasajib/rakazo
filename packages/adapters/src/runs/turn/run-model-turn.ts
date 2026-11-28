@@ -3,10 +3,12 @@ import { modelRoleConnectionId } from "@rakazo/contracts";
 import { BACKGROUND_HELPER_TRIGGER, redactSecrets, TALK_RUN_TRIGGER } from "@rakazo/core";
 import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { splitStandingOrders } from "../../memory/standing-orders.js";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
 import { personSpeaker } from "../../runtime/context/history-speakers.js";
 import { VAULT_FILL_TOOL } from "../../secrets/vault/vault-mcp-fill.js";
 import { withShellJobSteering } from "../../shell-jobs/shell-job-steering.js";
+import { logSkillAutoload } from "../../skill-autoload/autoload.js";
 import { backgroundHelpersAllowed } from "../../tasks/background-helpers.js";
 import { builtinAgentTools } from "../../tools/builtin.tool-definition.js";
 import { deferredToolCount } from "../../tools/lazy-tool-catalog.js";
@@ -28,6 +30,7 @@ import { completeRun } from "../lifecycle/run-complete.js";
 import { failRun, handoffEndedTurn, requeueRunAfterDatabaseOutage } from "../lifecycle/run-fail.js";
 import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection.js";
 import { applyTool } from "../tools/run-tools.js";
+import { peekRunAudit } from "./run-audit.js";
 import { holdAuditSummary, logPromptAudit, releaseAuditSummary } from "./run-audit-run.js";
 import { consumeRunEvents } from "./run-turn.js";
 import { claimRunSteering } from "./run-turn-images.js";
@@ -124,8 +127,17 @@ function logTurnPromptAudit(hold: RunHold, turn: AssembledTurn): void {
   const { groupContext, mainRunModel, messagingContext } = turn.capabilities;
   const { taskCatalogInstruction, tools } = turn.tools;
   const { computerInstruction, workspaceInstruction } = turn.computerInstructions;
-  const { agentSkillsLine, pluginLine, prompt, taughtSkillsLine } = turn.prompt;
+  const { agentSkillsLine, pinnedSkills, pluginLine, prompt, skillAutoload, taughtSkillsLine } =
+    turn.prompt;
   const talkRun = run.trigger === TALK_RUN_TRIGGER;
+  // Fork (1.32): `skill.autoload` is written with the manifest, once per run.
+  if (!peekRunAudit(hold.runId)?.promptLogged)
+    logSkillAutoload(auditTarget(hold, turn), skillAutoload.log, {
+      names: pinnedSkills.skills.map((skill) => skill.name),
+      bytes: pinnedSkills.bytes,
+      truncated: pinnedSkills.skills.filter((skill) => skill.truncated).map((skill) => skill.name),
+      omitted: pinnedSkills.omitted,
+    });
   logPromptAudit(auditTarget(hold, turn), {
     trigger: run.trigger,
     model: mainRunModel,
@@ -134,6 +146,10 @@ function logTurnPromptAudit(hold: RunHold, turn: AssembledTurn): void {
     sections: [
       ["bot_instructions", runIdentityInstruction(bot, run.trigger)],
       ["memory_block", memoryContext],
+      // Fork (1.32): the binding block on its own line, so its presence is checked per run.
+      ["standing_orders", splitStandingOrders(memoryContext).standing],
+      ["loaded_skills", skillAutoload.text],
+      ["pinned_skills", pinnedSkills.text],
       ["scratchpad", scratchpadContext],
       ["tickets", ticketContext],
       ["task_catalog", taskCatalogInstruction],
@@ -225,9 +241,12 @@ function modelTurnRequest(
   const redactedScratchpadContext = scratchpadContext
     ? redactSecrets(scratchpadContext, runSecrets)
     : undefined;
+  // Fork (1.32): standing orders are binding, so they never ride in the turn data, which the
+  // model is told to treat as untrusted background; they go into the instructions below.
+  const turnMemory = splitStandingOrders(redactedMemoryContext);
   // Keep these snapshots on the live turn. Replayed history comes from stored chat messages.
   const turnData = currentTurnDataInPrompt
-    ? currentTurnDataPrompt(redactedMemoryContext, redactedScratchpadContext)
+    ? currentTurnDataPrompt(turnMemory.rest, redactedScratchpadContext)
     : undefined;
   return {
     botId: bot.id,
@@ -277,6 +296,8 @@ function modelTurnRequest(
       redactedMemoryContext,
       redactedScratchpadContext,
       currentTurnDataInPrompt,
+      standingOrders: turnMemory.standing,
+      pinnedSkills: turn.prompt.pinnedSkills.text,
       redactedTicketContext: ticketContext ? redactSecrets(ticketContext, runSecrets) : undefined,
       hasHistoricalContext,
       // A background helper is not offered the history tools, so it gets no guidance on them.

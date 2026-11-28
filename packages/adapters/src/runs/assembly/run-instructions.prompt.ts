@@ -446,6 +446,13 @@ export function userTurnInstructions(parts: {
   redactedMemoryContext: string | undefined;
   redactedScratchpadContext: string | undefined;
   currentTurnDataInPrompt?: boolean;
+  /**
+   * Fork (1.32): the standing-orders block of a run whose memory rides in the turn's data. It is
+   * binding, so it stays in these instructions instead of in data the model is told not to obey.
+   */
+  standingOrders?: string | undefined;
+  /** Fork (1.32): bodies of the skills pinned for every agent of the Space, binding. */
+  pinnedSkills?: string | undefined;
   redactedTicketContext?: string | undefined;
   hasHistoricalContext: boolean;
   historyRetrievalEnabled?: boolean;
@@ -548,6 +555,8 @@ export function userTurnInstructions(parts: {
     userComputerInstruction(parts.userComputer),
     parts.groupContext,
     parts.messagingContext,
+    parts.pinnedSkills,
+    parts.currentTurnDataInPrompt ? parts.standingOrders : undefined,
     parts.currentTurnDataInPrompt ? undefined : parts.redactedMemoryContext,
     parts.currentTurnDataInPrompt ? undefined : parts.redactedScratchpadContext,
     parts.redactedTicketContext,

@@ -1,7 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { AgentSkillCatalogEntry, BotSkills } from "@rakazo/contracts";
 import { Checkbox } from "@rakazo/ui-web";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSpaceQueries } from "../../../lib/query/query";
 import { useSpaceRpc } from "../../../lib/query/space-rpc";
@@ -26,6 +26,17 @@ export function BotSkillsSection({ botId, ids }: { botId: string; ids: string })
   });
   const selectionOptions = queries.agentSkills.forBot.queryOptions({ input: { botId } });
   const selectionQuery = useQuery({ ...selectionOptions, refetchOnMount: "always" });
+  // Fork (1.32): a skill pinned for every agent is on here whatever is ticked. Hand-written test
+  // clients may lack the procedure; then nothing is marked.
+  const pinnedProcedure = queries.agentSkills.pinned as
+    | typeof queries.agentSkills.pinned
+    | undefined;
+  const pinnedQuery = useQuery(
+    pinnedProcedure
+      ? { ...pinnedProcedure.queryOptions(), refetchOnMount: "always" }
+      : { queryKey: ["pinned-skills-unavailable"], queryFn: skipToken },
+  );
+  const pinned = new Set((pinnedQuery.data as { skillIds: string[] } | undefined)?.skillIds ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const skills = catalogQuery.data ?? NO_SKILLS;
@@ -68,7 +79,8 @@ export function BotSkillsSection({ botId, ids }: { botId: string; ids: string })
           {all ? null : (
             <div className="pb-2">
               {skills.map((skill) => {
-                const checked = chosen.has(skill.id);
+                const everyAgent = pinned.has(skill.id);
+                const checked = everyAgent || chosen.has(skill.id);
                 return (
                   <label
                     key={skill.id}
@@ -88,11 +100,19 @@ export function BotSkillsSection({ botId, ids }: { botId: string; ids: string })
                           )}
                         </span>
                       ) : null}
+                      {everyAgent ? (
+                        <span
+                          className="block text-caption text-muted-foreground"
+                          data-testid="bot-skill-pinned"
+                        >
+                          <Trans>Pinned: every agent follows it</Trans>
+                        </span>
+                      ) : null}
                     </span>
                     <Checkbox
                       id={`${ids}-skill-${skill.id}`}
                       checked={checked}
-                      disabled={saving}
+                      disabled={saving || everyAgent}
                       aria-label={checked ? t`Stop using ${skill.name}` : t`Use ${skill.name}`}
                       onCheckedChange={() => {
                         const next = new Set(chosen);

@@ -83,7 +83,7 @@ describe("bot_skills as a built-in tool", () => {
       properties: {
         bot_id: { type: "string" },
         bot_name: { type: "string" },
-        action: { enum: ["list", "add", "remove", "set"] },
+        action: { enum: ["list", "add", "remove", "set", "pin", "unpin", "list_pinned"] },
         skills: { type: "array" },
         all: { type: "boolean" },
       },

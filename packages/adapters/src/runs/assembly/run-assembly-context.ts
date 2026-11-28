@@ -18,6 +18,10 @@ import { lateRoutineRunInstruction } from "../../routines/routine-lateness.promp
 import { routineRunInstruction } from "../../routines/routine-run.prompt.js";
 import { formatCompactedSummary } from "../../runtime/context/history-compaction.prompt.js";
 import { inferScript } from "../../runtime/scripted-runtime.js";
+import { autoloadSkills } from "../../skill-autoload/autoload.js";
+import { skillAutoloadConfig } from "../../skill-autoload/config.js";
+import { loadPinnedSkillRefs, pinnedAmong } from "../../skill-autoload/pinned.js";
+import { renderPinnedSkills } from "../../skill-autoload/skill-autoload.prompt.js";
 import { skillLearningInstruction } from "../../skill-curator/seams.js";
 import { filterSkillsForBot } from "../../tools/bot-skill-access.js";
 import { partitionTools } from "../../tools/builtin-tool-bridge.js";
@@ -30,7 +34,7 @@ import { withLatestStepScreenshot, withRecentTurnImages } from "../turn/run-turn
 import { missingTurnImagesInstruction } from "../turn/run-turn-images.prompt.js";
 import { checkpointAnswerHistory } from "./checkpoint-answer-history.js";
 import { formatCurrentTimeInstruction } from "./current-time.prompt.js";
-import { loadReplyContext } from "./reply-context.js";
+import { loadReplyContext, messageToAgentHistoryText } from "./reply-context.js";
 import type {
   ComputerInstructions,
   PreparedRunComputer,
@@ -373,6 +377,38 @@ export async function buildTurnPrompt(
         parsePlaybook(invokedSkill.playbook),
       )}\n\n${taskPrompt}`
     : taskPrompt;
+  // Fork (1.32): skills pinned for every agent of the Space are in every run in full, as binding
+  // rules. Not for runs that read no saved context: a chat with people other than the owner, and
+  // a routine on its owner's computer, which runs only the text the owner approved.
+  const pinnedSkills = renderPinnedSkills(
+    nonOwnerChatRun || ownerComputerRoutine
+      ? []
+      : pinnedAmong(
+          agentSkills,
+          await loadPinnedSkillRefs(deps.prisma, { spaceId: run.spaceId, userId: run.userId }),
+        ),
+    skillAutoloadConfig().pinned.maxBytes,
+  );
+  // Fork (1.32): the skills that fit this task are matched here and their bodies ride with the
+  // task, so following a skill does not depend on the model calling skill_read. Never throws.
+  const skillAutoload = await autoloadSkills({
+    trigger: run.trigger,
+    task: task.prompt,
+    earlier: earlierRequests(parts.records.messages, run.sourceMessageId),
+    skills: runAgentSkills,
+    // A skill forced with /Name or @Name is already in the task text in full.
+    alreadyLoaded: new Set([
+      ...runAgentSkills
+        .filter((skill) => taskPrompt.includes(`Use skill: ${skill.name}`))
+        .map((skill) => skill.name),
+      ...pinnedSkills.skills.map((skill) => skill.name),
+      ...pinnedSkills.omitted,
+    ]),
+    fast: voiceCall,
+  });
+  // A skill is the member's own text, but a saved secret pasted into one must not reach the model.
+  if (skillAutoload.text) skillAutoload.text = redactSecrets(skillAutoload.text, runSecrets);
+  if (pinnedSkills.text) pinnedSkills.text = redactSecrets(pinnedSkills.text, runSecrets);
   if (turnCheckpoint) {
     turnCheckpoint = restoreTurnCheckpointEffects(
       ctx,
@@ -445,6 +481,7 @@ export async function buildTurnPrompt(
     parts.meetingContext,
     routineNote,
     run.trigger === "reaction" && replyContext ? undefined : basePrompt,
+    skillAutoload.text,
     talkRun ? TALK_RUN_INSTRUCTION : undefined,
     !talkRun && (run.trigger === "user" || run.trigger === "follow_up")
       ? PLAN_FIRST_INSTRUCTION
@@ -521,6 +558,8 @@ export async function buildTurnPrompt(
     pluginLine,
     taughtSkillsLine,
     agentSkillsLine,
+    skillAutoload,
+    pinnedSkills,
     taskPrompt,
     prompt,
     hasHistoricalContext: historicalContext.length + recalledContext.length > 0,
@@ -533,6 +572,21 @@ export async function buildTurnPrompt(
 }
 
 export type TurnPrompt = Awaited<ReturnType<typeof buildTurnPrompt>>;
+
+/** How many of the person's earlier messages a short task ("ok, go") is matched with. */
+const EARLIER_REQUESTS = 6;
+
+/** The person's earlier messages in this chat, newest first, without the one that started the run. */
+export function earlierRequests(
+  messages: ReadonlyArray<Parameters<typeof messageToAgentHistoryText>[0] & { id: string }>,
+  sourceMessageId: string | null | undefined,
+): string[] {
+  return messages
+    .filter((message) => message.role === "user" && message.id !== sourceMessageId)
+    .slice(0, EARLIER_REQUESTS)
+    .map((message) => messageToAgentHistoryText(message))
+    .filter(Boolean);
+}
 
 /** When the newest message other than this turn's was sent, read before compaction drops it. */
 export function previousMessageAt(

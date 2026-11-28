@@ -6,6 +6,10 @@ import { renderStandingOrdersBlock } from "../../memory/standing-orders.js";
 import { renderPack } from "../../memory-ledger/pack.js";
 import { placeLedgerBlock } from "../../memory-ledger/seams.js";
 import type { Fact } from "../../memory-ledger/types.js";
+import {
+  renderLoadedSkills,
+  renderPinnedSkills,
+} from "../../skill-autoload/skill-autoload.prompt.js";
 import { selectBuiltinToolsForRun } from "../tools/run-tool-selection.js";
 import {
   COMPUTER_USE_INSTRUCTION,
@@ -48,6 +52,10 @@ const SCENARIOS = {
     followUpFromUser: true,
   },
 } as const;
+
+const sampleSkill = { id: "sample", description: "A sample skill" };
+const sampleSkillMd = (name: string, body: string) =>
+  `---\nname: ${name}\ndescription: A sample skill\n---\n\n${body}\n`;
 
 const sha = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 12);
@@ -119,6 +127,28 @@ describe("prompt surface", () => {
         ]),
       ],
       ["standing orders block (sample)", renderStandingOrdersBlock(standing)],
+      // Fork (1.32): skill bodies matched to the task, and skills pinned for every agent.
+      [
+        "loaded skills block (sample, one whole and one cut)",
+        renderLoadedSkills(
+          [
+            { ...sampleSkill, name: "Sample", content: sampleSkillMd("Sample", "Step one.") },
+            {
+              ...sampleSkill,
+              name: "Long sample",
+              content: sampleSkillMd("Long sample", "A line of steps.\n".repeat(40)),
+            },
+          ],
+          600,
+        ).text,
+      ],
+      [
+        "pinned skills block (sample)",
+        renderPinnedSkills(
+          [{ ...sampleSkill, name: "House rules", content: sampleSkillMd("House rules", "Rule.") }],
+          1024,
+        ).text,
+      ],
       ["memory prompt (sample)", memory],
       ["memory prompt with the memory ledger on (sample)", placeLedgerBlock(memory, ledger)],
     ]
