@@ -167,7 +167,7 @@ MARKERS = [("admissionHold", 1), ("bot_queue", 4), ("standing_set", 6), ("normal
             # message routing (1.42): every message into a busy chat is judged (override redirect/replace,
             # addition, answer, new task); a waiting question is retired only by an answer or a replace;
             # new tasks run beside others (chatTask), replies quote their task; transient retry; stop audit
-            ("holdMessageForRouting(", 2), ("scheduleMessageRoute(", 2), ("ROUTING_JUDGE_INSTRUCTIONS", 3),
+            ("holdMessageForRouting(", 2), ("scheduleMessageRoute(", 2), ("ROUTING_JUDGE_INSTRUCTIONS", 2),
             ("decideMessageRoute(", 3), ("routeHeldUntil", 3), ("separateChatTasks(", 2),
             ("chatTaskBlock(", 2), ("chatTaskReplyTag(", 2), ("chatTasksPromptLine(", 2),
             ("retryRunAfterTransientFailure(", 2), ("markRunStopped(", 3), ("MESSAGE_ROUTING", 3),
