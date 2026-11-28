@@ -5,7 +5,7 @@ import type {
   ProductAnalytics,
   SandboxProvider,
 } from "@rakazo/adapter-kit";
-import { notifyMemberMessage, wakeRun } from "@rakazo/adapters";
+import { notifyMemberMessage, routingConfig, wakeRun } from "@rakazo/adapters";
 import type { Actor, GroupMember, MessageBlock, ReplyPreview } from "@rakazo/contracts";
 import {
   GROUP_MEMBER_MIN,
@@ -58,6 +58,7 @@ import {
   resolveGroupSendAttachments,
   resolveSendAttachments,
 } from "../content/artifacts.js";
+import { holdMessageForRouting, isRoutableTask, scheduleMessageRoute } from "./message-routing.js";
 import type { ImageAdmissionRun } from "./thread-image-admission.js";
 import { assertThreadImageInput } from "./thread-image-admission.js";
 import {
@@ -259,7 +260,7 @@ const TALK_LANE_MIN_BUSY_MS = 8_000;
  * change course. This run is the person's answer in the meantime: no computer, no tools, its own pi
  * session, its reply is the only thing it writes.
  */
-async function createTalkRunBeside(
+export async function createTalkRunBeside(
   tx: Prisma.TransactionClient,
   input: {
     spaceId: string;
@@ -749,6 +750,7 @@ export async function sendThreadMessage(
             trigger: true,
             userId: true,
             startedAt: true,
+            createdAt: true,
             modelProvider: true,
             modelId: true,
             modelPinned: true,
@@ -783,6 +785,62 @@ export async function sendThreadMessage(
         if (input.noModel && !stopping) {
           throw new ORPCError("BAD_REQUEST", { message: MODEL_REQUIRED_SEND_ERROR });
         }
+        // Fork (FORK.md 1.42): a message into a chat with the sender's work in flight is routed
+        // (override, addition, answer, new task). Certain answers are answered here; anything else
+        // is held as steering of the most recent task while the judge decides, after the commit.
+        // A waiting question is never retired by a message that does not answer it.
+        const routing = routingConfig();
+        const routableRuns =
+          routing.routing && !stopping && !callId && !input.leaveCards && !routineRuns.length
+            ? activeRuns.filter(
+                (run) => isRoutableTask(run, actor) && !messageBypassesTakeoverWait(run, true),
+              )
+            : [];
+        const route = routableRuns.length
+          ? await holdMessageForRouting(tx, {
+              actor,
+              botId: target.botId,
+              threadId: target.threadId,
+              message,
+              text: input.text ?? "",
+              replyToMessageId,
+              runs: routableRuns,
+              prompt: buildSendPrompt(input.text, artifacts, connectorNames),
+              hasAttachments: attachmentBlocks.length > 0,
+              config: routing,
+            })
+          : null;
+        if (route?.kind === "held") {
+          const steerable = isConversationalRun(route.run.trigger);
+          if (steerable)
+            await tx.message.update({ where: { id: message.id }, data: { runId: route.run.id } });
+          const event = await appendEventInTransaction(tx, {
+            spaceId: actor.spaceId,
+            threadId: target.threadId,
+            botId: target.botId,
+            type: "thread.message.created",
+            runId: steerable ? route.run.id : undefined,
+            payload: {
+              messageId: message.id,
+              seq: message.seq,
+              role: "user",
+              blocks,
+              author,
+              callId,
+              replyToMessageId,
+              replyQuote,
+              replyPreview,
+            },
+          });
+          return {
+            message,
+            runs: [route.run],
+            routineRuns,
+            eventSeq: event.seq,
+            held: route.held,
+          };
+        }
+        const certainAnswer = route?.kind === "certain" ? route : undefined;
         const answered: typeof activeRuns = [];
         const targetedRunId = targetedQuestionRun(activeRuns);
         // Someone else's question stays on its card; this message starts the sender's own run.
@@ -794,20 +852,34 @@ export async function sendThreadMessage(
             run.userId === actor.userId,
         )) {
           if (targetedRunId && run.id !== targetedRunId) continue;
+          if (certainAnswer && run.id !== certainAnswer.decision.targetRunId) continue;
           if (
             await answerWaitingRunWithTextInTransaction(tx, {
               ...composerAnswerInput(message),
               runId: run.id,
+              ...(certainAnswer?.questionMessageId
+                ? { messageId: certainAnswer.questionMessageId }
+                : {}),
             })
           )
             answered.push({ ...run, status: "queued" });
-          else
+          else if (!certainAnswer)
             await retireWaitingQuestionInTransaction(tx, {
               ...composerAnswerInput(message),
               botId: target.botId,
               runId: run.id,
             });
         }
+        if (certainAnswer)
+          getLogger().info("message.routed", {
+            "message.id": message.id,
+            "thread.id": target.threadId,
+            "bot.id": target.botId,
+            "route.intent": answered.length ? "answer" : "addition",
+            "route.basis": certainAnswer.decision.basis,
+            "route.target_run_id": certainAnswer.decision.targetRunId ?? undefined,
+            "route.ms": 0,
+          });
         if (answered.length) {
           const primary = answered[0];
           if (!primary) throw new IsolationError();
@@ -1264,6 +1336,30 @@ export async function sendThreadMessage(
     return sendResult(committed.message, committed.runs);
   }
   await deps.events.notify(target.threadId, committed.eventSeq);
+  const held = "held" in committed ? committed.held : undefined;
+  if (held && target.kind === "bot") {
+    // Fork (FORK.md 1.42): judged and applied after the commit; the send does not wait for it.
+    void scheduleMessageRoute(
+      deps,
+      { actor, botId: target.botId, threadId: target.threadId, held },
+      {
+        releaseTakeover,
+        talkBeside: (tx, run) =>
+          createTalkRunBeside(tx, {
+            spaceId: actor.spaceId,
+            botId: target.botId,
+            threadId: target.threadId,
+            userId: actor.userId,
+            messageId: held.messageId,
+            prompt: held.prompt,
+            active: run,
+            isCallTurn: false,
+            asksAnswer: Boolean(input.answerNow ?? asksForAnswer(input.text ?? "")),
+            stopping: false,
+          }),
+      },
+    );
+  }
   if (committed.runs.length > 0 || committed.routineRuns.length > 0)
     await deps.events.publishSpaceChange?.(actor.spaceId, "runs");
   if (
@@ -1281,7 +1377,7 @@ export async function sendThreadMessage(
       text: input.text?.trim() ?? "",
     }).catch((error) => getLogger().error("member message notification", error));
   }
-  if (releaseTakeover) {
+  if (releaseTakeover && !held) {
     for (const run of committed.runs) {
       if (steersMessageFrom(run, actor)) await releaseTakeover(run.id);
     }

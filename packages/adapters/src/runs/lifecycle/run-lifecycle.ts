@@ -38,6 +38,8 @@ import {
 } from "../assembly/run-computer.js";
 import type { RunComputerUseState, RunLeaseState } from "../assembly/run-context.js";
 import type { ExecutorDeps } from "../executor/executor-deps.js";
+import { chatTaskBlock } from "../routing/chat-task-gate.js";
+import { routingConfig } from "../routing/routing-config.js";
 import type { TakeoverResumeCheckpoint } from "../turn/takeover-resume.js";
 import { continueRunClaimFence, TAKEOVER_RESUME_CHECKPOINTS } from "../turn/takeover-resume.js";
 import { wakeRun } from "../wakeups/wake-run.js";
@@ -725,13 +727,60 @@ async function admissionHold(
       id: true,
       botId: true,
       threadId: true,
+      taskId: true,
       trigger: true,
       lane: true,
+      chatTask: true,
       createdAt: true,
       bot: { select: { concurrency: true } },
     },
   });
   if (!candidate) return undefined;
+  // Fork (FORK.md 1.42): a task started beside others in its chat waits for a free chat slot.
+  if (candidate.chatTask) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`run-gate:${candidate.botId}`}))`;
+    const config = routingConfig();
+    if (!config.concurrentTasks) return undefined;
+    const taskSelect = {
+      id: true,
+      botId: true,
+      threadId: true,
+      taskId: true,
+      trigger: true,
+      chatTask: true,
+      createdAt: true,
+    } as const;
+    const [working, queuedTasks] = await Promise.all([
+      tx.run.findMany({
+        where: {
+          botId: candidate.botId,
+          threadId: candidate.threadId,
+          status: { in: ["leased", "running"] },
+          OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { gt: now } }],
+        },
+        select: taskSelect,
+      }),
+      tx.run.findMany({
+        where: {
+          botId: candidate.botId,
+          threadId: candidate.threadId,
+          status: "queued",
+          chatTask: true,
+        },
+        select: taskSelect,
+      }),
+    ]);
+    const blocked = chatTaskBlock(candidate, config.concurrentTasksMax, working, queuedTasks);
+    if (blocked)
+      getLogger().info("run.chat_task_held", {
+        "run.id": candidate.id,
+        "bot.id": candidate.botId,
+        "thread.id": candidate.threadId,
+        reason: blocked,
+        "chat_tasks.working": working.length,
+      });
+    return blocked;
+  }
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`run-gate:${candidate.botId}`}))`;
   const select = {
     id: true,

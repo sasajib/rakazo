@@ -1419,6 +1419,10 @@ model Run {
   trigger              String
   /// Work queue lane (a site or topic) chosen by the sender; one active bot_message run per lane.
   lane                 String?
+  /// Fork (FORK.md 1.42): started as its own task beside other work of the agent in this chat.
+  chatTask             Boolean           @default(false)
+  /// Fork (FORK.md 1.42): times put back in the queue after a transient model/provider failure.
+  transientRetries     Int               @default(0)
   modelProvider        String?
   modelId              String?
   thinkingLevel        String?
@@ -1494,6 +1498,8 @@ model SteeringMessage {
   modelId       String?
   thinkingLevel String?
   claimedAt DateTime?
+  /// Fork (FORK.md 1.42): not taken as steering before this time while the message is routed.
+  routeHeldUntil DateTime?
   createdAt DateTime @default(now())
 
   @@unique([messageId, botId])

@@ -269,7 +269,12 @@ function modelTurnRequest(
     threadId: thread.id,
     runId,
     usageOperationKind: run.trigger === BACKGROUND_HELPER_TRIGGER ? "subagent" : "answer",
-    ...(run.trigger === TALK_RUN_TRIGGER ? { sessionSuffix: "talk" } : {}),
+    ...(run.trigger === TALK_RUN_TRIGGER
+      ? { sessionSuffix: "talk" }
+      : // Fork (FORK.md 1.42): a task beside others in its chat keeps a model session of its own.
+        run.chatTask
+        ? { sessionSuffix: `task:${run.taskId}` }
+        : {}),
     routineId: run.routineId,
     // Runtimes replay the original request because the new prompt only announces the connection.
     sourceMessageId: isAppConnectionFollowUp(run) ? null : run.sourceMessageId,

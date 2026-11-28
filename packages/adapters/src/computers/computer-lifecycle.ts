@@ -45,6 +45,7 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { bestEffort, getLogger } from "@rakazo/logging";
+import { separateChatTasks } from "../runs/routing/chat-task-gate.js";
 import { resolveAgentHomePath } from "../storage/home.js";
 import { ObjectAgentHomeStore } from "../storage/home-object-store.js";
 import {
@@ -1115,17 +1116,27 @@ export async function acquireComputerExecutionLease(
           where: { botId: input.botId, runId: { not: input.runId }, expiresAt: { gt: new Date() } },
           select: { runId: true },
         });
-        const writer = live.length
-          ? await tx.run.findFirst({
+        const writers = live.length
+          ? await tx.run.findMany({
               where: {
                 id: { in: live.map((lease) => lease.runId) },
                 threadId: input.threadId,
                 status: { in: [...QUEUE_HOLDING_RUN_STATUSES] },
               },
-              select: { id: true },
+              select: { id: true, taskId: true, chatTask: true },
+            })
+          : [];
+        // Fork (FORK.md 1.42): runs of DIFFERENT tasks in one chat (one of them started as its own
+        // task) each write only their own messages, so they do not block each other here. The
+        // screen stays one run at a time through its slots; one task stays one writer.
+        const self = writers.length
+          ? await tx.run.findUnique({
+              where: { id: input.runId },
+              select: { taskId: true, chatTask: true },
             })
           : null;
-        if (writer) throw new ComputerBusyError();
+        if (writers.some((writer) => !separateChatTasks(self, writer)))
+          throw new ComputerBusyError();
       }
       const now = new Date();
       const expiresAt = new Date(now.getTime() + EXECUTION_LEASE_MS);

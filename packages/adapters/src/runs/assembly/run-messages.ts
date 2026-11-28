@@ -16,6 +16,7 @@ import {
 import { getLogger } from "@rakazo/logging";
 import { redactConnectorPayload } from "../../integrations/connector-safety.js";
 import type { ExecutorDeps } from "../executor/executor-deps.js";
+import { chatTaskReplyTag } from "../routing/chat-task-reply.js";
 
 /** Deps for one attempt: its run's history writes carry the lease, so a superseded attempt cannot write. */
 export function withRunLease(
@@ -179,7 +180,10 @@ export async function persistMessageInTransaction(
   // Clients get the blocks without the kept calls, in the message and in its event alike.
   const { blocks: shown, toolHistory } = splitToolHistory(blocks);
   blocks = shown;
+  // Fork (FORK.md 1.42): with tasks side by side in the chat, a reply quotes its task's message.
+  const tag = role === "bot" ? await chatTaskReplyTag(tx, run) : undefined;
   const message = await createThreadMessageInTransaction(tx, {
+    ...(tag ? { replyToMessageId: tag.replyToMessageId } : {}),
     threadId: run.threadId,
     role,
     blocks,
@@ -204,6 +208,7 @@ export async function persistMessageInTransaction(
       role,
       blocks,
       callId: callIdFromClientNonce(clientNonce),
+      ...(tag ? { replyToMessageId: tag.replyToMessageId, replyPreview: tag.replyPreview } : {}),
     },
   });
   return {

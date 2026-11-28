@@ -130,6 +130,9 @@ async function claimSteeringOnce(
         userId: run.userId,
         ...(delegatedResult ? { originTrigger: messaging ? "messaging" : null } : {}),
         id: input.seenIds.length ? { notIn: input.seenIds } : undefined,
+        // Fork (FORK.md 1.42): a message still being routed (it may start a task of its own) is
+        // not taken before the router decides or its hold runs out.
+        AND: [{ OR: [{ routeHeldUntil: null }, { routeHeldUntil: { lte: new Date() } }] }],
         // A routine or webhook turn only takes steering addressed to it; pending user messages
         // wait for the conversational continuation that starts once it finishes.
         OR:

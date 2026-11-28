@@ -890,3 +890,37 @@ function alwaysAllowedSite(effect: {
   const request = effect.request as { url?: unknown } | null;
   return typeof request?.url === "string" ? urlSite(request.url) : undefined;
 }
+
+/**
+ * Fork (FORK.md 1.42): the open ask of a waiting run, for message routing: its card, its text and
+ * what kind of answer it waits for. An approval or a secret is never answered by a chat message.
+ */
+export async function pendingQuestionOf(
+  tx: Prisma.TransactionClient,
+  input: { threadId: string; runId: string },
+): Promise<{
+  messageId: string;
+  text: string;
+  kind: "question" | "approval" | "secret";
+  options: string[];
+} | null> {
+  const found = await findPendingAsk(tx, input);
+  if (!found) return null;
+  const kind = isSecretAskBlock(found.pendingAsk)
+    ? "secret"
+    : isApprovalAskBlock(found.pendingAsk)
+      ? "approval"
+      : "question";
+  const card = await tx.message.findUnique({
+    where: { id: found.messageId },
+    select: { id: true, blocks: true },
+  });
+  const options = card
+    ? readMessageBlocks(card).blocks.flatMap((block) =>
+        block.kind === "choice" && block.answerId === undefined
+          ? block.options.map((option) => option.label)
+          : [],
+      )
+    : [];
+  return { messageId: found.messageId, text: found.pendingAsk.text, kind, options };
+}
